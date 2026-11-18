@@ -94,7 +94,8 @@ Google Drive); **Open save** loads one back.
 - [x] Full-size world (Australia-sized island), streamed terrain, fly-through mode
 - [ ] Breath of the Wild look: soft two-tone lighting, wind, shadows, painted textures
 - [ ] Minimap in the Rust version
-- [ ] Replace placeholder trees/rocks/mines with CC0 assets ([docs/3d-asset-sources.md](docs/3d-asset-sources.md))
+- [x] Real trees, bushes, rocks and small plants near the player (Quaternius Stylized Nature MegaKit, CC0; see [CREDITS.md](CREDITS.md))
+- [ ] Mine entrances and a far-distance look for trees that matches the real models
 - [ ] Native inhabitants, items and player-built content
 
 Note: the save-file feature in `web-prototype/index.html` has not been tested yet.

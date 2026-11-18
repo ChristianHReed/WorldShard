@@ -79,6 +79,7 @@ jobs:
             && python3 -c "import json,os,glob; print(json.dumps([{'file':f,'size':os.path.getsize(f)} for f in sorted(glob.glob('worldshard_bg.part*.wasm'))]))" > wasm-parts.json \
             && cat wasm-parts.json)
           cp game/web/index.html dist/index.html
+          cp -r game/assets dist/assets
           cp web-prototype/index.html dist/prototype/index.html
           touch dist/.nojekyll
           ls -la dist | tee -a build.log
