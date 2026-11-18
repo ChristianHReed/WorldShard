@@ -540,34 +540,154 @@ fn add_geo(m: &mut MeshData, g: &Geo, pos: [f32; 3], scale: f32, rot: f32, tint:
     }
 }
 
-/// Side of a prop cell in metres (trees and rocks are streamed in cells).
-pub const PROP_CELL: f64 = 128.0;
+// ---------------------------------------------------------------------
+// Real models (Quaternius Stylized Nature MegaKit, CC0) and where they go
+// ---------------------------------------------------------------------
 
-/// Picks a prop for a spot, by region, as in the prototype.
-fn choose_prop(s: &Sample, q: f64, pick: f64, size: f64) -> Option<(PropKind, f64, [f32; 3])> {
+/// A model the game loads from `assets/models/<name>.gltf`. `parts` names
+/// the material of each mesh part, in order. `height` is the model's own
+/// height in metres; `far` is the placeholder drawn for it in the distance.
+pub struct ModelInfo {
+    pub name: &'static str,
+    pub parts: &'static [&'static str],
+    pub height: f32,
+    pub far: Option<PropKind>,
+}
+
+const TREE: &[&str] = &["Bark_NormalTree", "Leaves_NormalTree"];
+const PINE: &[&str] = &["Bark_NormalTree", "Leaves_Pine"];
+const TWISTED: &[&str] = &["Bark_TwistedTree", "Leaves_TwistedTree"];
+const DEAD: &[&str] = &["Bark_DeadTree"];
+const ROCK: &[&str] = &["Rocks"];
+const LEAVES: &[&str] = &["Leaves"];
+const FLOWER: &[&str] = &["Leaves", "Flowers"];
+const GRASS: &[&str] = &["Grass"];
+const PEBBLE: &[&str] = &["PathRocks"];
+
+macro_rules! m {
+    ($n:expr, $p:expr, $h:expr, $f:expr) => {
+        ModelInfo { name: $n, parts: $p, height: $h, far: $f }
+    };
+}
+
+pub const MODELS: &[ModelInfo] = &[
+    m!("CommonTree_1", TREE, 7.26, Some(PropKind::Broad)),
+    m!("CommonTree_2", TREE, 7.64, Some(PropKind::Broad)),
+    m!("CommonTree_3", TREE, 9.43, Some(PropKind::Broad)),
+    m!("CommonTree_4", TREE, 9.44, Some(PropKind::Broad)),
+    m!("CommonTree_5", TREE, 7.01, Some(PropKind::Broad)),
+    m!("Pine_1", PINE, 7.32, Some(PropKind::Pine)),
+    m!("Pine_2", PINE, 7.38, Some(PropKind::Pine)),
+    m!("Pine_3", PINE, 7.39, Some(PropKind::Pine)),
+    m!("Pine_4", PINE, 10.24, Some(PropKind::Pine)),
+    m!("Pine_5", PINE, 8.72, Some(PropKind::Pine)),
+    m!("TwistedTree_2", TWISTED, 18.95, Some(PropKind::Broad)),
+    m!("TwistedTree_5", TWISTED, 15.66, Some(PropKind::Broad)),
+    m!("DeadTree_1", DEAD, 9.5, Some(PropKind::Dead)),
+    m!("DeadTree_3", DEAD, 13.28, Some(PropKind::Dead)),
+    m!("DeadTree_5", DEAD, 16.44, Some(PropKind::Dead)),
+    m!("Bush_Common", &["Leaves_TwistedTree"], 1.58, Some(PropKind::Bush)),
+    m!("Bush_Common_Flowers", &["Leaves_NormalTree", "Flowers"], 1.58, Some(PropKind::Bush)),
+    m!("Rock_Medium_1", ROCK, 2.26, Some(PropKind::Rock)),
+    m!("Rock_Medium_2", ROCK, 1.9, Some(PropKind::Rock)),
+    m!("Rock_Medium_3", ROCK, 2.32, Some(PropKind::Rock)),
+    m!("Fern_1", LEAVES, 2.69, None),
+    m!("Plant_1_Big", LEAVES, 3.76, None),
+    m!("Plant_7_Big", LEAVES, 0.25, None),
+    m!("Flower_3_Group", FLOWER, 2.05, None),
+    m!("Flower_4_Group", FLOWER, 2.49, None),
+    m!("Flower_3_Single", FLOWER, 2.07, None),
+    m!("Flower_4_Single", FLOWER, 2.42, None),
+    m!("Grass_Common_Short", GRASS, 1.33, None),
+    m!("Grass_Common_Tall", GRASS, 1.87, None),
+    m!("Grass_Wispy_Short", GRASS, 1.07, None),
+    m!("Grass_Wispy_Tall", GRASS, 1.67, None),
+    m!("Clover_1", LEAVES, 1.14, None),
+    m!("Clover_2", LEAVES, 1.26, None),
+    m!("Mushroom_Common", &["Mushrooms"], 0.46, None),
+    m!("Mushroom_Laetiporus", &["Mushrooms"], 0.77, None),
+    m!("Pebble_Round_1", PEBBLE, 0.1, None),
+    m!("Pebble_Round_2", PEBBLE, 0.09, None),
+    m!("Pebble_Round_3", PEBBLE, 0.1, None),
+    m!("Pebble_Square_1", PEBBLE, 0.13, None),
+    m!("Pebble_Square_2", PEBBLE, 0.14, None),
+];
+
+/// Indexes into `MODELS`.
+pub mod model {
+    pub const COMMON_TREE: u16 = 0; // 5 variants
+    pub const PINE: u16 = 5; // 5
+    pub const TWISTED: u16 = 10; // 2
+    pub const DEAD: u16 = 12; // 3
+    pub const BUSH: u16 = 15;
+    pub const BUSH_FLOWERS: u16 = 16;
+    pub const ROCK: u16 = 17; // 3
+    pub const FERN: u16 = 20;
+    pub const PLANT_BIG: u16 = 21;
+    pub const LILY: u16 = 22;
+    pub const FLOWER: u16 = 23; // 4
+    pub const GRASS: u16 = 27; // 4: common short, common tall, wispy short, wispy tall
+    pub const CLOVER: u16 = 31; // 2
+    pub const MUSHROOM: u16 = 33; // 2
+    pub const PEBBLE: u16 = 35; // 5
+    /// Not a model: a mine entrance, drawn from the placeholder shapes.
+    pub const MINE: u16 = u16::MAX;
+}
+
+/// Colour variations of the same material, by where a plant grows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Tint {
+    Normal,
+    /// South dark forest
+    Dark,
+    /// Northwest swamp woods
+    Swamp,
+    /// Dry grassland and desert edges
+    Dry,
+    /// Northeast sandstone
+    Desert,
+}
+
+/// One placed model. `pos` is relative to its cell's centre.
+#[derive(Clone, Copy, Debug)]
+pub struct Placement {
+    pub model: u16,
+    pub pos: [f32; 3],
+    pub rot: f32,
+    pub scale: f32,
+    pub tint: Tint,
+}
+
+/// Side of a prop cell in metres (trees and rocks are streamed in cells).
+pub const PROP_CELL: f64 = 64.0;
+/// Side of a small-plant cell in metres (flowers, ferns, grass clumps).
+pub const DETAIL_CELL: f64 = 32.0;
+
+/// Picks a tree, bush or rock for a spot, by region.
+fn choose_prop(s: &Sample, q: f64, pick: f64, size: f64) -> Option<(u16, f64, Tint)> {
+    use model::*;
     let fm = s.forest as f64;
+    let v = |base: u16, n: u16| base + ((pick * 997.0) as u16 % n);
     if s.h > 4600.0 {
-        return (q < 0.02).then(|| (PropKind::Rock, 1.0 + size * 2.5, [0.66, 0.65, 0.66]));
+        return (q < 0.02).then(|| (v(ROCK, 3), 0.8 + size * 2.0, Tint::Normal));
     }
     match s.region {
         // North: rock mines
         0 => {
             if q < 0.035 {
-                Some((PropKind::Rock, 0.7 + size * 2.2, [0.62, 0.6, 0.56]))
+                Some((v(ROCK, 3), 0.4 + size * 1.6, Tint::Normal))
             } else if q < 0.045 {
-                Some((PropKind::Pine, 0.7 + size * 0.4, [0.24, 0.36, 0.24]))
+                Some((v(PINE, 5), 1.3 + size * 0.5, Tint::Normal))
             } else {
                 None
             }
         }
         // Northeast: lava flows and desert
         1 => {
-            if q < 0.012 {
-                Some((PropKind::Rock, 0.6 + size * 1.8, [0.3, 0.26, 0.24]))
-            } else if q < 0.02 {
-                Some((PropKind::Rock, 0.5 + size * 1.2, [0.78, 0.64, 0.45]))
+            if q < 0.02 {
+                Some((v(ROCK, 3), 0.35 + size * 1.4, Tint::Desert))
             } else if q < 0.023 {
-                Some((PropKind::Dead, 0.6 + size * 0.4, [0.55, 0.5, 0.42]))
+                Some((v(DEAD, 3), 0.6 + size * 0.3, Tint::Dry))
             } else {
                 None
             }
@@ -575,12 +695,13 @@ fn choose_prop(s: &Sample, q: f64, pick: f64, size: f64) -> Option<(PropKind, f6
         // Southeast: mid forest with fields
         2 => {
             if s.field {
-                (q < 0.003).then(|| (PropKind::Broad, 0.8 + size * 0.4, [0.36, 0.55, 0.22]))
+                (q < 0.003).then(|| (v(COMMON_TREE, 5), 1.4 + size * 0.4, Tint::Normal))
             } else if fm > 0.35 && q < 0.26 * fm {
-                let k = if pick < 0.75 { PropKind::Broad } else { PropKind::Pine };
-                Some((k, 0.8 + size * 0.5, [0.27, 0.48, 0.2]))
+                let m = if pick < 0.75 { v(COMMON_TREE, 5) } else { v(PINE, 5) };
+                Some((m, 1.3 + size * 0.5, Tint::Normal))
             } else if q < 0.015 {
-                Some((PropKind::Bush, 0.7 + size * 0.6, [0.32, 0.5, 0.22]))
+                let m = if pick < 0.5 { BUSH_FLOWERS } else { BUSH };
+                Some((m, 0.8 + size * 0.5, Tint::Normal))
             } else {
                 None
             }
@@ -588,11 +709,16 @@ fn choose_prop(s: &Sample, q: f64, pick: f64, size: f64) -> Option<(PropKind, f6
         // South: dark forest
         3 => {
             if q < 0.22 * fm.max(0.35) {
-                let k = if pick < 0.65 { PropKind::Pine } else { PropKind::Broad };
-                let tint = if size < 0.5 { [0.12, 0.24, 0.14] } else { [0.16, 0.29, 0.15] };
-                Some((k, 0.9 + size * 0.6, tint))
+                let m = if pick < 0.6 {
+                    v(PINE, 5)
+                } else if pick < 0.93 {
+                    v(COMMON_TREE, 5)
+                } else {
+                    v(TWISTED, 2)
+                };
+                Some((m, 1.4 + size * 0.6, Tint::Dark))
             } else if q < 0.26 {
-                Some((PropKind::Bush, 0.6 + size * 0.5, [0.18, 0.3, 0.16]))
+                Some((BUSH, 0.7 + size * 0.5, Tint::Dark))
             } else {
                 None
             }
@@ -600,11 +726,12 @@ fn choose_prop(s: &Sample, q: f64, pick: f64, size: f64) -> Option<(PropKind, f6
         // Southwest: grasslands
         4 => {
             if q < 0.004 {
-                Some((PropKind::Broad, 0.8 + size * 0.5, [0.38, 0.55, 0.22]))
+                Some((v(COMMON_TREE, 5), 1.4 + size * 0.5, Tint::Dry))
             } else if q < 0.016 {
-                Some((PropKind::Bush, 0.5 + size * 0.6, [0.42, 0.56, 0.24]))
+                let m = if pick < 0.5 { BUSH_FLOWERS } else { BUSH };
+                Some((m, 0.6 + size * 0.6, Tint::Dry))
             } else if q < 0.019 {
-                Some((PropKind::Rock, 0.4 + size, [0.64, 0.62, 0.58]))
+                Some((v(ROCK, 3), 0.25 + size * 0.6, Tint::Normal))
             } else {
                 None
             }
@@ -612,12 +739,20 @@ fn choose_prop(s: &Sample, q: f64, pick: f64, size: f64) -> Option<(PropKind, f6
         // Northwest: lakes and swampy forest
         _ => {
             if fm > 0.3 && q < 0.2 * fm {
-                let k = if pick < 0.6 { PropKind::Broad } else if pick < 0.85 { PropKind::Dead } else { PropKind::Pine };
-                Some((k, 0.75 + size * 0.45, [0.30, 0.42, 0.22]))
+                let m = if pick < 0.55 {
+                    v(COMMON_TREE, 5)
+                } else if pick < 0.8 {
+                    v(DEAD, 3)
+                } else if pick < 0.9 {
+                    v(TWISTED, 2)
+                } else {
+                    v(PINE, 5)
+                };
+                Some((m, 1.2 + size * 0.45, Tint::Swamp))
             } else if q < 0.03 {
-                Some((PropKind::Bush, 0.6 + size * 0.6, [0.32, 0.44, 0.24]))
+                Some((BUSH, 0.7 + size * 0.6, Tint::Swamp))
             } else if q < 0.036 {
-                Some((PropKind::Dead, 0.6 + size * 0.4, [0.45, 0.43, 0.38]))
+                Some((v(DEAD, 3), 0.6 + size * 0.3, Tint::Swamp))
             } else {
                 None
             }
@@ -625,16 +760,15 @@ fn choose_prop(s: &Sample, q: f64, pick: f64, size: f64) -> Option<(PropKind, f6
     }
 }
 
-/// Trees, bushes, rocks and mine entrances for one cell.
-/// Positions are relative to the cell's centre.
-pub fn prop_cell(t: &Terrain, kinds: &PropKinds, ci: i64, cj: i64) -> Option<MeshData> {
+/// Trees, bushes, rocks and mine entrances for one prop cell.
+pub fn prop_placements(t: &Terrain, ci: i64, cj: i64) -> Vec<Placement> {
     let (x0, z0) = (ci as f64 * PROP_CELL, cj as f64 * PROP_CELL);
     let (ox, oz) = (x0 + PROP_CELL / 2.0, z0 + PROP_CELL / 2.0);
+    let mut out = Vec::new();
     if ox.hypot(oz) > LAND_R + 1000.0 {
-        return None;
+        return out;
     }
     let mut r = Rng::new(cell_seed(ci, cj, 1));
-    let mut m = MeshData::default();
     let (spx, spz) = spawn_point();
     let mines = mine_sites();
     let (evx, evz) = to_world(EX, EY);
@@ -646,7 +780,6 @@ pub fn prop_cell(t: &Terrain, kinds: &PropKinds, ci: i64, cj: i64) -> Option<Mes
             let jz = z0 + (j as f64 + r.next()) * STEP;
             let (q, pick, size) = (r.next(), r.next(), r.next());
             let rot = (r.next() * std::f64::consts::TAU) as f32;
-            let vary = 0.9 + r.next() as f32 * 0.2;
             if q > 0.3 {
                 continue; // nothing anywhere is denser than this
             }
@@ -657,25 +790,214 @@ pub fn prop_cell(t: &Terrain, kinds: &PropKinds, ci: i64, cj: i64) -> Option<Mes
             if (jx - spx).hypot(jz - spz) < 10.0 || mines.iter().any(|&(a, b)| (a - jx).hypot(b - jz) < 22.0) {
                 continue;
             }
-            let Some((kind, sc, tint)) = choose_prop(&s, q, pick, size) else { continue };
-            // trees don't grow on steep slopes; rocks do
-            if kind != PropKind::Rock {
+            let Some((m, sc, tint)) = choose_prop(&s, q, pick, size) else { continue };
+            let is_rock = (model::ROCK..model::ROCK + 3).contains(&m);
+            if !is_rock {
+                // trees don't grow on steep slopes; rocks do
                 let slope = (t.height(jx + 3.0, jz) - t.height(jx - 3.0, jz)).abs() + (t.height(jx, jz + 3.0) - t.height(jx, jz - 3.0)).abs();
                 if slope > 7.0 {
                     continue;
                 }
             }
-            add_geo(&mut m, kinds.get(kind), [(jx - ox) as f32, (s.h - 0.3) as f32, (jz - oz) as f32], sc as f32, rot, scale3(tint, vary));
+            out.push(Placement { model: m, pos: [(jx - ox) as f32, (s.h - 0.15) as f32, (jz - oz) as f32], rot, scale: sc as f32, tint });
         }
     }
     for (mx, mz) in mines {
         if mx >= x0 && mx < x0 + PROP_CELL && mz >= z0 && mz < z0 + PROP_CELL {
             let face = (mx - evx).atan2(mz - evz); // face away from Everest
             let y = (t.height(mx, mz) - 0.3) as f32;
-            add_geo(&mut m, &kinds.mine, [(mx - ox) as f32, y, (mz - oz) as f32], 1.0, -face as f32, [0.6, 0.58, 0.55]);
+            out.push(Placement { model: model::MINE, pos: [(mx - ox) as f32, y, (mz - oz) as f32], rot: -face as f32, scale: 1.0, tint: Tint::Normal });
         }
     }
+    out
+}
+
+fn placeholder_colour(m: u16, tint: Tint) -> [f32; 3] {
+    use model::*;
+    let leafy = match tint {
+        Tint::Dark => [0.13, 0.27, 0.15],
+        Tint::Swamp => [0.30, 0.42, 0.22],
+        Tint::Dry => [0.40, 0.55, 0.22],
+        _ => [0.27, 0.48, 0.2],
+    };
+    if (PINE..PINE + 5).contains(&m) {
+        [leafy[0] * 0.8, leafy[1] * 0.85, leafy[2] * 1.05]
+    } else if (DEAD..DEAD + 3).contains(&m) {
+        [0.45, 0.43, 0.40]
+    } else if (ROCK..ROCK + 3).contains(&m) {
+        if tint == Tint::Desert {
+            [0.78, 0.6, 0.42]
+        } else {
+            [0.6, 0.6, 0.58]
+        }
+    } else if m == MINE {
+        [0.6, 0.58, 0.55]
+    } else {
+        leafy
+    }
+}
+
+fn placeholder_height(k: PropKind) -> f32 {
+    match k {
+        PropKind::Pine => 11.5,
+        PropKind::Broad => 9.1,
+        PropKind::Dead => 7.5,
+        PropKind::Bush => 1.7,
+        PropKind::Rock => 1.4,
+        PropKind::Mine => 1.0,
+    }
+}
+
+/// The simple stand-in shapes for a cell's placements: all of them for
+/// cells in the distance (`far`), or only the ones without a real model
+/// (mine entrances) for cells near the player.
+pub fn placeholder_mesh(kinds: &PropKinds, placements: &[Placement], far: bool) -> Option<MeshData> {
+    let mut m = MeshData::default();
+    for p in placements {
+        let (kind, scale) = if p.model == model::MINE {
+            (PropKind::Mine, 1.0)
+        } else if far {
+            let info = &MODELS[p.model as usize];
+            match info.far {
+                Some(k) => (k, info.height * p.scale / placeholder_height(k)),
+                None => continue,
+            }
+        } else {
+            continue;
+        };
+        add_geo(&mut m, kinds.get(kind), p.pos, scale, p.rot, placeholder_colour(p.model, p.tint));
+    }
     (!m.is_empty()).then_some(m)
+}
+
+/// Flowers, ferns, clover, mushrooms, grass clumps and pebbles for one
+/// small-plant cell, by region. Positions are relative to the cell centre.
+pub fn detail_placements(t: &Terrain, ci: i64, cj: i64) -> Vec<Placement> {
+    use model::*;
+    let mut out = Vec::new();
+    let (x0, z0) = (ci as f64 * DETAIL_CELL, cj as f64 * DETAIL_CELL);
+    let (ox, oz) = (x0 + DETAIL_CELL / 2.0, z0 + DETAIL_CELL / 2.0);
+    if ox.hypot(oz) > LAND_R {
+        return out;
+    }
+    let Some(lat) = Lattice::new(t, x0, z0) else { return out };
+    let mut r = Rng::new(cell_seed(ci, cj, 3));
+    const STEP: f64 = 2.0;
+    let steps = (DETAIL_CELL / STEP) as usize;
+    for j in 0..steps {
+        for i in 0..steps {
+            let gx = (i as f64 + r.next()) * STEP;
+            let gz = (j as f64 + r.next()) * STEP;
+            let (q, pick, size) = (r.next(), r.next(), r.next());
+            let rot = r.next() as f32 * std::f32::consts::TAU;
+            let (s, h) = lat.at(gx, gz);
+            if s.water.is_some() || s.glow > 0.0 || s.h < 2.0 || s.shore < 20.0 || s.h > 4300.0 {
+                continue;
+            }
+            let v = |base: u16, n: u16| base + ((pick * 997.0) as u16 % n);
+            let wet = s.wet > 0.15;
+            let choice: Option<(u16, f64, Tint)> = match s.region {
+                4 => {
+                    if q < 0.07 {
+                        Some((v(GRASS + 2, 2), 0.35 + size * 0.2, Tint::Dry))
+                    } else if q < 0.085 {
+                        Some((v(FLOWER, 4), 0.3 + size * 0.15, Tint::Normal))
+                    } else if q < 0.095 {
+                        Some((v(CLOVER, 2), 0.3 + size * 0.15, Tint::Dry))
+                    } else if q < 0.098 {
+                        Some((v(PEBBLE, 5), 1.0 + size * 1.5, Tint::Normal))
+                    } else {
+                        None
+                    }
+                }
+                2 => {
+                    if q < 0.05 {
+                        Some((v(GRASS, 2), 0.35 + size * 0.2, Tint::Normal))
+                    } else if q < if s.field { 0.075 } else { 0.06 } {
+                        Some((v(FLOWER, 4), 0.3 + size * 0.15, Tint::Normal))
+                    } else if q < 0.07 {
+                        Some((v(CLOVER, 2), 0.3 + size * 0.15, Tint::Normal))
+                    } else {
+                        None
+                    }
+                }
+                3 => {
+                    if q < 0.04 {
+                        Some((FERN, 0.18 + size * 0.1, Tint::Dark))
+                    } else if q < 0.05 {
+                        Some((v(MUSHROOM, 2), 0.5 + size * 0.5, Tint::Normal))
+                    } else if q < 0.065 {
+                        Some((PLANT_BIG, 0.25 + size * 0.15, Tint::Dark))
+                    } else if q < 0.09 {
+                        Some((GRASS, 0.3 + size * 0.2, Tint::Dark))
+                    } else {
+                        None
+                    }
+                }
+                5 => {
+                    if wet && q < 0.06 {
+                        Some((LILY, 0.8 + size * 0.6, Tint::Swamp))
+                    } else if q < 0.04 {
+                        Some((FERN, 0.16 + size * 0.1, Tint::Swamp))
+                    } else if q < 0.08 {
+                        Some((GRASS + 3, 0.35 + size * 0.25, Tint::Swamp))
+                    } else if q < 0.087 {
+                        Some((v(MUSHROOM, 2), 0.5 + size * 0.5, Tint::Normal))
+                    } else {
+                        None
+                    }
+                }
+                0 => {
+                    if q < 0.04 {
+                        Some((v(PEBBLE, 5), 1.0 + size * 2.0, Tint::Normal))
+                    } else if q < 0.055 {
+                        Some((GRASS, 0.3 + size * 0.15, Tint::Normal))
+                    } else {
+                        None
+                    }
+                }
+                _ => (q < 0.02).then(|| (v(PEBBLE, 5), 1.0 + size * 2.0, Tint::Normal)),
+            };
+            if let Some((m, sc, tint)) = choice {
+                out.push(Placement { model: m, pos: [(x0 + gx - ox) as f32, h as f32 - 0.03, (z0 + gz - oz) as f32], rot, scale: sc as f32, tint });
+            }
+        }
+    }
+    out
+}
+
+/// The finest terrain grid (8 m) over one 32 m cell, for placing small
+/// things exactly on the drawn ground.
+struct Lattice {
+    ss: Vec<Sample>,
+}
+
+impl Lattice {
+    const L: usize = 5;
+    const CELL: f64 = 8.0;
+    fn new(t: &Terrain, x0: f64, z0: f64) -> Option<Lattice> {
+        let mut ss = Vec::with_capacity(Self::L * Self::L);
+        for j in 0..Self::L {
+            for i in 0..Self::L {
+                ss.push(t.sample(x0 + i as f64 * Self::CELL, z0 + j as f64 * Self::CELL));
+            }
+        }
+        if ss.iter().all(|s| s.water.is_some() || s.h < 2.0) {
+            return None;
+        }
+        Some(Lattice { ss })
+    }
+    /// The nearest sample, and the drawn ground height, at (gx, gz) metres into the cell.
+    fn at(&self, gx: f64, gz: f64) -> (&Sample, f64) {
+        let l = Self::L;
+        let (fi, fj) = (gx / Self::CELL, gz / Self::CELL);
+        let (ii, jj) = ((fi.floor() as usize).min(l - 2), (fj.floor() as usize).min(l - 2));
+        let (u, w) = (fi - ii as f64, fj - jj as f64);
+        let ss = &self.ss;
+        let s = &ss[(jj + (w > 0.5) as usize) * l + ii + (u > 0.5) as usize];
+        let h = tri_interp(ss[jj * l + ii].h, ss[jj * l + ii + 1].h, ss[(jj + 1) * l + ii].h, ss[(jj + 1) * l + ii + 1].h, u, w);
+        (s, h)
+    }
 }
 
 /// Side of a grass cell in metres (grass is drawn close to the player only).
@@ -838,18 +1160,36 @@ mod tests {
         assert_eq!(tm.positions.len(), (CHUNK_N + 1) * (CHUNK_N + 1) + 4 * CHUNK_N * 2);
         let kinds = PropKinds::build();
         let mut props = 0;
-        for j in -3..3 {
-            for i in -3..3 {
-                if let Some(m) = prop_cell(&t, &kinds, (sx / PROP_CELL).floor() as i64 + i, (sz / PROP_CELL).floor() as i64 + j) {
-                    props += m.triangle_count();
-                }
+        let mut far = 0;
+        for j in -6..6 {
+            for i in -6..6 {
+                let p = prop_placements(&t, (sx / PROP_CELL).floor() as i64 + i, (sz / PROP_CELL).floor() as i64 + j);
+                props += p.len();
+                far += placeholder_mesh(&kinds, &p, true).map_or(0, |m| m.triangle_count());
             }
         }
-        assert!(props > 0);
+        assert!(props > 0 && far > 0);
+        let mut small = 0;
+        for j in -2..2 {
+            for i in -2..2 {
+                small += detail_placements(&t, (sx / DETAIL_CELL).floor() as i64 + i, (sz / DETAIL_CELL).floor() as i64 + j).len();
+            }
+        }
+        assert!(small > 20, "{small} small plants");
         let g = grass_cell(&t, (sx / GRASS_CELL).floor() as i64, (sz / GRASS_CELL).floor() as i64).expect("grass at spawn");
         assert!(g.triangle_count() > 300);
         let d = drawn_height(&t, sx + 3.3, sz + 5.1);
         assert!((d - t.height(sx + 3.3, sz + 5.1)).abs() < 3.0);
+    }
+
+    #[test]
+    fn model_table_matches_indexes() {
+        assert_eq!(MODELS[model::PINE as usize].name, "Pine_1");
+        assert_eq!(MODELS[model::TWISTED as usize].name, "TwistedTree_2");
+        assert_eq!(MODELS[model::ROCK as usize].name, "Rock_Medium_1");
+        assert_eq!(MODELS[model::GRASS as usize].name, "Grass_Common_Short");
+        assert_eq!(MODELS[model::PEBBLE as usize + 4].name, "Pebble_Square_2");
+        assert_eq!(MODELS.len(), model::PEBBLE as usize + 5);
     }
 
     #[test]

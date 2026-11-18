@@ -9,16 +9,18 @@
 
 use std::collections::{HashMap, HashSet};
 
-use bevy::asset::RenderAssetUsages;
+use bevy::asset::{AssetId, AssetMetaCheck, RenderAssetUsages};
+use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::input::mouse::MouseMotion;
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::primitives::Aabb;
+use bevy::render::render_resource::TextureFormat;
 use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
 
 use worldshard::lod::{self, NodeKey};
-use worldshard::meshgen::{self, MeshData, PropKinds, GRASS_CELL, PROP_CELL};
+use worldshard::meshgen::{self, model, MeshData, Placement, PropKinds, Tint, DETAIL_CELL, GRASS_CELL, MODELS, PROP_CELL};
 use worldshard::save::{SaveData, STORAGE_KEY};
 use worldshard::sky::{clock_text, sun_state};
 use worldshard::worldgen::terrain::WALL_R;
@@ -31,6 +33,11 @@ use {getrandom as _, getrandom02 as _};
 const EYE: f64 = 1.7;
 /// Trees and rocks are drawn this far around the player; grass closer.
 const PROP_RADIUS: f64 = 520.0;
+/// Within this distance trees and rocks are the real models; further out
+/// they are the simple stand-in shapes.
+const NEAR_RADIUS: f64 = 100.0;
+/// Flowers, ferns, clover, mushrooms and grass clumps.
+const DETAIL_RADIUS: f64 = 44.0;
 const GRASS_RADIUS: f64 = 56.0;
 /// Fly-through speeds (metres per second).
 const FLY_SPEEDS: [f64; 4] = [30.0, 300.0, 3000.0, 30000.0];
@@ -73,7 +80,6 @@ struct Player {
 #[derive(Resource, Default)]
 struct Streamer {
     chunks: HashMap<NodeKey, Entity>,
-    props: HashMap<(i64, i64), Option<Entity>>,
     grass: HashMap<(i64, i64), Option<Entity>>,
     ready: bool,
 }
@@ -187,7 +193,9 @@ fn main() {
         .insert_resource(Banner::default())
         .insert_resource(TouchState::default())
         .insert_resource(Streamer::default())
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
+        .insert_resource(Plants::default())
+        .insert_resource(MipDone::default())
+        .add_plugins(DefaultPlugins.set(AssetPlugin { meta_check: AssetMetaCheck::Never, ..default() }).set(WindowPlugin {
             primary_window: Some(Window {
                 title: "WorldShard".into(),
                 canvas: Some("#bevy".into()),
@@ -200,8 +208,9 @@ fn main() {
         .add_systems(Startup, setup)
         .add_systems(
             Update,
-            (move_player, stream_world, place_relative, sky_and_light, update_hud, autosave, hide_loader).chain(),
+            (move_player, stream_world, stream_plants, place_relative, sky_and_light, update_hud, autosave, hide_loader).chain(),
         )
+        .add_systems(Update, add_mipmaps)
         .run();
 }
 
@@ -239,7 +248,12 @@ fn spawn_anchored(
     parent
 }
 
-fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+fn setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
+) {
     let world = Terrain::new();
 
     let mats = Mats {
@@ -434,6 +448,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
     });
     commands.insert_resource(player);
     commands.insert_resource(Kinds(PropKinds::build()));
+    commands.insert_resource(load_models(&asset_server));
     commands.insert_resource(mats);
     commands.insert_resource(GameWorld(world));
 }
@@ -680,7 +695,6 @@ fn stream_world(
     mut commands: Commands,
     mut assets: ResMut<Assets<Mesh>>,
     w: Res<GameWorld>,
-    kinds: Res<Kinds>,
     mats: Res<Mats>,
     pl: Res<Player>,
     mut st: ResMut<Streamer>,
@@ -731,40 +745,8 @@ fn stream_world(
         }
     }
 
-    // trees, rocks and grass near the player (not when flying high)
-    let near_cells = |cell: f64, radius: f64| -> Vec<(i64, i64)> {
-        let (ci, cj) = ((pl.x / cell).floor() as i64, (pl.z / cell).floor() as i64);
-        let n = (radius / cell).ceil() as i64 + 1;
-        let mut v = Vec::new();
-        for j in cj - n..=cj + n {
-            for i in ci - n..=ci + n {
-                let (cx, cz) = ((i as f64 + 0.5) * cell, (j as f64 + 0.5) * cell);
-                let d = (cx - pl.x).hypot(cz - pl.z);
-                if d < radius {
-                    v.push((i, j));
-                }
-            }
-        }
-        v.sort_by_key(|&(i, j)| (i - ci).abs() + (j - cj).abs());
-        v
-    };
-    let props_wanted = if above < 400.0 { near_cells(PROP_CELL, PROP_RADIUS) } else { Vec::new() };
-    let grass_wanted = if above < 60.0 { near_cells(GRASS_CELL, GRASS_RADIUS) } else { Vec::new() };
-    let mut pb = if first { usize::MAX } else { 2 };
-    for &(i, j) in &props_wanted {
-        if pb == 0 {
-            break;
-        }
-        if st.props.contains_key(&(i, j)) {
-            continue;
-        }
-        let e = meshgen::prop_cell(t, &kinds.0, i, j).map(|m| {
-            let (x, z) = ((i as f64 + 0.5) * PROP_CELL, (j as f64 + 0.5) * PROP_CELL);
-            spawn_anchored(&mut commands, &mut assets, Anchor { x, y: 0.0, z }, vec![(m, mats.plants.clone())])
-        });
-        st.props.insert((i, j), e);
-        pb -= 1;
-    }
+    // grass tufts close to the player (not when flying)
+    let grass_wanted = if above < 60.0 { cells_near(pl.x, pl.z, GRASS_CELL, GRASS_RADIUS) } else { Vec::new() };
     let mut gb = if first { usize::MAX } else { 4 };
     for &(i, j) in &grass_wanted {
         if gb == 0 {
@@ -780,14 +762,7 @@ fn stream_world(
         st.grass.insert((i, j), e);
         gb -= 1;
     }
-    let keep_p: HashSet<(i64, i64)> = props_wanted.iter().copied().collect();
     let keep_g: HashSet<(i64, i64)> = grass_wanted.iter().copied().collect();
-    let drop_p: Vec<(i64, i64)> = st.props.keys().copied().filter(|k| !keep_p.contains(k)).collect();
-    for k in drop_p {
-        if let Some(Some(e)) = st.props.remove(&k) {
-            commands.entity(e).despawn();
-        }
-    }
     let drop_g: Vec<(i64, i64)> = st.grass.keys().copied().filter(|k| !keep_g.contains(k)).collect();
     for k in drop_g {
         if let Some(Some(e)) = st.grass.remove(&k) {
@@ -795,6 +770,348 @@ fn stream_world(
         }
     }
     st.ready = true;
+}
+
+/// Grid cells of side `cell` whose centres are within `radius` of (x, z), nearest first.
+fn cells_near(x: f64, z: f64, cell: f64, radius: f64) -> Vec<(i64, i64)> {
+    let (ci, cj) = ((x / cell).floor() as i64, (z / cell).floor() as i64);
+    let n = (radius / cell).ceil() as i64 + 1;
+    let mut v = Vec::new();
+    for j in cj - n..=cj + n {
+        for i in ci - n..=ci + n {
+            let (cx, cz) = ((i as f64 + 0.5) * cell, (j as f64 + 0.5) * cell);
+            if (cx - x).hypot(cz - z) < radius {
+                v.push((i, j));
+            }
+        }
+    }
+    v.sort_by_key(|&(i, j)| (i - ci).abs() + (j - cj).abs());
+    v
+}
+
+// ---------------------------------------------------------------------
+// Plants and rocks: real models near the player, stand-ins further out
+// ---------------------------------------------------------------------
+
+/// The MegaKit models (one mesh per part) and their textures.
+#[derive(Resource)]
+struct ModelAssets {
+    parts: Vec<Vec<Handle<Mesh>>>,
+    textures: HashMap<&'static str, Handle<Image>>,
+    /// Textures with cut-out leaves (their mipmaps keep the leaves full).
+    masked: HashSet<AssetId<Image>>,
+}
+
+const TEXTURES: &[(&str, bool)] = &[
+    ("Bark_NormalTree.png", true),
+    ("Bark_DeadTree.png", false),
+    ("Bark_TwistedTree.png", false),
+    ("Leaves_NormalTree_C.png", true),
+    ("Leaf_Pine_C.png", true),
+    ("Leaves_TwistedTree_Green.png", true),
+    ("Leaves.png", true),
+    ("Flowers.png", true),
+    ("Grass.png", false),
+    ("Mushrooms.png", false),
+    ("PathRocks_Diffuse.png", false),
+    ("Rocks_Diffuse.png", false),
+    ("Rocks_Desert_Diffuse.png", false),
+];
+
+fn load_models(server: &AssetServer) -> ModelAssets {
+    let parts = MODELS
+        .iter()
+        .map(|m| (0..m.parts.len()).map(|p| server.load(format!("models/{}.gltf#Mesh0/Primitive{}", m.name, p))).collect())
+        .collect();
+    let mut textures = HashMap::new();
+    let mut masked = HashSet::new();
+    for &(file, mask) in TEXTURES {
+        let h: Handle<Image> = server.load(format!("textures/{file}"));
+        if mask {
+            masked.insert(h.id());
+        }
+        textures.insert(file, h);
+    }
+    ModelAssets { parts, textures, masked }
+}
+
+/// One material per (part, tint), made the first time it is needed.
+fn plant_material(
+    cache: &mut HashMap<(&'static str, Tint), Handle<StandardMaterial>>,
+    materials: &mut Assets<StandardMaterial>,
+    ma: &ModelAssets,
+    part: &'static str,
+    tint: Tint,
+) -> Handle<StandardMaterial> {
+    if let Some(h) = cache.get(&(part, tint)) {
+        return h.clone();
+    }
+    let (file, mask, rough) = match part {
+        "Bark_NormalTree" => ("Bark_NormalTree.png", true, 0.95),
+        "Bark_DeadTree" => ("Bark_DeadTree.png", false, 0.95),
+        "Bark_TwistedTree" => ("Bark_TwistedTree.png", false, 0.95),
+        "Leaves_NormalTree" => ("Leaves_NormalTree_C.png", true, 0.8),
+        "Leaves_Pine" => ("Leaf_Pine_C.png", true, 0.8),
+        "Leaves_TwistedTree" => ("Leaves_TwistedTree_Green.png", true, 0.8),
+        "Leaves" => ("Leaves.png", true, 0.8),
+        "Flowers" => ("Flowers.png", true, 0.7),
+        "Grass" => ("Grass.png", false, 0.85),
+        "Mushrooms" => ("Mushrooms.png", false, 0.7),
+        "PathRocks" => ("PathRocks_Diffuse.png", false, 0.9),
+        _ => (if tint == Tint::Desert { "Rocks_Desert_Diffuse.png" } else { "Rocks_Diffuse.png" }, false, 0.9),
+    };
+    let foliage = part.starts_with("Leaves") || part == "Grass";
+    let c = match (foliage, tint) {
+        (true, Tint::Dark) => [0.55, 0.68, 0.58],
+        (true, Tint::Swamp) => [0.82, 0.86, 0.62],
+        (true, Tint::Dry) => [1.0, 0.95, 0.66],
+        _ => [1.0, 1.0, 1.0],
+    };
+    let h = materials.add(StandardMaterial {
+        base_color: Color::srgb(c[0], c[1], c[2]),
+        base_color_texture: ma.textures.get(file).cloned(),
+        alpha_mode: if mask { AlphaMode::Mask(0.5) } else { AlphaMode::Opaque },
+        double_sided: true,
+        cull_mode: None,
+        perceptual_roughness: rough,
+        reflectance: 0.2,
+        ..default()
+    });
+    cache.insert((part, tint), h.clone());
+    h
+}
+
+#[derive(Resource, Default)]
+struct Plants {
+    placements: HashMap<(i64, i64), Vec<Placement>>,
+    near: HashMap<(i64, i64), Entity>,
+    far: HashMap<(i64, i64), Option<Entity>>,
+    detail: HashMap<(i64, i64), Option<Entity>>,
+    materials: HashMap<(&'static str, Tint), Handle<StandardMaterial>>,
+    ready: bool,
+}
+
+/// Spawns real models for `placements` under one anchored entity.
+#[allow(clippy::too_many_arguments)]
+fn spawn_models(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    cache: &mut HashMap<(&'static str, Tint), Handle<StandardMaterial>>,
+    ma: &ModelAssets,
+    plain: &Handle<StandardMaterial>,
+    kinds: &PropKinds,
+    anchor: Anchor,
+    placements: &[Placement],
+) -> Entity {
+    let parent = commands.spawn((anchor, Transform::default(), Visibility::default())).id();
+    for p in placements {
+        if p.model == model::MINE {
+            continue;
+        }
+        let info = &MODELS[p.model as usize];
+        let tf = Transform { translation: Vec3::from_array(p.pos), rotation: Quat::from_rotation_y(p.rot), scale: Vec3::splat(p.scale) };
+        for (k, &part) in info.parts.iter().enumerate() {
+            let mat = plant_material(cache, materials, ma, part, p.tint);
+            commands.spawn((Mesh3d(ma.parts[p.model as usize][k].clone()), MeshMaterial3d(mat), tf, ChildOf(parent)));
+        }
+    }
+    // mine entrances have no model yet: use the stand-in shapes
+    if let Some(m) = meshgen::placeholder_mesh(kinds, placements, false) {
+        let (mesh, aabb) = to_mesh(m);
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(plain.clone()), aabb, ChildOf(parent)));
+    }
+    parent
+}
+
+#[allow(clippy::too_many_arguments)]
+fn stream_plants(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    w: Res<GameWorld>,
+    kinds: Res<Kinds>,
+    mats: Res<Mats>,
+    ma: Res<ModelAssets>,
+    pl: Res<Player>,
+    mut pt: ResMut<Plants>,
+) {
+    let t = &w.0;
+    let first = !pt.ready;
+    pt.ready = true;
+    let ground = meshgen::drawn_height(t, pl.x, pl.z).max(0.0);
+    let above = pl.y - ground;
+    let (near_want, far_want, detail_want) = if above < 400.0 {
+        let all = cells_near(pl.x, pl.z, PROP_CELL, PROP_RADIUS);
+        let near: Vec<(i64, i64)> = cells_near(pl.x, pl.z, PROP_CELL, NEAR_RADIUS);
+        let near_set: HashSet<(i64, i64)> = near.iter().copied().collect();
+        let far: Vec<(i64, i64)> = all.into_iter().filter(|c| !near_set.contains(c)).collect();
+        let detail = if above < 60.0 { cells_near(pl.x, pl.z, DETAIL_CELL, DETAIL_RADIUS) } else { Vec::new() };
+        (near, far, detail)
+    } else {
+        (Vec::new(), Vec::new(), Vec::new())
+    };
+    let pt = &mut *pt;
+
+    // near cells: real models
+    let mut budget = if first { usize::MAX } else { 2 };
+    for &c in &near_want {
+        if budget == 0 {
+            break;
+        }
+        if pt.near.contains_key(&c) {
+            continue;
+        }
+        let pl_list = pt.placements.entry(c).or_insert_with(|| meshgen::prop_placements(t, c.0, c.1));
+        let (x, z) = ((c.0 as f64 + 0.5) * PROP_CELL, (c.1 as f64 + 0.5) * PROP_CELL);
+        let e = spawn_models(&mut commands, &mut meshes, &mut materials, &mut pt.materials, &ma, &mats.plants, &kinds.0, Anchor { x, y: 0.0, z }, pl_list);
+        pt.near.insert(c, e);
+        budget -= 1;
+    }
+    // far cells: one merged mesh of stand-in shapes each
+    let mut budget = if first { usize::MAX } else { 4 };
+    for &c in &far_want {
+        if budget == 0 {
+            break;
+        }
+        if pt.far.contains_key(&c) {
+            continue;
+        }
+        let pl_list = pt.placements.entry(c).or_insert_with(|| meshgen::prop_placements(t, c.0, c.1));
+        let e = meshgen::placeholder_mesh(&kinds.0, pl_list, true).map(|m| {
+            let (x, z) = ((c.0 as f64 + 0.5) * PROP_CELL, (c.1 as f64 + 0.5) * PROP_CELL);
+            spawn_anchored(&mut commands, &mut meshes, Anchor { x, y: 0.0, z }, vec![(m, mats.plants.clone())])
+        });
+        pt.far.insert(c, e);
+        budget -= 1;
+    }
+    // swap levels of detail only once the replacement is there
+    let near_set: HashSet<(i64, i64)> = near_want.iter().copied().collect();
+    let far_set: HashSet<(i64, i64)> = far_want.iter().copied().collect();
+    let drop_near: Vec<(i64, i64)> = pt.near.keys().copied().filter(|c| !near_set.contains(c) && (!far_set.contains(c) || pt.far.contains_key(c))).collect();
+    for c in drop_near {
+        if let Some(e) = pt.near.remove(&c) {
+            commands.entity(e).despawn();
+        }
+    }
+    let drop_far: Vec<(i64, i64)> = pt.far.keys().copied().filter(|c| !far_set.contains(c) && (!near_set.contains(c) || pt.near.contains_key(c))).collect();
+    for c in drop_far {
+        if let Some(Some(e)) = pt.far.remove(&c) {
+            commands.entity(e).despawn();
+        }
+    }
+    let keep: Vec<(i64, i64)> = pt.placements.keys().copied().filter(|c| !near_set.contains(c) && !far_set.contains(c)).collect();
+    for c in keep {
+        pt.placements.remove(&c);
+    }
+
+    // small plants right around the player
+    let mut budget = if first { usize::MAX } else { 3 };
+    for &c in &detail_want {
+        if budget == 0 {
+            break;
+        }
+        if pt.detail.contains_key(&c) {
+            continue;
+        }
+        let list = meshgen::detail_placements(t, c.0, c.1);
+        let e = (!list.is_empty()).then(|| {
+            let (x, z) = ((c.0 as f64 + 0.5) * DETAIL_CELL, (c.1 as f64 + 0.5) * DETAIL_CELL);
+            spawn_models(&mut commands, &mut meshes, &mut materials, &mut pt.materials, &ma, &mats.plants, &kinds.0, Anchor { x, y: 0.0, z }, &list)
+        });
+        pt.detail.insert(c, e);
+        budget -= 1;
+    }
+    let detail_set: HashSet<(i64, i64)> = detail_want.iter().copied().collect();
+    let drop_detail: Vec<(i64, i64)> = pt.detail.keys().copied().filter(|c| !detail_set.contains(c)).collect();
+    for c in drop_detail {
+        if let Some(Some(e)) = pt.detail.remove(&c) {
+            commands.entity(e).despawn();
+        }
+    }
+}
+
+/// Builds mipmaps for the plant textures as they arrive, so leaves and bark
+/// stay smooth in the distance instead of shimmering. Cut-out leaf textures
+/// keep the same amount of leaf in every mipmap.
+#[derive(Resource, Default)]
+struct MipDone(HashSet<AssetId<Image>>);
+
+fn add_mipmaps(mut events: EventReader<AssetEvent<Image>>, mut images: ResMut<Assets<Image>>, mut done: ResMut<MipDone>, ma: Option<Res<ModelAssets>>) {
+    let Some(ma) = ma else { return };
+    for ev in events.read() {
+        let AssetEvent::LoadedWithDependencies { id } = ev else { continue };
+        if done.0.contains(id) || !ma.textures.values().any(|h| h.id() == *id) {
+            continue;
+        }
+        let masked = ma.masked.contains(id);
+        if let Some(img) = images.get_mut(*id) {
+            make_mips(img, masked);
+        }
+        done.0.insert(*id);
+    }
+}
+
+fn make_mips(img: &mut Image, masked: bool) {
+    let fmt = img.texture_descriptor.format;
+    if (fmt != TextureFormat::Rgba8UnormSrgb && fmt != TextureFormat::Rgba8Unorm) || img.texture_descriptor.mip_level_count > 1 {
+        return;
+    }
+    let (w, h) = (img.texture_descriptor.size.width as usize, img.texture_descriptor.size.height as usize);
+    let Some(base) = img.data.clone() else { return };
+    if base.len() != w * h * 4 {
+        return;
+    }
+    let cover = |d: &[u8], k: f32| d.chunks(4).filter(|p| p[3] as f32 * k >= 127.5).count() as f32 / (d.len() / 4) as f32;
+    let target = if masked { cover(&base, 1.0) } else { 0.0 };
+    let mut levels = vec![base];
+    let (mut cw, mut ch) = (w, h);
+    while cw > 1 || ch > 1 {
+        let (nw, nh) = ((cw / 2).max(1), (ch / 2).max(1));
+        let prev = levels.last().unwrap();
+        let mut next = vec![0u8; nw * nh * 4];
+        for y in 0..nh {
+            for x in 0..nw {
+                for c in 0..4 {
+                    let mut sum = 0u32;
+                    for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                        let sx = (x * 2 + dx).min(cw - 1);
+                        let sy = (y * 2 + dy).min(ch - 1);
+                        sum += prev[(sy * cw + sx) * 4 + c] as u32;
+                    }
+                    next[(y * nw + x) * 4 + c] = (sum / 4) as u8;
+                }
+            }
+        }
+        if masked && target > 0.0 {
+            let (mut lo, mut hi) = (0.5f32, 4.0f32);
+            for _ in 0..10 {
+                let mid = (lo + hi) / 2.0;
+                if cover(&next, mid) < target {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            let k = (lo + hi) / 2.0;
+            for px in next.chunks_mut(4) {
+                px[3] = (px[3] as f32 * k).min(255.0) as u8;
+            }
+        }
+        levels.push(next);
+        cw = nw;
+        ch = nh;
+    }
+    img.texture_descriptor.mip_level_count = levels.len() as u32;
+    img.data = Some(levels.concat());
+    img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        mipmap_filter: ImageFilterMode::Linear,
+        ..default()
+    });
 }
 
 /// Draws everything relative to the camera, which always sits at x = z = 0.

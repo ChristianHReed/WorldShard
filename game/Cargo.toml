@@ -11,7 +11,7 @@ publish = false
 
 [dependencies]
 worldshard = { path = ".." }
-# Only the parts of Bevy the game uses (no audio, glTF, animation, picking...)
+# Only the parts of Bevy the game uses (no audio, animation, picking...)
 # to keep the web download small.
 bevy = { version = "0.16", default-features = false, features = [
     "std",
@@ -28,6 +28,8 @@ bevy = { version = "0.16", default-features = false, features = [
     "bevy_window",
     "bevy_winit",
     "default_font",
+    "bevy_gltf",
+    "png",
     "tonemapping_luts",
     "ktx2",
     "zstd",
