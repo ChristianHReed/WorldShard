@@ -48,12 +48,13 @@ try {
 
   // Load a few saved spots to check night lighting, lava glow and the forests.
   const scenes = [
-    ["3-night-lava", { x: 756, z: -260, yaw: 1.24, pitch: -0.2, hours: 22.5 }],
-    ["4-south-forest", { x: 60, z: 880, yaw: 0, pitch: 0.0, hours: 15 }],
-    ["5-northwest-dawn", { x: -880, z: -560, yaw: 2.2, pitch: -0.05, hours: 6.6 }],
+    ["3-everest-from-the-south", { fly: true, y: 7200, x: -126224, z: -99176, yaw: 0, pitch: 0.06, hours: 10 }],
+    ["4-lava-at-night", { fly: true, y: 2500, x: 980351, z: -337562, yaw: 1.2393, pitch: -0.35, hours: 21.5 }],
+    ["5-south-forest", { x: 0, z: 991760, yaw: 0, pitch: 0.0, hours: 15 }],
+    ["6-whole-island", { fly: true, y: 1400000, x: 0, z: 2600000, yaw: 0, pitch: -0.5, hours: 12 }],
   ];
   for (const [name, p] of scenes) {
-    const data = JSON.stringify({ game: "WorldShard", v: 1, day: 2, visited: [], playSec: 0, savedAt: 0, ...p });
+    const data = JSON.stringify({ game: "WorldShard", v: 2, day: 2, visited: [], playSec: 0, savedAt: 0, ...p });
     await page.evaluate((d) => localStorage.setItem("worldshard-save-v1", d), data);
     await page.reload({ waitUntil: "load" });
     try {

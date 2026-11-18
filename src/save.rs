@@ -21,6 +21,9 @@ pub struct SaveData {
     pub play_sec: f64,
     /// Milliseconds since 1970, when known.
     pub saved_at: f64,
+    /// Fly-through mode (testing) and the height flown at.
+    pub fly: bool,
+    pub y: f64,
 }
 
 /// Browser-storage key shared with the web prototype.
@@ -43,7 +46,9 @@ impl SaveData {
     pub fn to_json(&self) -> String {
         let visited: Vec<String> = self.visited.iter().map(|v| format!("\"{}\"", esc(v))).collect();
         format!(
-            "{{\"game\":\"WorldShard\",\"v\":1,\"x\":{:.2},\"z\":{:.2},\"yaw\":{:.4},\"pitch\":{:.4},\"hours\":{:.3},\"day\":{},\"visited\":[{}],\"playSec\":{:.0},\"savedAt\":{:.0}}}",
+            "{{\"game\":\"WorldShard\",\"v\":2,\"fly\":{},\"y\":{:.1},\"x\":{:.2},\"z\":{:.2},\"yaw\":{:.4},\"pitch\":{:.4},\"hours\":{:.3},\"day\":{},\"visited\":[{}],\"playSec\":{:.0},\"savedAt\":{:.0}}}",
+            self.fly,
+            if self.fly { self.y } else { 0.0 },
             self.x,
             self.z,
             self.yaw,
@@ -70,11 +75,15 @@ impl SaveData {
                 return None;
             }
         }
-        if number_field(s, "v")? as i64 != 1 {
-            return None;
-        }
-        let x = number_field(s, "x")?;
-        let z = number_field(s, "z")?;
+        // v1 saves come from the small first version of the world: move them
+        // to the same spot on the full-size island
+        let scale = match number_field(s, "v")? as i64 {
+            1 => crate::worldgen::terrain::METRES_PER_PX / 4.0,
+            2 => 1.0,
+            _ => return None,
+        };
+        let x = number_field(s, "x")? * scale;
+        let z = number_field(s, "z")? * scale;
         if !x.is_finite() || !z.is_finite() {
             return None;
         }
@@ -88,6 +97,8 @@ impl SaveData {
             visited: string_array(s, "visited").into_iter().take(20).collect(),
             play_sec: number_field(s, "playSec").unwrap_or(0.0),
             saved_at: number_field(s, "savedAt").unwrap_or(0.0),
+            fly: s.contains("\"fly\":true"),
+            y: number_field(s, "y").filter(|y| y.is_finite()).unwrap_or(0.0),
         })
     }
 }
@@ -196,6 +207,8 @@ mod tests {
             visited: vec!["Southwest".into(), "Mount \"Everest\"".into()],
             play_sec: 321.0,
             saved_at: 1_763_400_000_000.0,
+            fly: true,
+            y: 3200.5,
         }
     }
 
@@ -206,6 +219,7 @@ mod tests {
         assert_eq!(back.day, 3);
         assert_eq!(back.visited, s.visited);
         assert!((back.x - s.x).abs() < 0.01 && (back.hours - 13.5).abs() < 0.001);
+        assert!(back.fly && (back.y - 3200.5).abs() < 0.1);
     }
 
     #[test]
@@ -214,12 +228,15 @@ mod tests {
         let s = SaveData::from_json(js).unwrap();
         assert_eq!(s.visited, vec!["Southwest".to_string()]);
         assert_eq!(s.day, 1);
+        // moved to the full-size island
+        assert!((s.x - -803.5 * crate::worldgen::terrain::METRES_PER_PX / 4.0).abs() < 1.0);
+        assert!(!s.fly);
     }
 
     #[test]
     fn rejects_other_files() {
         assert!(SaveData::from_json("hello").is_none());
         assert!(SaveData::from_json(r#"{"game":"Other","v":1,"x":1,"z":2}"#).is_none());
-        assert!(SaveData::from_json(r#"{"game":"WorldShard","v":2,"x":1,"z":2}"#).is_none());
+        assert!(SaveData::from_json(r#"{"game":"WorldShard","v":3,"x":1,"z":2}"#).is_none());
     }
 }

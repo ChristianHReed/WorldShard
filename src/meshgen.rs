@@ -1,14 +1,15 @@
-//! Engine-independent mesh data for the world: terrain, lava, the Rim Sea,
-//! trees / rocks / mines (merged into map chunks) and the Cloudwall.
-//! Any renderer (Bevy, wgpu, WebGL) can upload these arrays directly.
+//! Engine-independent mesh data for the full-size world: terrain chunks
+//! (with water and lava), trees / rocks / mines and grass near the player,
+//! the Cloudwall and the sky dome. Any renderer can upload these arrays.
 //!
-//! Colours are *linear* RGBA (sRGB values raised to 2.2) so they can go
-//! straight into a vertex colour attribute.
+//! Colours are *linear* RGBA (sRGB raised to 2.2). Positions are relative to
+//! each piece's own origin, so they stay precise in 32-bit floats even
+//! thousands of kilometres from the centre.
 
-use crate::worldgen::grid::*;
-use crate::worldgen::island::{to_map_deg, EX, EY, REGIONS};
-use crate::worldgen::noise::{sm, Rng};
-use crate::worldgen::World;
+use crate::lod::{NodeKey, CHUNK_N};
+use crate::worldgen::island::{pol, EX, EY};
+use crate::worldgen::noise::{sm, Noise, Rng};
+use crate::worldgen::terrain::*;
 
 #[derive(Clone, Default, Debug)]
 pub struct MeshData {
@@ -25,6 +26,16 @@ impl MeshData {
     pub fn is_empty(&self) -> bool {
         self.indices.is_empty()
     }
+    fn quad(&mut self, p: [[f32; 3]; 4], n: [f32; 3], c: [[f32; 4]; 4]) {
+        let b = self.positions.len() as u32;
+        for k in 0..4 {
+            self.positions.push(p[k]);
+            self.normals.push(n);
+            self.colors.push(c[k]);
+        }
+        // corners: 0 = (x0,z0), 1 = (x1,z0), 2 = (x0,z1), 3 = (x1,z1)
+        self.indices.extend_from_slice(&[b, b + 2, b + 1, b + 1, b + 2, b + 3]);
+    }
 }
 
 #[inline]
@@ -38,133 +49,223 @@ fn lin3(c: [f32; 3]) -> [f32; 4] {
 fn mix3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
 }
+fn scale3(c: [f32; 3], s: f32) -> [f32; 3] {
+    [c[0] * s, c[1] * s, c[2] * s]
+}
+fn norm3(v: [f32; 3]) -> [f32; 3] {
+    let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-9);
+    [v[0] / l, v[1] / l, v[2] / l]
+}
 
 // ---------------------------------------------------------------------
-// Terrain
+// Water colours
 // ---------------------------------------------------------------------
 
-/// The island and sea floor as one indexed grid mesh.
-pub fn terrain_mesh(w: &World) -> MeshData {
+fn sea_colour(depth: f32) -> [f32; 3] {
+    let shallow = [0.42, 0.84, 0.80];
+    let mid = [0.13, 0.52, 0.66];
+    let deep = [0.04, 0.22, 0.42];
+    let mut c = mix3(shallow, mid, sm(0.0, 8.0, depth as f64) as f32);
+    c = mix3(c, deep, sm(8.0, 120.0, depth as f64) as f32);
+    c = mix3(c, [0.03, 0.14, 0.30], sm(400.0, 3000.0, depth as f64) as f32);
+    mix3(c, [0.93, 0.97, 0.96], (1.0 - sm(0.1, 0.9, depth as f64) as f32) * 0.65)
+}
+
+fn lake_colour(depth: f32) -> [f32; 3] {
+    let c = mix3([0.45, 0.80, 0.70], [0.12, 0.45, 0.50], sm(0.0, 10.0, depth as f64) as f32);
+    mix3(c, [0.90, 0.95, 0.90], (1.0 - sm(0.1, 0.7, depth as f64) as f32) * 0.5)
+}
+
+// ---------------------------------------------------------------------
+// Terrain chunks
+// ---------------------------------------------------------------------
+
+/// Meshes for one LOD chunk. Positions are relative to `origin` (x, z).
+pub struct ChunkMeshes {
+    pub key: NodeKey,
+    pub origin: [f64; 2],
+    pub terrain: Option<MeshData>,
+    pub water: Option<MeshData>,
+    /// Glowing lava: draw unlit.
+    pub lava: Option<MeshData>,
+}
+
+/// Builds one chunk. Open-sea chunks are a single water square.
+pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
+    let (cx, cz) = key.centre();
+    let size = key.size();
+    let mut out = ChunkMeshes { key, origin: [cx, cz], terrain: None, water: None, lava: None };
+    if key.ocean_only() {
+        let h = (size / 2.0) as f32;
+        let c = lin3(sea_colour(4000.0));
+        let mut w = MeshData::default();
+        w.quad([[-h, 0.0, -h], [h, 0.0, -h], [-h, 0.0, h], [h, 0.0, h]], [0.0, 1.0, 0.0], [c; 4]);
+        out.water = Some(w);
+        return out;
+    }
+    let n = CHUNK_N;
+    let cell = size / n as f64;
+    let (x0, z0) = key.corner();
+    let g = n + 3; // heights with a one-cell border, for normals
+    let mut hb = vec![0f64; g * g];
+    let mut samples = Vec::with_capacity((n + 1) * (n + 1));
+    for j in 0..g {
+        for i in 0..g {
+            let x = x0 + (i as f64 - 1.0) * cell;
+            let z = z0 + (j as f64 - 1.0) * cell;
+            let inner = (1..=n + 1).contains(&i) && (1..=n + 1).contains(&j);
+            if inner {
+                let s = t.sample(x, z);
+                hb[j * g + i] = s.h;
+                samples.push(s);
+            } else {
+                hb[j * g + i] = t.height(x, z);
+            }
+        }
+    }
+    let v = n + 1;
+    let s_at = |i: usize, j: usize| &samples[j * v + i];
+    let h_at = |i: usize, j: usize| hb[(j + 1) * g + (i + 1)];
+    let local = |i: usize, j: usize| -> [f32; 3] {
+        [(x0 + i as f64 * cell - cx) as f32, h_at(i, j) as f32, (z0 + j as f64 * cell - cz) as f32]
+    };
+
+    // terrain surface
     let mut m = MeshData::default();
-    let n = &w.island.noise;
-    for j in 0..GV {
-        for i in 0..GV {
-            let k = j * GV + i;
-            let x = (-EXT + i as f64 * CELL) as f32;
-            let z = (-EXT + j as f64 * CELL) as f32;
-            m.positions.push([x, w.h[k], z]);
-            let hl = w.h[j * GV + i.saturating_sub(1)];
-            let hr = w.h[j * GV + (i + 1).min(GN)];
-            let hd = w.h[j.saturating_sub(1) * GV + i];
-            let hu = w.h[(j + 1).min(GN) * GV + i];
-            let (nx, ny, nz) = (hl - hr, 2.0 * CELL as f32, hd - hu);
-            let l = (nx * nx + ny * ny + nz * nz).sqrt();
-            let nrm = [nx / l, ny / l, nz / l];
+    let mut any_land = false;
+    for j in 0..v {
+        for i in 0..v {
+            let s = s_at(i, j);
+            if s.h > -2.0 || s.water.map_or(false, |w| w > 0.0) {
+                any_land = true;
+            }
+            let (hl, hr) = (hb[(j + 1) * g + i], hb[(j + 1) * g + i + 2]);
+            let (hu, hd) = (hb[j * g + i + 1], hb[(j + 2) * g + i + 1]);
+            let nrm = norm3([(hl - hr) as f32, (2.0 * cell) as f32, (hu - hd) as f32]);
+            let mut c = s.col;
+            // steep slopes show rock; flat high ground keeps its grass or snow
+            if s.h > 0.0 {
+                let steep = 1.0 - sm(0.62, 0.86, nrm[1] as f64) as f32;
+                let rock = if s.h > 4800.0 { [0.62, 0.62, 0.66] } else { [0.50, 0.47, 0.43] };
+                c = mix3(c, rock, steep * 0.7 * (1.0 - s.glow));
+            }
+            m.positions.push(local(i, j));
             m.normals.push(nrm);
-            // colour: base + gentle variation, forest canopy, steep rock
-            let mut c = w.col[k];
-            let v = 0.92 + 0.12 * n.n2(x as f64 * 0.02, z as f64 * 0.02) as f32 + 0.06 * n.n2(x as f64 * 0.11 + 5.0, z as f64 * 0.11) as f32;
-            c = [c[0] * v, c[1] * v, c[2] * v];
-            let fo = w.forest[k];
-            if fo > 0.0 {
-                let d = 1.0 - 0.28 * fo;
-                c = [c[0] * d, c[1] * d, c[2] * d];
-            }
-            if w.h[k] > 0.0 {
-                let steep = 1.0 - sm(0.55, 0.8, nrm[1] as f64) as f32;
-                c = mix3(c, [0.47, 0.44, 0.40], steep * 0.55 * (1.0 - w.glow[k]));
-            }
             m.colors.push(lin3(c));
         }
     }
-    for j in 0..GN {
-        for i in 0..GN {
-            let a = (j * GV + i) as u32;
+    for j in 0..n {
+        for i in 0..n {
+            let a = (j * v + i) as u32;
             let b = a + 1;
-            let c = a + GV as u32;
+            let c = a + v as u32;
             let d = c + 1;
             m.indices.extend_from_slice(&[a, c, b, b, c, d]);
         }
     }
-    m
-}
-
-/// Glowing lava channels: a thin skin just above the ground wherever the
-/// lava core is. Draw it unlit (vertex colours are bright, > 1).
-pub fn lava_mesh(w: &World) -> MeshData {
-    let mut m = MeshData::default();
-    let glow_col = |g: f32| -> [f32; 4] { [3.2 * g, 0.85 * g, 0.12 * g, 1.0] };
-    for j in 0..GN {
-        for i in 0..GN {
-            let ks = [j * GV + i, j * GV + i + 1, (j + 1) * GV + i, (j + 1) * GV + i + 1];
-            if ks.iter().all(|&k| w.glow[k] < 0.2) {
-                continue;
-            }
+    // skirts hide the cracks between chunks of different detail
+    let skirt = (cell * 2.0 + 4.0) as f32;
+    let edges: [Vec<(usize, usize)>; 4] = [
+        (0..v).map(|i| (i, 0)).collect(),
+        (0..v).map(|i| (n, i)).collect(),
+        (0..v).rev().map(|i| (i, n)).collect(),
+        (0..v).rev().map(|i| (0, i)).collect(),
+    ];
+    for edge in &edges {
+        for w in edge.windows(2) {
+            let (i0, j0) = w[0];
+            let (i1, j1) = w[1];
+            let (a, b) = ((j0 * v + i0) as u32, (j1 * v + i1) as u32);
             let base = m.positions.len() as u32;
-            for (q, &k) in ks.iter().enumerate() {
-                let (ii, jj) = (i + (q & 1), j + (q >> 1));
-                let x = (-EXT + ii as f64 * CELL) as f32;
-                let z = (-EXT + jj as f64 * CELL) as f32;
-                m.positions.push([x, w.h[k] + 0.35, z]);
-                m.normals.push([0.0, 1.0, 0.0]);
-                m.colors.push(glow_col(w.glow[k]));
+            for &k in &[a, b] {
+                let mut p = m.positions[k as usize];
+                p[1] -= skirt;
+                m.positions.push(p);
+                m.normals.push(m.normals[k as usize]);
+                m.colors.push(m.colors[k as usize]);
             }
-            m.indices.extend_from_slice(&[base, base + 2, base + 1, base + 1, base + 2, base + 3]);
+            m.indices.extend_from_slice(&[a, base, b, b, base, base + 1]);
         }
     }
-    m
+    if any_land {
+        out.terrain = Some(m);
+    }
+
+    // water (sea at 0 m, lakes at their own level) and glowing lava
+    let mut wm = MeshData::default();
+    let mut lava = MeshData::default();
+    for j in 0..n {
+        for i in 0..n {
+            let corners = [(i, j), (i + 1, j), (i, j + 1), (i + 1, j + 1)];
+            let level = corners.iter().filter_map(|&(a, b)| s_at(a, b).water).fold(f64::NAN, f64::max);
+            if !level.is_nan() && corners.iter().any(|&(a, b)| h_at(a, b) < level) {
+                let lake = level > 0.5;
+                let mut p = [[0f32; 3]; 4];
+                let mut c = [[0f32; 4]; 4];
+                for (k, &(a, b)) in corners.iter().enumerate() {
+                    let mut q = local(a, b);
+                    q[1] = level as f32;
+                    p[k] = q;
+                    let depth = (level - h_at(a, b)).max(0.0) as f32;
+                    c[k] = lin3(if lake { lake_colour(depth) } else { sea_colour(depth) });
+                }
+                wm.quad(p, [0.0, 1.0, 0.0], c);
+            }
+            if corners.iter().any(|&(a, b)| s_at(a, b).glow > 0.2) {
+                let lift = (0.4 + cell * 0.02) as f32;
+                let mut p = [[0f32; 3]; 4];
+                let mut c = [[0f32; 4]; 4];
+                for (k, &(a, b)) in corners.iter().enumerate() {
+                    let mut q = local(a, b);
+                    q[1] += lift;
+                    p[k] = q;
+                    let gl = s_at(a, b).glow;
+                    c[k] = [3.4 * gl, 0.9 * gl, 0.12 * gl, 1.0];
+                }
+                lava.quad(p, [0.0, 1.0, 0.0], c);
+            }
+        }
+    }
+    if !wm.is_empty() {
+        out.water = Some(wm);
+    }
+    if !lava.is_empty() {
+        out.lava = Some(lava);
+    }
+    out
+}
+
+/// The ground height exactly as the finest terrain chunks draw it
+/// (8 m triangles), so the player stands on the visible surface.
+pub fn drawn_height(t: &Terrain, x: f64, z: f64) -> f64 {
+    let cell = crate::lod::ROOT_SIZE / (1u64 << crate::lod::MAX_LEVEL) as f64 / CHUNK_N as f64;
+    let o = -crate::lod::ROOT_SIZE / 2.0;
+    let (gx, gz) = ((x - o) / cell, (z - o) / cell);
+    let (i, j) = (gx.floor(), gz.floor());
+    let (u, w) = (gx - i, gz - j);
+    let (xa, za) = (o + i * cell, o + j * cell);
+    let a = t.height(xa, za);
+    let b = t.height(xa + cell, za);
+    let c = t.height(xa, za + cell);
+    let d = t.height(xa + cell, za + cell);
+    tri_interp(a, b, c, d, u, w)
+}
+
+#[inline]
+fn tri_interp(a: f64, b: f64, c: f64, d: f64, u: f64, w: f64) -> f64 {
+    // triangles (a, c, b) and (b, c, d), as in `build_chunk`
+    if u + w <= 1.0 {
+        a + u * (b - a) + w * (c - a)
+    } else {
+        d + (1.0 - u) * (c - d) + (1.0 - w) * (b - d)
+    }
 }
 
 // ---------------------------------------------------------------------
-// Rim Sea
+// Prop shapes (placeholder art until real assets go in)
 // ---------------------------------------------------------------------
 
-/// The sea surface (y = 0), coloured by depth, cut off at the bowl's rim.
-pub fn water_mesh(w: &World) -> MeshData {
-    const WN: usize = 220;
-    let we = SEA_R + 20.0;
-    let step = 2.0 * we / WN as f64;
-    let mut m = MeshData::default();
-    for j in 0..=WN {
-        for i in 0..=WN {
-            let x = -we + i as f64 * step;
-            let z = -we + j as f64 * step;
-            let d = (-w.height_at(x, z)).max(0.0) as f32;
-            let r = x.hypot(z);
-            let shallow = [0.50, 0.80, 0.78];
-            let mid = [0.15, 0.47, 0.62];
-            let deep = [0.05, 0.20, 0.38];
-            let mut c = mix3(shallow, mid, sm(0.0, 6.0, d as f64) as f32);
-            c = mix3(c, deep, sm(6.0, 40.0, d as f64) as f32);
-            c = mix3(c, [0.035, 0.14, 0.27], sm(SEA_R - 400.0, SEA_R, r) as f32);
-            c = mix3(c, [0.93, 0.96, 0.95], (1.0 - sm(0.15, 1.4, d as f64) as f32) * 0.7);
-            m.positions.push([x as f32, 0.0, z as f32]);
-            m.normals.push([0.0, 1.0, 0.0]);
-            m.colors.push(lin3(c));
-        }
-    }
-    let row = (WN + 1) as u32;
-    for j in 0..WN {
-        for i in 0..WN {
-            let cx = -we + (i as f64 + 0.5) * step;
-            let cz = -we + (j as f64 + 0.5) * step;
-            if cx.hypot(cz) > SEA_R {
-                continue;
-            }
-            let a = j as u32 * row + i as u32;
-            let (b, c) = (a + 1, a + row);
-            let d = c + 1;
-            m.indices.extend_from_slice(&[a, c, b, b, c, d]);
-        }
-    }
-    m
-}
-
-// ---------------------------------------------------------------------
-// Props: trees, bushes, rocks, mine entrances
-// ---------------------------------------------------------------------
-
-/// Flat-shaded triangle soup with a per-vertex "take the instance tint" flag.
+/// Triangle soup with per-vertex normals and a "take the instance tint" flag.
 #[derive(Default, Clone)]
 pub struct Geo {
     p: Vec<[f32; 3]>,
@@ -174,17 +275,18 @@ pub struct Geo {
 }
 
 impl Geo {
+    fn push(&mut self, p: [f32; 3], n: [f32; 3], c: [f32; 3], tint: bool) {
+        self.p.push(p);
+        self.n.push(n);
+        self.c.push(c);
+        self.tint.push(tint);
+    }
     fn tri(&mut self, a: [f32; 3], b: [f32; 3], c: [f32; 3], col: [f32; 3], tint: bool) {
         let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
         let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
-        let mut nn = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
-        let l = (nn[0] * nn[0] + nn[1] * nn[1] + nn[2] * nn[2]).sqrt().max(1e-9);
-        nn = [nn[0] / l, nn[1] / l, nn[2] / l];
+        let nn = norm3([u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]);
         for p in [a, b, c] {
-            self.p.push(p);
-            self.n.push(nn);
-            self.c.push(col);
-            self.tint.push(tint);
+            self.push(p, nn, col, tint);
         }
     }
     pub fn triangle_count(&self) -> usize {
@@ -192,24 +294,31 @@ impl Geo {
     }
 }
 
-fn scale3(c: [f32; 3], s: f32) -> [f32; 3] {
-    [c[0] * s, c[1] * s, c[2] * s]
+/// Soft, top-lit shading: darker underneath, lighter on top.
+fn top_lit(col: [f32; 3], y: f32, y0: f32, y1: f32) -> [f32; 3] {
+    let t = ((y - y0) / (y1 - y0).max(0.01)).clamp(0.0, 1.0);
+    scale3(col, 0.62 + 0.5 * t)
 }
 
+/// A cone with smooth normals (a conifer tier).
+#[allow(clippy::too_many_arguments)]
 fn cone(g: &mut Geo, y0: f32, y1: f32, r: f32, sides: usize, col: [f32; 3], tint: bool, jit: f32, rng: &mut Rng) {
+    let slope = r / (y1 - y0);
     let mut ring = Vec::with_capacity(sides);
     for i in 0..sides {
         let a = i as f32 / sides as f32 * std::f32::consts::TAU;
         let rr = r * (1.0 + (rng.next() as f32 - 0.5) * jit);
-        ring.push([a.cos() * rr, y0 + (rng.next() as f32 - 0.5) * jit * r * 0.3, a.sin() * rr]);
+        ring.push(([a.cos() * rr, y0 + (rng.next() as f32 - 0.5) * jit * r * 0.3, a.sin() * rr], norm3([a.cos(), slope, a.sin()])));
     }
-    let apex = [(rng.next() as f32 - 0.5) * jit * r * 0.3, y1, (rng.next() as f32 - 0.5) * jit * r * 0.3];
-    let base = [0.0, y0, 0.0];
+    let apex = [0.0, y1, 0.0];
     for i in 0..sides {
-        let (a, b) = (ring[i], ring[(i + 1) % sides]);
-        let sh = 0.9 + rng.next() as f32 * 0.2;
-        g.tri(a, apex, b, scale3(col, sh), tint);
-        g.tri(a, b, base, scale3(col, 0.7), tint);
+        let (a, na) = ring[i];
+        let (b, nb) = ring[(i + 1) % sides];
+        let nt = norm3([(na[0] + nb[0]) * 0.5, slope * 2.0, (na[2] + nb[2]) * 0.5]);
+        g.push(a, na, top_lit(col, a[1], y0, y1), tint);
+        g.push(apex, nt, top_lit(col, y1, y0, y1), tint);
+        g.push(b, nb, top_lit(col, b[1], y0, y1), tint);
+        g.tri(a, b, [0.0, y0 + (y1 - y0) * 0.1, 0.0], scale3(col, 0.5), tint);
     }
 }
 
@@ -217,12 +326,18 @@ fn cylinder(g: &mut Geo, y0: f32, y1: f32, r0: f32, r1: f32, sides: usize, col: 
     for i in 0..sides {
         let a = i as f32 / sides as f32 * std::f32::consts::TAU;
         let b = (i + 1) as f32 / sides as f32 * std::f32::consts::TAU;
+        let (na, nb) = ([a.cos(), 0.0, a.sin()], [b.cos(), 0.0, b.sin()]);
         let p0 = [a.cos() * r0, y0, a.sin() * r0];
         let p1 = [b.cos() * r0, y0, b.sin() * r0];
         let p2 = [b.cos() * r1, y1, b.sin() * r1];
         let p3 = [a.cos() * r1, y1, a.sin() * r1];
-        g.tri(p0, p3, p1, col, tint);
-        g.tri(p1, p3, p2, col, tint);
+        let (c0, c1) = (scale3(col, 0.7), col);
+        g.push(p0, na, c0, tint);
+        g.push(p3, na, c1, tint);
+        g.push(p1, nb, c0, tint);
+        g.push(p1, nb, c0, tint);
+        g.push(p3, na, c1, tint);
+        g.push(p2, nb, c1, tint);
     }
 }
 
@@ -234,10 +349,7 @@ fn icosphere(subdiv: u32) -> (Vec<[f32; 3]>, Vec<[usize; 3]>) {
         [t, 0.0, -1.0], [t, 0.0, 1.0], [-t, 0.0, -1.0], [-t, 0.0, 1.0],
     ]
     .iter()
-    .map(|p| {
-        let l = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
-        [p[0] / l, p[1] / l, p[2] / l]
-    })
+    .map(|p| norm3(*p))
     .collect();
     let mut f: Vec<[usize; 3]> = vec![
         [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
@@ -251,9 +363,7 @@ fn icosphere(subdiv: u32) -> (Vec<[f32; 3]>, Vec<[usize; 3]>) {
             if let Some(&i) = cache.get(&key) {
                 return i;
             }
-            let m = [(v[a][0] + v[b][0]) / 2.0, (v[a][1] + v[b][1]) / 2.0, (v[a][2] + v[b][2]) / 2.0];
-            let l = (m[0] * m[0] + m[1] * m[1] + m[2] * m[2]).sqrt();
-            v.push([m[0] / l, m[1] / l, m[2] / l]);
+            v.push(norm3([(v[a][0] + v[b][0]) / 2.0, (v[a][1] + v[b][1]) / 2.0, (v[a][2] + v[b][2]) / 2.0]));
             cache.insert(key, v.len() - 1);
             v.len() - 1
         };
@@ -268,19 +378,26 @@ fn icosphere(subdiv: u32) -> (Vec<[f32; 3]>, Vec<[usize; 3]>) {
     (v, f)
 }
 
+/// A lumpy ball with smooth normals (tree canopy, bush) or flat faces (rock).
 #[allow(clippy::too_many_arguments)]
-fn blob(g: &mut Geo, cx: f32, cy: f32, cz: f32, rad: f32, sy: f32, col: [f32; 3], tint: bool, jit: f32, rng: &mut Rng, subdiv: u32) {
+fn blob(g: &mut Geo, cx: f32, cy: f32, cz: f32, rad: f32, sy: f32, col: [f32; 3], tint: bool, jit: f32, rng: &mut Rng, subdiv: u32, smooth: bool) {
     let (v, f) = icosphere(subdiv);
-    let vv: Vec<[f32; 3]> = v
-        .iter()
-        .map(|p| {
-            let k = 1.0 + (rng.next() as f32 - 0.5) * jit;
-            [cx + p[0] * rad * k, cy + p[1] * rad * sy * k, cz + p[2] * rad * k]
-        })
-        .collect();
+    let k: Vec<f32> = v.iter().map(|_| 1.0 + (rng.next() as f32 - 0.5) * jit).collect();
+    let pos = |i: usize| [cx + v[i][0] * rad * k[i], cy + v[i][1] * rad * sy * k[i], cz + v[i][2] * rad * k[i]];
+    let (y0, y1) = (cy - rad * sy, cy + rad * sy);
     for &[a, b, c] in &f {
-        let sh = 0.88 + rng.next() as f32 * 0.24;
-        g.tri(vv[a], vv[b], vv[c], scale3(col, sh), tint);
+        if smooth {
+            for i in [a, b, c] {
+                let p = pos(i);
+                let nrm = norm3([v[i][0], v[i][1] / sy.max(0.2), v[i][2]]);
+                g.push(p, nrm, top_lit(col, p[1], y0, y1), tint);
+            }
+        } else {
+            let sh = 0.88 + rng.next() as f32 * 0.24;
+            let (pa, pb, pc) = (pos(a), pos(b), pos(c));
+            let mid_y = (pa[1] + pb[1] + pc[1]) / 3.0;
+            g.tri(pa, pb, pc, scale3(top_lit(col, mid_y, y0, y1), sh), tint);
+        }
     }
 }
 
@@ -309,7 +426,7 @@ pub enum PropKind {
     Mine,
 }
 
-/// The six prop shapes (placeholder art until real assets go in).
+/// The six prop shapes.
 pub struct PropKinds {
     pub pine: Geo,
     pub broad: Geo,
@@ -328,24 +445,25 @@ impl PropKinds {
         let wood = [0.42, 0.29, 0.18];
         let mut pine = Geo::default();
         cylinder(&mut pine, 0.0, 3.0, 0.35, 0.22, 6, bark, false);
-        cone(&mut pine, 2.0, 7.0, 2.6, 7, white, true, 0.15, &mut r);
-        cone(&mut pine, 4.2, 9.5, 2.0, 7, white, true, 0.15, &mut r);
-        cone(&mut pine, 6.5, 11.5, 1.3, 6, white, true, 0.15, &mut r);
+        cone(&mut pine, 2.0, 7.0, 2.6, 8, white, true, 0.15, &mut r);
+        cone(&mut pine, 4.2, 9.5, 2.0, 8, white, true, 0.15, &mut r);
+        cone(&mut pine, 6.5, 11.5, 1.3, 7, white, true, 0.15, &mut r);
         let mut broad = Geo::default();
         cylinder(&mut broad, 0.0, 4.0, 0.42, 0.28, 6, bark, false);
-        blob(&mut broad, 0.0, 6.2, 0.0, 3.4, 0.85, white, true, 0.25, &mut r, 1);
-        blob(&mut broad, 1.3, 5.2, 0.8, 2.0, 0.8, scale3(white, 0.92), true, 0.25, &mut r, 0);
+        blob(&mut broad, 0.0, 6.2, 0.0, 3.4, 0.85, white, true, 0.22, &mut r, 1, true);
+        blob(&mut broad, 1.4, 5.3, 0.9, 2.1, 0.8, scale3(white, 0.95), true, 0.22, &mut r, 1, true);
+        blob(&mut broad, -1.2, 5.6, -0.7, 1.9, 0.8, scale3(white, 0.97), true, 0.22, &mut r, 0, true);
         let mut dead = Geo::default();
         cylinder(&mut dead, 0.0, 7.0, 0.35, 0.12, 5, grey, false);
         cuboid(&mut dead, 0.9, 4.5, 0.0, 1.8, 0.18, 0.18, grey, false);
         cuboid(&mut dead, -0.7, 5.6, 0.3, 1.4, 0.16, 0.16, grey, false);
-        blob(&mut dead, 0.0, 7.0, 0.0, 0.9, 0.6, white, true, 0.4, &mut r, 0);
+        blob(&mut dead, 0.0, 7.0, 0.0, 0.9, 0.6, white, true, 0.4, &mut r, 0, true);
         let mut bush = Geo::default();
-        blob(&mut bush, 0.0, 0.7, 0.0, 1.3, 0.75, white, true, 0.3, &mut r, 0);
+        blob(&mut bush, 0.0, 0.7, 0.0, 1.3, 0.75, white, true, 0.3, &mut r, 1, true);
         let mut rock = Geo::default();
-        blob(&mut rock, 0.0, 0.35, 0.0, 1.6, 0.65, white, true, 0.45, &mut r, 1);
+        blob(&mut rock, 0.0, 0.35, 0.0, 1.6, 0.65, white, true, 0.45, &mut r, 1, false);
         let mut mine = Geo::default();
-        blob(&mut mine, 0.0, 1.0, -5.5, 8.0, 0.75, [0.95, 0.95, 0.95], true, 0.35, &mut r, 1);
+        blob(&mut mine, 0.0, 1.0, -5.5, 8.0, 0.75, [0.95, 0.95, 0.95], true, 0.35, &mut r, 1, false);
         cuboid(&mut mine, -2.1, 2.0, 0.6, 0.45, 4.0, 0.45, wood, false);
         cuboid(&mut mine, 2.1, 2.0, 0.6, 0.45, 4.0, 0.45, wood, false);
         cuboid(&mut mine, 0.0, 4.15, 0.6, 5.2, 0.5, 0.6, wood, false);
@@ -370,22 +488,12 @@ impl PropKinds {
     }
 }
 
-/// One placed prop.
-#[derive(Clone, Copy, Debug)]
-pub struct Prop {
-    pub kind: PropKind,
-    pub pos: [f32; 3],
-    pub scale: f32,
-    pub rot: f32,
-    pub tint: [f32; 3],
-}
-
 /// Mine entrances in the North (world metres).
 pub fn mine_sites() -> Vec<(f64, f64)> {
     [(-112.0, 190.0), (-74.0, 175.0), (-100.0, 305.0), (-66.0, 300.0)]
         .iter()
         .map(|&(d, r)| {
-            let (mx, my) = crate::worldgen::island::pol(d, r);
+            let (mx, my) = pol(d, r);
             to_world(mx, my)
         })
         .collect()
@@ -393,264 +501,349 @@ pub fn mine_sites() -> Vec<(f64, f64)> {
 
 /// Where a new game starts: the Southwest grasslands, looking at the peaks.
 pub fn spawn_point() -> (f64, f64) {
-    let (mx, my) = crate::worldgen::island::pol(150.0, 232.0);
+    let (mx, my) = pol(150.0, 232.0);
     to_world(mx, my)
 }
 
-/// Places trees, bushes, rocks and mines by region, as in the prototype:
-/// South dark forest, Northwest swampy forest, Southeast forest patches and
-/// open fields, Southwest open grassland, North rocks and mines, Northeast
-/// desert rocks and a few dead trees.
-pub fn scatter(w: &World) -> Vec<Prop> {
-    let mut r = Rng::new(777);
-    let mut out = Vec::new();
-    let mines = mine_sites();
-    let near_mine = |x: f64, z: f64| mines.iter().any(|&(a, b)| (a - x).hypot(b - z) < 22.0);
-    let (evx, evz) = to_world(EX, EY);
+fn cell_seed(ci: i64, cj: i64, salt: i64) -> u64 {
+    let h = (ci.wrapping_mul(73_856_093) ^ cj.wrapping_mul(19_349_663) ^ salt.wrapping_mul(83_492_791)).rem_euclid(2_147_483_645);
+    h as u64 + 1
+}
+
+fn add_geo(m: &mut MeshData, g: &Geo, pos: [f32; 3], scale: f32, rot: f32, tint: [f32; 3]) {
+    let (c, s) = (rot.cos(), rot.sin());
+    let base = m.positions.len() as u32;
+    for v in 0..g.p.len() {
+        let q = g.p[v];
+        let (x, y, z) = (q[0] * scale, q[1] * scale, q[2] * scale);
+        m.positions.push([pos[0] + c * x - s * z, pos[1] + y, pos[2] + s * x + c * z]);
+        let nv = g.n[v];
+        m.normals.push([c * nv[0] - s * nv[2], nv[1], s * nv[0] + c * nv[2]]);
+        let col = if g.tint[v] { [g.c[v][0] * tint[0], g.c[v][1] * tint[1], g.c[v][2] * tint[2]] } else { g.c[v] };
+        m.colors.push(lin3(col));
+        m.indices.push(base + v as u32);
+    }
+}
+
+/// Side of a prop cell in metres (trees and rocks are streamed in cells).
+pub const PROP_CELL: f64 = 128.0;
+
+/// Picks a prop for a spot, by region, as in the prototype.
+fn choose_prop(s: &Sample, q: f64, pick: f64, size: f64) -> Option<(PropKind, f64, [f32; 3])> {
+    let fm = s.forest as f64;
+    if s.h > 4600.0 {
+        return (q < 0.02).then(|| (PropKind::Rock, 1.0 + size * 2.5, [0.66, 0.65, 0.66]));
+    }
+    match s.region {
+        // North: rock mines
+        0 => {
+            if q < 0.035 {
+                Some((PropKind::Rock, 0.7 + size * 2.2, [0.62, 0.6, 0.56]))
+            } else if q < 0.045 {
+                Some((PropKind::Pine, 0.7 + size * 0.4, [0.24, 0.36, 0.24]))
+            } else {
+                None
+            }
+        }
+        // Northeast: lava flows and desert
+        1 => {
+            if q < 0.012 {
+                Some((PropKind::Rock, 0.6 + size * 1.8, [0.3, 0.26, 0.24]))
+            } else if q < 0.02 {
+                Some((PropKind::Rock, 0.5 + size * 1.2, [0.78, 0.64, 0.45]))
+            } else if q < 0.023 {
+                Some((PropKind::Dead, 0.6 + size * 0.4, [0.55, 0.5, 0.42]))
+            } else {
+                None
+            }
+        }
+        // Southeast: mid forest with fields
+        2 => {
+            if s.field {
+                (q < 0.003).then(|| (PropKind::Broad, 0.8 + size * 0.4, [0.36, 0.55, 0.22]))
+            } else if fm > 0.35 && q < 0.26 * fm {
+                let k = if pick < 0.75 { PropKind::Broad } else { PropKind::Pine };
+                Some((k, 0.8 + size * 0.5, [0.27, 0.48, 0.2]))
+            } else if q < 0.015 {
+                Some((PropKind::Bush, 0.7 + size * 0.6, [0.32, 0.5, 0.22]))
+            } else {
+                None
+            }
+        }
+        // South: dark forest
+        3 => {
+            if q < 0.22 * fm.max(0.35) {
+                let k = if pick < 0.65 { PropKind::Pine } else { PropKind::Broad };
+                let tint = if size < 0.5 { [0.12, 0.24, 0.14] } else { [0.16, 0.29, 0.15] };
+                Some((k, 0.9 + size * 0.6, tint))
+            } else if q < 0.26 {
+                Some((PropKind::Bush, 0.6 + size * 0.5, [0.18, 0.3, 0.16]))
+            } else {
+                None
+            }
+        }
+        // Southwest: grasslands
+        4 => {
+            if q < 0.004 {
+                Some((PropKind::Broad, 0.8 + size * 0.5, [0.38, 0.55, 0.22]))
+            } else if q < 0.016 {
+                Some((PropKind::Bush, 0.5 + size * 0.6, [0.42, 0.56, 0.24]))
+            } else if q < 0.019 {
+                Some((PropKind::Rock, 0.4 + size, [0.64, 0.62, 0.58]))
+            } else {
+                None
+            }
+        }
+        // Northwest: lakes and swampy forest
+        _ => {
+            if fm > 0.3 && q < 0.2 * fm {
+                let k = if pick < 0.6 { PropKind::Broad } else if pick < 0.85 { PropKind::Dead } else { PropKind::Pine };
+                Some((k, 0.75 + size * 0.45, [0.30, 0.42, 0.22]))
+            } else if q < 0.03 {
+                Some((PropKind::Bush, 0.6 + size * 0.6, [0.32, 0.44, 0.24]))
+            } else if q < 0.036 {
+                Some((PropKind::Dead, 0.6 + size * 0.4, [0.45, 0.43, 0.38]))
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Trees, bushes, rocks and mine entrances for one cell.
+/// Positions are relative to the cell's centre.
+pub fn prop_cell(t: &Terrain, kinds: &PropKinds, ci: i64, cj: i64) -> Option<MeshData> {
+    let (x0, z0) = (ci as f64 * PROP_CELL, cj as f64 * PROP_CELL);
+    let (ox, oz) = (x0 + PROP_CELL / 2.0, z0 + PROP_CELL / 2.0);
+    if ox.hypot(oz) > LAND_R + 1000.0 {
+        return None;
+    }
+    let mut r = Rng::new(cell_seed(ci, cj, 1));
+    let mut m = MeshData::default();
     let (spx, spz) = spawn_point();
-    const STEP: f64 = 7.0;
-    let mut z = -EXT + 4.0;
-    while z < EXT - 4.0 {
-        let mut x = -EXT + 4.0;
-        while x < EXT - 4.0 {
-            let jx = x + (r.next() - 0.5) * STEP;
-            let jz = z + (r.next() - 0.5) * STEP;
-            x += STEP;
-            let Some(k) = w.grid_index(jx, jz) else { continue };
-            let (l, e, h) = (w.l[k], w.e[k], w.h[k]);
-            if l < 0.02 || h < 2.0 || w.wet[k] > 0.3 || near_mine(jx, jz) || (jx - spx).hypot(jz - spz) < 10.0 {
+    let mines = mine_sites();
+    let (evx, evz) = to_world(EX, EY);
+    const STEP: f64 = 8.0;
+    let steps = (PROP_CELL / STEP) as usize;
+    for j in 0..steps {
+        for i in 0..steps {
+            let jx = x0 + (i as f64 + r.next()) * STEP;
+            let jz = z0 + (j as f64 + r.next()) * STEP;
+            let (q, pick, size) = (r.next(), r.next(), r.next());
+            let rot = (r.next() * std::f64::consts::TAU) as f32;
+            let vary = 0.9 + r.next() as f32 * 0.2;
+            if q > 0.3 {
+                continue; // nothing anywhere is denser than this
+            }
+            let s = t.sample(jx, jz);
+            if s.water.is_some() || s.h < 2.0 || s.wet > 0.3 || s.glow > 0.0 || s.shore < 30.0 {
                 continue;
             }
-            let (mx, my) = to_map(jx, jz);
-            if w.lava.crust_at(mx, my) > 0.0 {
+            if (jx - spx).hypot(jz - spz) < 10.0 || mines.iter().any(|&(a, b)| (a - jx).hypot(b - jz) < 22.0) {
                 continue;
             }
-            let mut add = |kind: PropKind, s: f64, tint: [f32; 3], r: &mut Rng| {
-                let y = w.height_at(jx, jz) - 0.15;
-                let v = 0.9 + r.next() as f32 * 0.2;
-                out.push(Prop {
-                    kind,
-                    pos: [jx as f32, y as f32, jz as f32],
-                    scale: s as f32,
-                    rot: (r.next() * std::f64::consts::TAU) as f32,
-                    tint: scale3(tint, v),
-                });
-            };
+            let Some((kind, sc, tint)) = choose_prop(&s, q, pick, size) else { continue };
+            // trees don't grow on steep slopes; rocks do
+            if kind != PropKind::Rock {
+                let slope = (t.height(jx + 3.0, jz) - t.height(jx - 3.0, jz)).abs() + (t.height(jx, jz + 3.0) - t.height(jx, jz - 3.0)).abs();
+                if slope > 7.0 {
+                    continue;
+                }
+            }
+            add_geo(&mut m, kinds.get(kind), [(jx - ox) as f32, (s.h - 0.3) as f32, (jz - oz) as f32], sc as f32, rot, scale3(tint, vary));
+        }
+    }
+    for (mx, mz) in mines {
+        if mx >= x0 && mx < x0 + PROP_CELL && mz >= z0 && mz < z0 + PROP_CELL {
+            let face = (mx - evx).atan2(mz - evz); // face away from Everest
+            let y = (t.height(mx, mz) - 0.3) as f32;
+            add_geo(&mut m, &kinds.mine, [(mx - ox) as f32, y, (mz - oz) as f32], 1.0, -face as f32, [0.6, 0.58, 0.55]);
+        }
+    }
+    (!m.is_empty()).then_some(m)
+}
+
+/// Side of a grass cell in metres (grass is drawn close to the player only).
+pub const GRASS_CELL: f64 = 32.0;
+
+/// Tufts of grass for one cell, coloured from the ground under them.
+/// Positions are relative to the cell's centre.
+pub fn grass_cell(t: &Terrain, ci: i64, cj: i64) -> Option<MeshData> {
+    let (x0, z0) = (ci as f64 * GRASS_CELL, cj as f64 * GRASS_CELL);
+    let (ox, oz) = (x0 + GRASS_CELL / 2.0, z0 + GRASS_CELL / 2.0);
+    if ox.hypot(oz) > LAND_R {
+        return None;
+    }
+    // the finest terrain grid (8 m) inside this cell
+    const L: usize = 5;
+    let cell = GRASS_CELL / (L - 1) as f64;
+    let mut ss = Vec::with_capacity(L * L);
+    for j in 0..L {
+        for i in 0..L {
+            ss.push(t.sample(x0 + i as f64 * cell, z0 + j as f64 * cell));
+        }
+    }
+    if ss.iter().all(|s| s.water.is_some() || s.h < 2.0) {
+        return None;
+    }
+    let mut r = Rng::new(cell_seed(ci, cj, 2));
+    let mut m = MeshData::default();
+    const STEP: f64 = 1.25;
+    let steps = (GRASS_CELL / STEP) as usize;
+    for j in 0..steps {
+        for i in 0..steps {
+            let gx = (i as f64 + r.next()) * STEP;
+            let gz = (j as f64 + r.next()) * STEP;
             let q = r.next();
-            let d_ev = (mx - EX).hypot(my - EY);
-            if e > 0.72 || d_ev < 95.0 {
-                if q < 0.02 {
-                    let s = 1.0 + r.next() * 2.5;
-                    add(PropKind::Rock, s, [0.62, 0.6, 0.57], &mut r);
-                }
-                continue;
-            }
-            let slope = (w.height_at(jx + 3.0, jz) - w.height_at(jx - 3.0, jz)).abs() + (w.height_at(jx, jz + 3.0) - w.height_at(jx, jz - 3.0)).abs();
-            if slope > 7.0 {
-                if q < 0.05 {
-                    let s = 0.8 + r.next() * 2.0;
-                    add(PropKind::Rock, s, [0.55, 0.52, 0.48], &mut r);
-                }
-                continue;
-            }
-            let fm = w.forest[k] as f64;
-            match w.region[k] {
-                0 => {
-                    // North: rock mines
-                    if q < 0.035 {
-                        let s = 0.7 + r.next() * 2.2;
-                        add(PropKind::Rock, s, [0.62, 0.6, 0.56], &mut r);
-                    } else if q < 0.045 {
-                        let s = 0.7 + r.next() * 0.4;
-                        add(PropKind::Pine, s, [0.24, 0.34, 0.24], &mut r);
-                    }
-                }
-                1 => {
-                    // Northeast: lava flows and desert
-                    if q < 0.012 {
-                        let s = 0.6 + r.next() * 1.8;
-                        add(PropKind::Rock, s, [0.3, 0.26, 0.24], &mut r);
-                    } else if q < 0.02 {
-                        let s = 0.5 + r.next() * 1.2;
-                        add(PropKind::Rock, s, [0.74, 0.62, 0.45], &mut r);
-                    } else if q < 0.023 {
-                        let s = 0.6 + r.next() * 0.4;
-                        add(PropKind::Dead, s, [0.55, 0.5, 0.42], &mut r);
-                    }
-                }
+            let tall = r.next() as f32;
+            let rot = r.next() as f32 * std::f32::consts::TAU;
+            let (fi, fj) = (gx / cell, gz / cell);
+            let (ii, jj) = ((fi.floor() as usize).min(L - 2), (fj.floor() as usize).min(L - 2));
+            let (u, w) = (fi - ii as f64, fj - jj as f64);
+            let s = &ss[(jj + (w > 0.5) as usize) * L + ii + (u > 0.5) as usize];
+            let base_density = match s.region {
+                4 => 0.9,
                 2 => {
-                    // Southeast: mid forest with fields
-                    if w.field[k] {
-                        if q < 0.004 {
-                            let s = 0.8 + r.next() * 0.4;
-                            add(PropKind::Broad, s, [0.36, 0.5, 0.22], &mut r);
-                        }
-                    } else if fm > 0.4 && q < 0.26 * fm {
-                        let kind = if r.next() < 0.75 { PropKind::Broad } else { PropKind::Pine };
-                        let s = 0.8 + r.next() * 0.5;
-                        add(kind, s, [0.27, 0.44, 0.2], &mut r);
-                    } else if q < 0.015 {
-                        let s = 0.7 + r.next() * 0.6;
-                        add(PropKind::Bush, s, [0.32, 0.46, 0.22], &mut r);
+                    if s.field {
+                        0.45
+                    } else {
+                        0.7
                     }
                 }
-                3 => {
-                    // South: dark forest
-                    if q < 0.22 * fm.max(0.5) {
-                        let kind = if r.next() < 0.65 { PropKind::Pine } else { PropKind::Broad };
-                        let s = 0.9 + r.next() * 0.6;
-                        let tint = if r.next() < 0.5 { [0.11, 0.21, 0.13] } else { [0.15, 0.25, 0.14] };
-                        add(kind, s, tint, &mut r);
-                    } else if q < 0.26 {
-                        let s = 0.6 + r.next() * 0.5;
-                        add(PropKind::Bush, s, [0.17, 0.27, 0.15], &mut r);
-                    }
+                5 => 0.65,
+                3 => 0.35,
+                0 => 0.12,
+                _ => 0.0,
+            };
+            let dens = base_density * (1.0 - sm(3600.0, 4300.0, s.h)) * sm(30.0, 80.0, s.shore) * (1.0 - s.forest as f64 * 0.5);
+            if q > dens || s.water.is_some() || s.glow > 0.0 || s.wet > 0.3 || s.h < 2.0 {
+                continue;
+            }
+            let h = tri_interp(ss[jj * L + ii].h, ss[jj * L + ii + 1].h, ss[(jj + 1) * L + ii].h, ss[(jj + 1) * L + ii + 1].h, u, w);
+            let base = [(x0 + gx - ox) as f32, h as f32 - 0.05, (z0 + gz - oz) as f32];
+            let ground = s.col;
+            let root = lin3(scale3(ground, 0.8));
+            let tip = lin3(mix3(scale3(ground, 1.3), [0.85, 0.95, 0.45], 0.25));
+            let height = 0.35 + tall * 0.45;
+            for b in 0..3 {
+                let a = rot + b as f32 * 2.094;
+                let (ca, sa) = (a.cos(), a.sin());
+                let lean = 0.18 * height;
+                let p0 = [base[0] - sa * 0.06, base[1], base[2] + ca * 0.06];
+                let p1 = [base[0] + sa * 0.06, base[1], base[2] - ca * 0.06];
+                let p2 = [base[0] + ca * lean, base[1] + height, base[2] + sa * lean];
+                let k = m.positions.len() as u32;
+                for (p, c) in [(p0, root), (p1, root), (p2, tip)] {
+                    m.positions.push(p);
+                    m.normals.push([0.0, 1.0, 0.0]);
+                    m.colors.push(c);
                 }
-                4 => {
-                    // Southwest: grasslands
-                    if q < 0.004 {
-                        let s = 0.8 + r.next() * 0.5;
-                        add(PropKind::Broad, s, [0.38, 0.5, 0.22], &mut r);
-                    } else if q < 0.016 {
-                        let s = 0.5 + r.next() * 0.6;
-                        add(PropKind::Bush, s, [0.42, 0.52, 0.24], &mut r);
-                    } else if q < 0.019 {
-                        let s = 0.4 + r.next();
-                        add(PropKind::Rock, s, [0.62, 0.6, 0.55], &mut r);
-                    }
-                }
-                _ => {
-                    // Northwest: lakes and swampy forest
-                    if fm > 0.3 && q < 0.2 * fm {
-                        let p = r.next();
-                        let kind = if p < 0.6 { PropKind::Broad } else if p < 0.85 { PropKind::Dead } else { PropKind::Pine };
-                        let s = 0.75 + r.next() * 0.45;
-                        add(kind, s, [0.30, 0.38, 0.22], &mut r);
-                    } else if q < 0.03 {
-                        let s = 0.6 + r.next() * 0.6;
-                        add(PropKind::Bush, s, [0.32, 0.4, 0.24], &mut r);
-                    } else if q < 0.036 {
-                        let s = 0.6 + r.next() * 0.4;
-                        add(PropKind::Dead, s, [0.45, 0.43, 0.38], &mut r);
-                    }
-                }
+                m.indices.extend_from_slice(&[k, k + 1, k + 2]);
             }
         }
-        z += STEP;
     }
-    for (x, z) in mines {
-        let face = (x - evx).atan2(z - evz); // face away from Everest
-        let y = w.height_at(x, z) - 0.3;
-        out.push(Prop { kind: PropKind::Mine, pos: [x as f32, y as f32, z as f32], scale: 1.0, rot: -face as f32, tint: [0.6, 0.58, 0.55] });
-    }
-    out
-}
-
-/// Side length of a prop chunk in metres, and chunks per side.
-pub const CHUNK: f64 = 240.0;
-pub const NCHUNK: usize = 16;
-
-/// A merged block of props for one map chunk.
-pub struct PropChunk {
-    /// Centre of the chunk (x, z) in metres.
-    pub centre: [f32; 2],
-    pub mesh: MeshData,
-}
-
-/// Merges all props into one mesh per chunk (few draw calls, easy culling).
-pub fn prop_chunks(props: &[Prop], kinds: &PropKinds) -> Vec<PropChunk> {
-    let mut chunks: Vec<MeshData> = vec![MeshData::default(); NCHUNK * NCHUNK];
-    for p in props {
-        let ci = (((p.pos[0] as f64 + EXT) / CHUNK).floor() as isize).clamp(0, NCHUNK as isize - 1) as usize;
-        let cj = (((p.pos[2] as f64 + EXT) / CHUNK).floor() as isize).clamp(0, NCHUNK as isize - 1) as usize;
-        let m = &mut chunks[cj * NCHUNK + ci];
-        let g = kinds.get(p.kind);
-        let (c, s) = (p.rot.cos(), p.rot.sin());
-        let base = m.positions.len() as u32;
-        for v in 0..g.p.len() {
-            let q = g.p[v];
-            let (x, y, z) = (q[0] * p.scale, q[1] * p.scale, q[2] * p.scale);
-            m.positions.push([p.pos[0] + c * x - s * z, p.pos[1] + y, p.pos[2] + s * x + c * z]);
-            let nv = g.n[v];
-            m.normals.push([c * nv[0] - s * nv[2], nv[1], s * nv[0] + c * nv[2]]);
-            let col = if g.tint[v] { [g.c[v][0] * p.tint[0], g.c[v][1] * p.tint[1], g.c[v][2] * p.tint[2]] } else { g.c[v] };
-            m.colors.push(lin3(col));
-            m.indices.push(base + v as u32);
-        }
-    }
-    chunks
-        .into_iter()
-        .enumerate()
-        .filter(|(_, m)| !m.is_empty())
-        .map(|(i, mesh)| {
-            let (ci, cj) = (i % NCHUNK, i / NCHUNK);
-            PropChunk { centre: [(-EXT + (ci as f64 + 0.5) * CHUNK) as f32, (-EXT + (cj as f64 + 0.5) * CHUNK) as f32], mesh }
-        })
-        .collect()
+    (!m.is_empty()).then_some(m)
 }
 
 // ---------------------------------------------------------------------
-// Cloudwall
+// The Cloudwall and the sky
 // ---------------------------------------------------------------------
 
-/// Cloud puffs around the rim: (centre, radius).
-pub fn cloud_puffs() -> Vec<([f32; 3], f32)> {
+/// The Cloudwall: a towering ring of cloud at the edge of the Rim Sea.
+/// Positions are relative to the world centre.
+pub fn cloudwall_mesh() -> MeshData {
     let mut r = Rng::new(5150);
-    let mut out = Vec::new();
-    for layer in 0..7 {
-        let y = -20.0 + layer as f64 * 70.0;
-        let n = if layer < 5 { 120 } else { 80 - layer * 6 };
-        for i in 0..n {
-            let a = (i as f64 + r.next() * 0.8) / n as f64 * std::f64::consts::TAU;
-            for ring in 0..2 {
-                let rr = 2280.0 + ring as f64 * 150.0 + (r.next() - 0.5) * 120.0 + 40.0 * (a * 5.0 + layer as f64).sin();
-                let size = (if layer < 5 { 110.0 } else { 85.0 }) + r.next() * 70.0 - ring as f64 * 10.0;
-                let yy = y + (r.next() - 0.5) * 40.0 + if ring == 1 { 20.0 } else { 0.0 };
-                out.push(([(a.cos() * rr) as f32, yy as f32, (a.sin() * rr) as f32], size as f32));
-            }
+    let noise = Noise::new(&mut r);
+    const SEG: usize = 1440;
+    let rows: [(f32, f32); 6] = [(-600.0, 0.0), (2500.0, 0.25), (7000.0, 0.5), (12000.0, 0.7), (17000.0, 0.85), (21000.0, 1.0)];
+    let mut m = MeshData::default();
+    for s in 0..=SEG {
+        let a = s as f64 / SEG as f64 * std::f64::consts::TAU;
+        let (ca, sa) = (a.cos(), a.sin());
+        for (k, &(y, t)) in rows.iter().enumerate() {
+            let lump = noise.fbm(ca * 40.0 + k as f64 * 0.3, sa * 40.0, 4);
+            let top_lump = noise.fbm(ca * 90.0 + 5.0, sa * 90.0, 3);
+            let yy = if k == rows.len() - 1 { y + 9000.0 * top_lump as f32 } else { y + 1500.0 * lump as f32 * t };
+            let rr = CLOUD_R + 45_000.0 * lump * t as f64 - 20_000.0 * t as f64;
+            m.positions.push([(ca * rr) as f32, yy, (sa * rr) as f32]);
+            m.normals.push(norm3([-(ca as f32), 0.5 * t, -(sa as f32)]));
+            let shade = 0.74 + 0.26 * t + 0.08 * lump as f32;
+            m.colors.push(lin3([shade, shade, shade * 1.03]));
         }
     }
-    out
-}
-
-/// The Cloudwall as `sectors` merged meshes of squashed, lumpy spheres,
-/// lighter on top and greyer underneath.
-pub fn cloud_meshes(sectors: usize) -> Vec<MeshData> {
-    let mut r = Rng::new(616);
-    let (sv, sf) = icosphere(1);
-    let mut out: Vec<MeshData> = vec![MeshData::default(); sectors];
-    for (c, rad) in cloud_puffs() {
-        let a = (c[2].atan2(c[0]) as f64).rem_euclid(std::f64::consts::TAU);
-        let s = ((a / std::f64::consts::TAU * sectors as f64) as usize).min(sectors - 1);
-        let m = &mut out[s];
-        let base = m.positions.len() as u32;
-        let bright = 0.9 + r.next() as f32 * 0.12;
-        for p in &sv {
-            let k = 1.0 + (r.next() as f32 - 0.5) * 0.25;
-            m.positions.push([c[0] + p[0] * rad * k, c[1] + p[1] * rad * 0.62 * k, c[2] + p[2] * rad * k]);
-            m.normals.push(*p);
-            let shade = (0.72 + 0.28 * (p[1] * 0.5 + 0.5)) * bright;
-            m.colors.push(lin3([shade, shade, shade * 1.02]));
-        }
-        for f in &sf {
-            m.indices.extend_from_slice(&[base + f[0] as u32, base + f[1] as u32, base + f[2] as u32]);
+    let nr = rows.len() as u32;
+    for s in 0..SEG as u32 {
+        for k in 0..nr - 1 {
+            let a = s * nr + k;
+            let b = a + 1;
+            let c = a + nr;
+            let d = c + 1;
+            m.indices.extend_from_slice(&[a, b, c, b, d, c]);
         }
     }
-    out
+    m
 }
 
-/// Region index for a world position (for HUD / gameplay).
-pub fn region_at(wx: f64, wz: f64) -> &'static str {
-    let (mx, my) = to_map(wx, wz);
-    REGIONS[crate::worldgen::island::region_index(to_map_deg(mx, my))].name
+/// A sky dome, brighter near the horizon. Colour it with the sky colour.
+pub fn sky_dome(radius: f32) -> MeshData {
+    let (v, f) = icosphere(3);
+    let mut m = MeshData::default();
+    for p in &v {
+        m.positions.push([p[0] * radius, p[1] * radius, p[2] * radius]);
+        m.normals.push([-p[0], -p[1], -p[2]]);
+        let up = p[1].max(0.0);
+        let b = 1.12 - 0.42 * up.powf(0.6);
+        let warm = 1.0 - up.powf(0.3) * 0.08;
+        m.colors.push([b * warm * 1.02, b * warm, b, 1.0]);
+    }
+    for t in f {
+        m.indices.extend_from_slice(&[t[0] as u32, t[2] as u32, t[1] as u32]);
+    }
+    m
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lod;
+
     #[test]
     fn icosphere_faces() {
         assert_eq!(icosphere(0).1.len(), 20);
         assert_eq!(icosphere(1).1.len(), 80);
+    }
+
+    #[test]
+    fn chunks_props_and_grass_at_spawn() {
+        let t = Terrain::new();
+        let (sx, sz) = spawn_point();
+        let keys = lod::select([sx, 400.0, sz], 1.7);
+        let c = build_chunk(&t, keys[0]);
+        let tm = c.terrain.expect("land at spawn");
+        assert_eq!(tm.positions.len(), (CHUNK_N + 1) * (CHUNK_N + 1) + 4 * CHUNK_N * 2);
+        let kinds = PropKinds::build();
+        let mut props = 0;
+        for j in -3..3 {
+            for i in -3..3 {
+                if let Some(m) = prop_cell(&t, &kinds, (sx / PROP_CELL).floor() as i64 + i, (sz / PROP_CELL).floor() as i64 + j) {
+                    props += m.triangle_count();
+                }
+            }
+        }
+        assert!(props > 0);
+        let g = grass_cell(&t, (sx / GRASS_CELL).floor() as i64, (sz / GRASS_CELL).floor() as i64).expect("grass at spawn");
+        assert!(g.triangle_count() > 300);
+        let d = drawn_height(&t, sx + 3.3, sz + 5.1);
+        assert!((d - t.height(sx + 3.3, sz + 5.1)).abs() < 3.0);
+    }
+
+    #[test]
+    fn ocean_chunk_is_one_square() {
+        let t = Terrain::new();
+        let k = lod::NodeKey { level: 3, ix: 0, iz: 0 };
+        assert!(k.ocean_only());
+        let c = build_chunk(&t, k);
+        assert!(c.terrain.is_none());
+        assert_eq!(c.water.unwrap().triangle_count(), 2);
     }
 }

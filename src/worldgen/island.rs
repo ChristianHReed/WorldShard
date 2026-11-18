@@ -248,6 +248,42 @@ impl Island {
         e.max(0.01)
     }
 
+    /// The elevation recipe without the two peaks and the east-coast cliff
+    /// (and without the minimum clamp). The full-size world adds those back
+    /// in metres so Mount Everest and Mount St. Helens get their real heights.
+    pub fn elevation_rest(&self, x: f64, y: f64, r: f64, deg: f64, l: f64) -> f64 {
+        let n = &self.noise;
+        let mut e = 0.26 * (l * 3.2).min(1.0).powf(0.75);
+        let (ex, ey) = (x - EX, y - EY);
+        let d1 = ex.hypot(ey);
+        let a1 = ey.atan2(ex) + 0.35 * n.n2(d1 / 90.0, 3.3) + 0.12 * n.n2(x / 40.0, y / 40.0);
+        let (ca, sa) = (a1.cos(), a1.sin());
+        let (mut rr, mut amp, mut f, mut nm) = (0.0, 0.5, 1.0, 0.0);
+        for o in 0..4 {
+            let v = 1.0 - n.n3(ca * 3.6 * f, sa * 3.6 * f, d1 / 120.0 * f + o as f64 * 7.1).abs();
+            rr += amp * v * v;
+            nm += amp;
+            amp *= 0.5;
+            f *= 2.0;
+        }
+        rr /= nm;
+        let inland = (l * 5.0).min(1.0);
+        e += (rr - 0.4) * 0.26 * sm(8.0, 70.0, d1) * (-d1 / 340.0).exp() * inland;
+        let mut br: f64 = 0.0;
+        for k in 0..6 {
+            let pd = (angd(deg - BORD[k]) * D2R * r + self.border_off(k, r)).abs();
+            br = br.max((-(pd / 26.0) * (pd / 26.0)).exp());
+        }
+        e += br * 0.18 * sm(110.0, 190.0, r) * inland;
+        e += 0.10 * n.fbm(x / 85.0, y / 85.0, 5) + 0.05 * (n.ridged(x / 55.0, y / 55.0, 4) - 0.45);
+        let mut wr = [0.0; 6];
+        self.region_weights(deg, x, y, &mut wr);
+        if wr[0] > 0.0 {
+            e += wr[0] * 0.1 * (n.ridged(x / 22.0, y / 22.0, 3) - 0.45) * inland;
+        }
+        e
+    }
+
     /// Where a region border runs, at `r` pixels from the centre (degrees).
     pub fn border_angle(&self, k: usize, r: f64) -> f64 {
         BORD[k] - self.border_off(k, r) / r / D2R
