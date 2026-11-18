@@ -11,7 +11,30 @@ publish = false
 
 [dependencies]
 worldshard = { path = ".." }
-bevy = { version = "0.16", features = ["webgl2"] }
+# Only the parts of Bevy the game uses (no audio, glTF, animation, picking...)
+# to keep the web download small.
+bevy = { version = "0.16", default-features = false, features = [
+    "std",
+    "async_executor",
+    "multi_threaded",
+    "bevy_asset",
+    "bevy_color",
+    "bevy_core_pipeline",
+    "bevy_log",
+    "bevy_pbr",
+    "bevy_render",
+    "bevy_text",
+    "bevy_ui",
+    "bevy_window",
+    "bevy_winit",
+    "default_font",
+    "tonemapping_luts",
+    "ktx2",
+    "zstd",
+    "webgl2",
+    "web",
+    "x11",
+] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { version = "0.3", features = ["Window", "Storage", "Document", "Element"] }
@@ -21,8 +44,12 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
 
 [profile.release]
-opt-level = 3
+opt-level = "s"     # engine code: small download
 lto = "thin"
+strip = "debuginfo"
+
+[profile.release.package.worldshard]
+opt-level = 3       # world generator and meshes: fast start-up
 
 # keep desktop debug builds playable
 [profile.dev.package."*"]
