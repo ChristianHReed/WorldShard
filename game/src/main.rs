@@ -521,12 +521,12 @@ fn sky_and_light(
 ) {
     let s = sun_state(pl.hours);
     clear.0 = rgb(s.sky_col);
-    ambient.brightness = 120.0 + 520.0 * s.day;
+    ambient.brightness = 190.0 + 450.0 * s.day;
     let amax = s.sky_amb[2].max(0.01);
     ambient.color = rgb([s.sky_amb[0] / amax, s.sky_amb[1] / amax, 1.0]);
     if let Ok((mut light, mut tf)) = sky_light.single_mut() {
         let sun = 11000.0 * s.sun_col[0].max(s.sun_col[1]).max(s.sun_col[2]);
-        let moon = 2500.0 * s.moon_col[2];
+        let moon = 4000.0 * s.moon_col[2];
         let (col, dir, lux) = if sun >= moon { (s.sun_col, s.sun_dir, sun) } else { ([0.6, 0.7, 1.0], s.moon_dir, moon) };
         let m = col[0].max(col[1]).max(col[2]).max(0.001);
         light.illuminance = lux;
