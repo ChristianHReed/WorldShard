@@ -391,6 +391,12 @@ pub fn mine_sites() -> Vec<(f64, f64)> {
         .collect()
 }
 
+/// Where a new game starts: the Southwest grasslands, looking at the peaks.
+pub fn spawn_point() -> (f64, f64) {
+    let (mx, my) = crate::worldgen::island::pol(150.0, 232.0);
+    to_world(mx, my)
+}
+
 /// Places trees, bushes, rocks and mines by region, as in the prototype:
 /// South dark forest, Northwest swampy forest, Southeast forest patches and
 /// open fields, Southwest open grassland, North rocks and mines, Northeast
@@ -401,6 +407,7 @@ pub fn scatter(w: &World) -> Vec<Prop> {
     let mines = mine_sites();
     let near_mine = |x: f64, z: f64| mines.iter().any(|&(a, b)| (a - x).hypot(b - z) < 22.0);
     let (evx, evz) = to_world(EX, EY);
+    let (spx, spz) = spawn_point();
     const STEP: f64 = 7.0;
     let mut z = -EXT + 4.0;
     while z < EXT - 4.0 {
@@ -411,7 +418,7 @@ pub fn scatter(w: &World) -> Vec<Prop> {
             x += STEP;
             let Some(k) = w.grid_index(jx, jz) else { continue };
             let (l, e, h) = (w.l[k], w.e[k], w.h[k]);
-            if l < 0.02 || h < 2.0 || w.wet[k] > 0.3 || near_mine(jx, jz) {
+            if l < 0.02 || h < 2.0 || w.wet[k] > 0.3 || near_mine(jx, jz) || (jx - spx).hypot(jz - spz) < 10.0 {
                 continue;
             }
             let (mx, my) = to_map(jx, jz);

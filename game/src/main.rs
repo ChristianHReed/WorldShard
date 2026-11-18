@@ -14,8 +14,7 @@ use bevy::window::PrimaryWindow;
 use worldshard::meshgen::{self, MeshData};
 use worldshard::save::{SaveData, STORAGE_KEY};
 use worldshard::sky::{clock_text, sun_state};
-use worldshard::worldgen::grid::{to_world, WALL_R};
-use worldshard::worldgen::island::pol;
+use worldshard::worldgen::grid::WALL_R;
 use worldshard::worldgen::World;
 
 // Pulled in only to switch on browser randomness for Bevy's dependencies.
@@ -73,8 +72,6 @@ struct TouchState {
 
 #[derive(Component)]
 struct Sun;
-#[derive(Component)]
-struct Moon;
 #[derive(Component)]
 struct PropChunk {
     centre: Vec2,
@@ -227,19 +224,12 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
     }
 
     // ---- sun, moon, sky light ----
+    // WebGL2 allows one directional light: it is the sun by day, the moon by night.
     commands.spawn((DirectionalLight { illuminance: 9000.0, shadows_enabled: false, ..default() }, Transform::default(), Sun));
-    commands.spawn((
-        DirectionalLight { illuminance: 0.0, color: Color::srgb(0.6, 0.7, 1.0), shadows_enabled: false, ..default() },
-        Transform::default(),
-        Moon,
-    ));
     commands.insert_resource(AmbientLight { color: Color::WHITE, brightness: 400.0, ..default() });
 
     // ---- the player: resume the save, or start in the Southwest grasslands ----
-    let (sx, sz) = {
-        let (mx, my) = pol(150.0, 232.0);
-        to_world(mx, my)
-    };
+    let (sx, sz) = meshgen::spawn_point();
     let mut player = Player {
         x: sx,
         y: 0.0,
@@ -282,7 +272,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
     // ---- HUD ----
     let ink = Color::srgb(0.95, 0.92, 0.84);
     commands.spawn((
-        Text::new("Day 1 · 09:00"),
+        Text::new("Day 1  09:00"),
         TextFont { font_size: 18.0, ..default() },
         TextColor(ink),
         Node { position_type: PositionType::Absolute, top: Val::Px(10.0), left: Val::Px(12.0), ..default() },
@@ -320,7 +310,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
             p.spawn((Text::new(""), TextFont { font_size: 18.0, ..default() }, TextColor(ink.with_alpha(0.0)), BannerSub));
         });
     commands.spawn((
-        Text::new("WASD / arrows move · hold mouse button and drag to look · Shift run · Space jump\nPhone: drag on the left to walk (push far to run), drag on the right to look"),
+        Text::new("WASD / arrows move | hold mouse button and drag to look | Shift run | Space jump\nPhone: drag on the left to walk (push far to run), drag on the right to look"),
         TextFont { font_size: 12.0, ..default() },
         TextColor(ink.with_alpha(0.75)),
         Node { position_type: PositionType::Absolute, bottom: Val::Px(10.0), left: Val::Px(12.0), ..default() },
@@ -526,8 +516,7 @@ fn sky_and_light(
     pl: Res<Player>,
     mut clear: ResMut<ClearColor>,
     mut ambient: ResMut<AmbientLight>,
-    mut sun: Query<(&mut DirectionalLight, &mut Transform), (With<Sun>, Without<Moon>)>,
-    mut moon: Query<(&mut DirectionalLight, &mut Transform), (With<Moon>, Without<Sun>)>,
+    mut sky_light: Query<(&mut DirectionalLight, &mut Transform), With<Sun>>,
     mut fogs: Query<&mut DistanceFog>,
 ) {
     let s = sun_state(pl.hours);
@@ -535,19 +524,14 @@ fn sky_and_light(
     ambient.brightness = 120.0 + 520.0 * s.day;
     let amax = s.sky_amb[2].max(0.01);
     ambient.color = rgb([s.sky_amb[0] / amax, s.sky_amb[1] / amax, 1.0]);
-    if let Ok((mut light, mut tf)) = sun.single_mut() {
-        let strength = s.sun_col[0].max(s.sun_col[1]).max(s.sun_col[2]);
-        light.illuminance = 11000.0 * strength;
-        if strength > 0.001 {
-            light.color = rgb([s.sun_col[0] / strength, s.sun_col[1] / strength, s.sun_col[2] / strength]);
-        }
-        let d = Vec3::from_array(s.sun_dir);
-        *tf = Transform::IDENTITY.looking_to(-d, Vec3::Y);
-    }
-    if let Ok((mut light, mut tf)) = moon.single_mut() {
-        light.illuminance = 2500.0 * s.moon_col[2];
-        let d = Vec3::from_array(s.moon_dir);
-        *tf = Transform::IDENTITY.looking_to(-d, Vec3::Y);
+    if let Ok((mut light, mut tf)) = sky_light.single_mut() {
+        let sun = 11000.0 * s.sun_col[0].max(s.sun_col[1]).max(s.sun_col[2]);
+        let moon = 2500.0 * s.moon_col[2];
+        let (col, dir, lux) = if sun >= moon { (s.sun_col, s.sun_dir, sun) } else { ([0.6, 0.7, 1.0], s.moon_dir, moon) };
+        let m = col[0].max(col[1]).max(col[2]).max(0.001);
+        light.illuminance = lux;
+        light.color = rgb([col[0] / m, col[1] / m, col[2] / m]);
+        *tf = Transform::IDENTITY.looking_to(-Vec3::from_array(dir), Vec3::Y);
     }
     for mut fog in &mut fogs {
         fog.color = rgb(s.fog_col);
@@ -582,7 +566,7 @@ fn update_hud(
     )>,
 ) {
     if let Ok(mut t) = texts.p0().single_mut() {
-        let s = format!("Day {} · {}", pl.day, clock_text(pl.hours));
+        let s = format!("Day {}  {}", pl.day, clock_text(pl.hours));
         if t.0 != s {
             t.0 = s;
         }
@@ -596,7 +580,7 @@ fn update_hud(
         let deg = (pl.yaw.to_degrees()).rem_euclid(360.0);
         let names = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
         let dir = names[(((deg + 22.5) / 45.0) as usize) % 8];
-        let s = format!("{dir}  {:03.0}°", deg);
+        let s = format!("{dir}  {:03.0}", deg);
         if t.0 != s {
             t.0 = s;
         }
@@ -646,7 +630,7 @@ fn autosave(time: Res<Time>, pl: Res<Player>, mut save: ResMut<SaveState>) {
         saved_at: now_ms(),
     };
     save.status = if storage_set(&data.to_json()) {
-        format!("Saved · Day {} {}", pl.day, clock_text(pl.hours))
+        format!("Saved - Day {} {}", pl.day, clock_text(pl.hours))
     } else {
         "Saving is not available here".into()
     };

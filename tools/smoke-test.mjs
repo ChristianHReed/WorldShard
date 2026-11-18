@@ -44,6 +44,27 @@ try {
   const save = await page.evaluate(() => localStorage.getItem("worldshard-save-v1"));
   note(`save in browser: ${save}`);
   if (!save) ok = false;
+
+  // Load a few saved spots to check night lighting, lava glow and the forests.
+  const scenes = [
+    ["3-night-lava", { x: 756, z: -260, yaw: 1.24, pitch: -0.2, hours: 22.5 }],
+    ["4-south-forest", { x: 0, z: 1000, yaw: 0, pitch: 0.0, hours: 15 }],
+    ["5-northwest-dawn", { x: -880, z: -560, yaw: 2.2, pitch: -0.05, hours: 6.6 }],
+  ];
+  for (const [name, p] of scenes) {
+    const data = JSON.stringify({ game: "WorldShard", v: 1, day: 2, visited: [], playSec: 0, savedAt: 0, ...p });
+    await page.evaluate((d) => localStorage.setItem("worldshard-save-v1", d), data);
+    await page.reload({ waitUntil: "load" });
+    try {
+      await page.waitForFunction(() => !document.getElementById("loading"), { timeout: 120000, polling: 500 });
+    } catch {
+      ok = false;
+      note(`TIMEOUT loading ${name}`);
+    }
+    await new Promise((r) => setTimeout(r, 8000));
+    await page.screenshot({ path: `${out}/${name}.png` });
+    note(`screenshot ${name}.png`);
+  }
 } catch (e) {
   ok = false;
   note(`ERROR: ${e.stack || e}`);
