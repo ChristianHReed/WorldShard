@@ -18,6 +18,10 @@ use worldshard::worldgen::grid::{to_world, WALL_R};
 use worldshard::worldgen::island::pol;
 use worldshard::worldgen::World;
 
+// Pulled in only to switch on browser randomness for Bevy's dependencies.
+#[cfg(target_arch = "wasm32")]
+use {getrandom as _, getrandom02 as _};
+
 // ---------------------------------------------------------------------
 // Resources and components
 // ---------------------------------------------------------------------
