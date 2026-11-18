@@ -156,8 +156,12 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
             let mut c = if s.h > 0.0 && s.glow < 0.05 { ground_grade(s.col) } else { s.col };
             // steep slopes show rock; flat high ground keeps its grass or snow
             if s.h > 0.0 {
-                let steep = 1.0 - sm(0.62, 0.86, nrm[1] as f64) as f32;
-                let rock = if s.h > 4800.0 { [0.62, 0.62, 0.66] } else { [0.50, 0.47, 0.43] };
+                // high up, rock shows through the snow on gentler slopes too
+                let high = sm(3800.0, 4800.0, s.h) as f32;
+                let steep_low = 1.0 - sm(0.62, 0.86, nrm[1] as f64) as f32;
+                let steep_high = 1.0 - sm(0.80, 0.95, nrm[1] as f64) as f32;
+                let steep = steep_low + (steep_high - steep_low) * high;
+                let rock = mix3([0.50, 0.47, 0.43], [0.46, 0.46, 0.52], high);
                 c = mix3(c, rock, steep * 0.7 * (1.0 - s.glow));
             }
             m.positions.push(local(i, j));

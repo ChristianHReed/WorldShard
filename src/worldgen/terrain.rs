@@ -33,7 +33,7 @@ pub const ST_HELENS_M: f64 = 2549.0;
 const BASE_M: f64 = 1700.0;
 const EV_MASSIF_M: f64 = 5600.0;
 const EV_MASSIF_R: f64 = 55.0; // px
-const EV_HORN_R: f64 = 2.6; // px (about 12 km: a steep summit pyramid)
+const EV_HORN_R: f64 = 1.3; // px (about 6 km: a steep summit pyramid)
 const EV_HORN_M: f64 = 2766.0; // summit = EVEREST_M
 const HEL_M: f64 = 1649.0; // rim = ST_HELENS_M
 const CLIFF_M: f64 = 320.0;
@@ -373,7 +373,7 @@ impl Terrain {
             // high ground: tan, then grey rock, then snow (by real height)
             mix!([176.0, 160.0, 118.0], sm(2200.0, 3600.0, h) * 0.85);
             mix!([150.0, 146.0, 140.0], sm(3400.0, 4700.0, h));
-            mix!([250.0, 251.0, 255.0], sm(4900.0, 5700.0, h + 300.0 * n.n2(wx / 3000.0, wz / 3000.0)));
+            mix!([236.0, 241.0, 250.0], sm(4900.0, 5700.0, h + 300.0 * n.n2(wx / 3000.0, wz / 3000.0)));
             // St. Helens' ash and crater
             let d2 = (x - HX).hypot(y - HY);
             mix!([132.0, 96.0, 72.0], 0.8 * (-(d2 / 46.0).powf(2.2)).exp());
