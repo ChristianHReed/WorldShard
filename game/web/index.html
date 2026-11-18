@@ -27,7 +27,7 @@
 <div id="saves">
   <button id="save-file" title="Download your save so you can keep it in Google Drive">Save file</button>
   <button id="open-file" title="Load a save file you kept">Open save</button>
-  <a href="prototype/" title="The earlier JavaScript prototype">Prototype</a>
+  <a id="proto-link" href="prototype/" title="The earlier JavaScript prototype">Prototype</a>
 </div>
 <input id="file" type="file" accept=".json,application/json" hidden>
 <div id="toast"></div>
@@ -35,27 +35,69 @@
   import init from "./worldshard.js";
 
   const KEY = "worldshard-save-v1";
-  const toast = (msg) => {
-    const t = document.getElementById("toast");
-    t.textContent = msg; t.style.opacity = 1;
-    clearTimeout(toast.t); toast.t = setTimeout(() => (t.style.opacity = 0), 2600);
+  const inClaude = !!window.claude;
+  if (inClaude) document.getElementById("proto-link").remove();
+  const msg = (t) => { const m = document.getElementById("loading-msg"); if (m) m.textContent = t; };
+  const toast = (t) => {
+    const el = document.getElementById("toast");
+    el.textContent = t; el.style.opacity = 1;
+    clearTimeout(toast.t); toast.t = setTimeout(() => (el.style.opacity = 0), 2600);
+  };
+  const store = {
+    get() { try { return localStorage.getItem(KEY); } catch { return null; } },
+    set(v) { try { localStorage.setItem(KEY, v); return true; } catch { return false; } },
   };
 
-  // --- start the game ---
-  init().catch((e) => {
-    const msg = String((e && e.message) || e);
-    if (msg.includes("Using exceptions for control flow")) return; // Bevy's normal start-up
-    const l = document.getElementById("loading");
-    if (l) { l.classList.add("error"); document.getElementById("loading-msg").textContent = "Could not start: " + msg; }
-    console.error(e);
-  });
+  // --- download the game (in pieces, so every file stays small) and start it ---
+  async function loadWasm() {
+    const parts = await (await fetch("wasm-parts.json")).json();
+    const sizes = parts.map((p) => p.size);
+    const total = sizes.reduce((a, b) => a + b, 0);
+    const bytes = new Uint8Array(total);
+    let got = 0;
+    for (const p of parts) {
+      const res = await fetch(p.file);
+      if (!res.ok) throw new Error(`could not download ${p.file} (${res.status})`);
+      const reader = res.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes.set(value, got);
+        got += value.length;
+        msg(`Downloading the world… ${Math.round((got / total) * 100)}%`);
+      }
+    }
+    if (got !== total) throw new Error("download was incomplete");
+    return bytes;
+  }
+
+  try {
+    const bytes = await loadWasm();
+    msg("Building the world…");
+    await new Promise((r) => setTimeout(r, 30)); // let the message show
+    await init({ module_or_path: bytes });
+  } catch (e) {
+    const text = String((e && e.message) || e);
+    if (!text.includes("Using exceptions for control flow")) { // Bevy's normal start-up
+      const l = document.getElementById("loading");
+      if (l) { l.classList.add("error"); msg("Could not start: " + text); }
+      console.error(e);
+    }
+  }
 
   // --- save file: the game saves in the browser; this hands it to the player as a file ---
   document.getElementById("save-file").onclick = async () => {
-    const data = localStorage.getItem(KEY);
+    const data = store.get();
     if (!data) { toast("Nothing saved yet. Walk around first."); return; }
     const day = (data.match(/"day":(\d+)/) || [])[1] || "1";
     const name = `WorldShard-save-day${day}.json`;
+    // Inside Claude: Claude's own save prompt (on phones it opens the share sheet).
+    const downloads = inClaude ? await window.claude.use("downloads").catch(() => null) : null;
+    if (downloads) {
+      try { await downloads.save({ filename: name, data }); toast("Save file ready. Keep it in Google Drive."); }
+      catch (e) { if (!e || e.code !== "declined") toast("Could not save the file here."); }
+      return;
+    }
     const file = new File([data], name, { type: "application/json" });
     // On phones the share sheet lets the player pick Google Drive directly.
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -79,7 +121,7 @@
       const s = text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
       const d = JSON.parse(s);
       if ((d.game && d.game !== "WorldShard") || typeof d.x !== "number" || typeof d.z !== "number") throw new Error("not a WorldShard save");
-      localStorage.setItem(KEY, s);
+      if (!store.set(s)) { toast("This browser will not keep saves here."); return; }
       toast("Save loaded. Restarting…");
       setTimeout(() => location.reload(), 600);
     } catch (e) {

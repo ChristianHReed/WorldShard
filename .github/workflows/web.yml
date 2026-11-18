@@ -72,6 +72,12 @@ jobs:
             echo "wasm: $before -> $(stat -c %s dist/worldshard_bg.wasm) bytes" | tee -a build.log
           fi
           gzip -9 -c dist/worldshard_bg.wasm | wc -c | xargs echo "gzipped wasm bytes:" | tee -a build.log
+          # split the game into pieces under 15 MB (fits hosts with file-size limits,
+          # such as a Claude artifact); the page joins them back together
+          (cd dist && split -b 15000000 -d -a 1 --additional-suffix=.wasm worldshard_bg.wasm worldshard_bg.part \
+            && rm worldshard_bg.wasm \
+            && python3 -c "import json,os,glob; print(json.dumps([{'file':f,'size':os.path.getsize(f)} for f in sorted(glob.glob('worldshard_bg.part*.wasm'))]))" > wasm-parts.json \
+            && cat wasm-parts.json)
           cp game/web/index.html dist/index.html
           cp web-prototype/index.html dist/prototype/index.html
           touch dist/.nojekyll
@@ -93,6 +99,7 @@ jobs:
           mkdir -p /tmp/logs
           cp build.log test.log /tmp/logs/ 2>/dev/null || true
           cp -r smoke /tmp/logs/ 2>/dev/null || true
+          cp -r dist /tmp/logs/site 2>/dev/null || true
           cd /tmp/logs
           echo "${{ github.sha }} ${{ job.status }}" > run.txt
           git init -q && git checkout -q -b ci-logs
@@ -113,4 +120,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
+        # GitHub Pages needs a public repo (or a paid plan for a private one);
+        # until then this step is skipped over instead of failing the run.
+        continue-on-error: true
         uses: actions/deploy-pages@v4
