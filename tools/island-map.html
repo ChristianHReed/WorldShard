@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WorldShard island map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,500;1,400;1,500&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;background:#0b1128}
+#wrap{position:relative;width:100%;max-width:min(100vw,calc(100vh * 1.25));margin:0 auto;aspect-ratio:1600/1280}
+#wrap canvas,#wrap svg{position:absolute;inset:0;width:100%;height:100%;display:block}
+#msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#c9d6e2;font:italic 22px 'EB Garamond',Georgia,serif}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="c" width="1600" height="1280"></canvas>
+<svg id="o" viewBox="0 0 1600 1280" role="img" aria-label="Shaded-relief map of the WorldShard island: six regions around Mount Everest and Mount St. Helens, chalk cliffs on the east coast, an inlet sea in the southeast, the Rim Sea and the Cloudwall, with a side-view inset of the island in its bowl of water"></svg>
+<div id="msg">Drawing the map…</div>
+</div>
+<script>
+const W = 1600, H = 1280, CX = 800, CY = 640, N = W * H, D2R = Math.PI / 180;
+let seed = 20261117;
+const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+// ---------- noise ----------
+const P = new Uint8Array(512);
+{ const p = [...Array(256).keys()]; for (let i = 255; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [p[i], p[j]] = [p[j], p[i]]; } for (let i = 0; i < 512; i++) P[i] = p[i & 255]; }
+const fade = t => t * t * t * (t * (t * 6 - 15) + 10);
+const lerp = (a, b, t) => a + t * (b - a);
+function g2(h, x, y) { switch (h & 7) { case 0: return x + y; case 1: return -x + y; case 2: return x - y; case 3: return -x - y; case 4: return x; case 5: return -x; case 6: return y; default: return -y; } }
+function n2(x, y) {
+  const X = Math.floor(x), Y = Math.floor(y); x -= X; y -= Y;
+  const xi = X & 255, yi = Y & 255, u = fade(x), v = fade(y);
+  const aa = P[P[xi] + yi], ab = P[P[xi] + yi + 1], ba = P[P[xi + 1] + yi], bb = P[P[xi + 1] + yi + 1];
+  return lerp(lerp(g2(aa, x, y), g2(ba, x - 1, y), u), lerp(g2(ab, x, y - 1), g2(bb, x - 1, y - 1), u), v);
+}
+function g3(h, x, y, z) { const hh = h & 15, u = hh < 8 ? x : y, v = hh < 4 ? y : (hh === 12 || hh === 14 ? x : z); return ((hh & 1) ? -u : u) + ((hh & 2) ? -v : v); }
+function n3(x, y, z) {
+  const X = Math.floor(x), Y = Math.floor(y), Z = Math.floor(z); x -= X; y -= Y; z -= Z;
+  const xi = X & 255, yi = Y & 255, zi = Z & 255, u = fade(x), v = fade(y), w = fade(z);
+  const A = P[xi] + yi, AA = P[A] + zi, AB = P[A + 1] + zi, B = P[xi + 1] + yi, BA = P[B] + zi, BB = P[B + 1] + zi;
+  return lerp(
+    lerp(lerp(g3(P[AA], x, y, z), g3(P[BA], x - 1, y, z), u), lerp(g3(P[AB], x, y - 1, z), g3(P[BB], x - 1, y - 1, z), u), v),
+    lerp(lerp(g3(P[AA + 1], x, y, z - 1), g3(P[BA + 1], x - 1, y, z - 1), u), lerp(g3(P[AB + 1], x, y - 1, z - 1), g3(P[BB + 1], x - 1, y - 1, z - 1), u), v), w);
+}
+function fbm(x, y, o) { let s = 0, a = 0.5, f = 1, m = 0; for (let k = 0; k < o; k++) { s += a * n2(x * f + k * 17.3, y * f); m += a; a *= 0.5; f *= 2.03; } return s / m; }
+function ridged(x, y, o) { let s = 0, a = 0.5, f = 1, m = 0; for (let k = 0; k < o; k++) { const n = 1 - Math.abs(n2(x * f + k * 9.7, y * f)); s += a * n * n; m += a; a *= 0.5; f *= 2.07; } return s / m; }
+const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+const angd = d => ((d + 540) % 360) - 180;
+
+// ---------- world layout ----------
+const EX = CX - 28, EY = CY - 38;   // Mount Everest
+const HX = CX + 62, HY = CY + 30;   // Mount St. Helens
+const BORD = [-60, 0, 60, 120, 180, 240];
+// region biomes (from the designer): N rock mines, NE lava flows and desert, SE mid forest with fields,
+// S dark forest, SW grasslands, NW lakes and swampy forest
+const REG = [
+  { n: 'NORTH', c: -90, col: [160, 152, 138], fcol: [84, 98, 72], fd: 0.03, lr: 255, trees: 0.06 },
+  { n: 'NORTHEAST', c: -30, col: [226, 200, 144], fcol: [90, 100, 60], fd: 0.0, lr: 250, trees: 0 },
+  { n: 'SOUTHEAST', c: 30, col: [150, 176, 98], fcol: [62, 102, 50], fd: 0.42, lr: 252, trees: 0.5 },
+  { n: 'SOUTH', c: 90, col: [84, 112, 64], fcol: [34, 62, 36], fd: 0.97, lr: 250, trees: 0.4 },
+  { n: 'SOUTHWEST', c: 150, col: [186, 198, 110], fcol: [84, 112, 58], fd: 0.03, lr: 250, trees: 0.15 },
+  { n: 'NORTHWEST', c: 210, col: [104, 128, 82], fcol: [50, 82, 56], fd: 0.6, lr: 255, trees: 0.4 }
+];
+function regW(deg, x, y, out) {
+  const dj = deg + 10 * n2(x / 110, y / 110); let ws = 0;
+  for (let k = 0; k < 6; k++) { const w = Math.max(0, Math.min(1, 1 - (Math.abs(angd(dj - REG[k].c)) - 22) / 16)); out[k] = w; ws += w; }
+  for (let k = 0; k < 6; k++) out[k] /= ws;
+}
+const regIdx = deg => { let b = 0, bd = 999; REG.forEach((g, k) => { const d = Math.abs(angd(deg - g.c)); if (d < bd) { bd = d; b = k; } }); return b; };
+const WR = new Float32Array(6);
+const pol = (deg, r) => [CX + r * Math.cos(deg * D2R), CY + r * Math.sin(deg * D2R)];
+const ISLETS = [[172, 432, 14], [188, 452, 10], [200, 430, 15], [158, 444, 9]].map(([d, r, s]) => { const [x, y] = pol(d, r); return [x, y, s]; });
+function coastR(deg) {
+  const a = deg * D2R;
+  return 355 + 18 * Math.sin(3 * a + 0.7) + 12 * Math.sin(7 * a + 1.3) + 7 * Math.sin(13 * a) - 160 * Math.exp(-Math.pow((deg - 48) / 13, 2));
+}
+const cliffW = deg => sm(-70, -56, deg) * (1 - sm(14, 28, deg));
+const borderOff = (k, r) => 16 * n2(r / 70, k * 3.7);
+
+function render() {
+  const E = new Float32Array(N), Lv = new Float32Array(N).fill(-1), M = new Uint8Array(N);
+  // ---------- land & elevation ----------
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const dx = x - CX, dy = y - CY, r = Math.hypot(dx, dy);
+    if (r > 500) continue;
+    const i = y * W + x, deg = Math.atan2(dy, dx) / D2R;
+    const R = coastR(deg);
+    let L = (R - r) / R + 0.11 * fbm(x / 130, y / 130, 3) + 0.06 * fbm(x / 45 + 7, y / 45, 3) + 0.022 * fbm(x / 11, y / 11, 2);
+    for (const [ix, iy, s] of ISLETS) { const d = Math.hypot(x - ix, y - iy); if (d < s * 2.5) { const li = (s - d) / 120 + 0.04 * fbm(x / 14 + 50, y / 14, 2); if (li > L) L = li; } }
+    Lv[i] = L;
+    if (L <= 0) continue;
+    M[i] = 1;
+    let e = 0.26 * Math.pow(Math.min(1, L * 3.2), 0.75);
+    const ex = x - EX, ey = y - EY, d1 = Math.hypot(ex, ey);
+    e += 0.95 * Math.exp(-Math.pow(d1 / 120, 1.25));
+    const d2 = Math.hypot(x - HX, y - HY);
+    e += 0.72 * Math.exp(-Math.pow(d2 / 58, 1.35)) - 0.38 * Math.exp(-Math.pow(d2 / 15, 2.6));
+    const a1 = Math.atan2(ey, ex) + 0.35 * n2(d1 / 90, 3.3) + 0.12 * n2(x / 40, y / 40), ca = Math.cos(a1), sa = Math.sin(a1);
+    let rr = 0, amp = 0.5, f = 1, nm = 0;
+    for (let o = 0; o < 4; o++) { const n = 1 - Math.abs(n3(ca * 3.6 * f, sa * 3.6 * f, d1 / 120 * f + o * 7.1)); rr += amp * n * n; nm += amp; amp *= 0.5; f *= 2; }
+    rr /= nm;
+    const inland = Math.min(1, L * 5);
+    e += (rr - 0.4) * 0.26 * sm(8, 70, d1) * Math.exp(-d1 / 340) * inland;
+    let br = 0;
+    for (let k = 0; k < 6; k++) { const pd = Math.abs(angd(deg - BORD[k]) * D2R * r + borderOff(k, r)); const v = Math.exp(-(pd / 26) * (pd / 26)); if (v > br) br = v; }
+    e += br * 0.18 * sm(110, 190, r) * inland;
+    e += 0.10 * fbm(x / 85, y / 85, 5) + 0.05 * (ridged(x / 55, y / 55, 4) - 0.45);
+    regW(deg, x, y, WR); if (WR[0] > 0) e += WR[0] * 0.1 * (ridged(x / 22, y / 22, 3) - 0.45) * inland;
+    e += cliffW(deg) * 0.24 * sm(0, 0.025, L) * sm(230, 300, r);
+    E[i] = Math.max(0.01, e);
+  }
+  // ---------- coastal halos ----------
+  const mask = new Float32Array(N); for (let i = 0; i < N; i++) mask[i] = M[i];
+  function blur(src, rad, passes) {
+    let a = Float32Array.from(src), b = new Float32Array(N); const inv = 1 / (2 * rad + 1);
+    for (let p = 0; p < passes; p++) {
+      for (let y = 0; y < H; y++) { const o = y * W; let s = 0; for (let x = -rad; x <= rad; x++) s += a[o + Math.min(W - 1, Math.max(0, x))]; for (let x = 0; x < W; x++) { b[o + x] = s * inv; s += a[o + Math.min(W - 1, x + rad + 1)] - a[o + Math.max(0, x - rad)]; } }
+      for (let x = 0; x < W; x++) { let s = 0; for (let y = -rad; y <= rad; y++) s += b[Math.min(H - 1, Math.max(0, y)) * W + x]; for (let y = 0; y < H; y++) { a[y * W + x] = s * inv; s += b[Math.min(H - 1, y + rad + 1) * W + x] - b[Math.max(0, y - rad) * W + x]; } }
+    }
+    return a;
+  }
+  const h1 = blur(mask, 5, 3), h2 = blur(mask, 20, 3);
+  // ---------- clouds ----------
+  const CD = new Float32Array(N);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const r = Math.hypot(x - CX, y - CY); if (r < 455 || r > 700) continue;
+    const t = (r - 562) / 66, band = 1 - t * t;
+    CD[y * W + x] = band * 0.75 + 0.6 * fbm(x / 110, y / 110, 5) + 0.22 * fbm(x / 34 + 31, y / 34, 3);
+  }
+  // ---------- colour pass ----------
+  const ctx = document.getElementById('c').getContext('2d');
+  const img = ctx.createImageData(W, H), px = img.data;
+  const FM = new Float32Array(N);
+  const len = Math.hypot(1, 1, 1.1), LX = -1 / len, LY = -1 / len, LZ = 1.1 / len, Z = 150;
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+    const i = y * W + x, dx = x - CX, dy = y - CY, r = Math.hypot(dx, dy);
+    let cr, cg, cb;
+    if (M[i]) {
+      const deg = Math.atan2(dy, dx) / D2R, e = E[i], L = Lv[i];
+      const gx = (E[i + 1] - E[i - 1]) * 0.5 * Z, gy = (E[i + W] - E[i - W]) * 0.5 * Z;
+      const nl = Math.hypot(gx, gy, 1), lit = (gx * -LX + gy * -LY + LZ) / nl, slope = Math.hypot(gx, gy);
+      // region tint
+      regW(deg, x, y, WR);
+      let fd = 0, f0 = 0, f1 = 0, f2 = 0; cr = 0; cg = 0; cb = 0;
+      for (let k = 0; k < 6; k++) { const w = WR[k]; if (!w) continue; const g = REG[k]; cr += w * g.col[0]; cg += w * g.col[1]; cb += w * g.col[2]; f0 += w * g.fcol[0]; f1 += w * g.fcol[1]; f2 += w * g.fcol[2]; fd += w * g.fd; }
+      const patch = 1 + 0.07 * fbm(x / 45 + 3, y / 45, 3); cr *= patch; cg *= patch; cb *= patch;
+      const mx = (c, t) => { cr += (c[0] - cr) * t; cg += (c[1] - cg) * t; cb += (c[2] - cb) * t; };
+      mx([176, 160, 118], sm(0.66, 0.95, e) * 0.85);
+      mx([190, 183, 168], sm(0.95, 1.12, e));
+      const d1 = Math.hypot(x - EX, y - EY), d2 = Math.hypot(x - HX, y - HY);
+      if (d1 < 190) mx([250, 250, 247], sm(0.98, 1.12, e) * (1 - sm(110, 175, d1)));
+      mx([132, 96, 72], 0.8 * Math.exp(-Math.pow(d2 / 46, 2.2))); mx([70, 52, 42], 0.7 * Math.exp(-Math.pow(d2 / 11, 2)));
+      mx([158, 146, 124], sm(1.0, 2.2, slope) * 0.4);
+      mx([128, 122, 112], WR[0] * 0.45 * sm(0.5, 1.4, slope));
+      const cw = cliffW(deg) * (1 - sm(0.025, 0.07, L));
+      mx([226, 221, 208], cw * 0.75);
+      const fm = sm(1 - fd - 0.07, 1 - fd + 0.07, fbm(x / 60, y / 60, 3) * 1.4 + 0.5) * (1 - sm(0.55, 0.75, e)) * sm(0.01, 0.04, L);
+      FM[i] = fm;
+      // south-east fields
+      const fw = WR[2] * (1 - fm) * (1 - sm(0.45, 0.6, e)) * sm(0.02, 0.06, L) * sm(-0.25, -0.05, fbm(x / 110 + 9, y / 110, 2));
+      if (fw > 0.01) {
+        const u = x * 0.88 + y * 0.47, v = -x * 0.47 + y * 0.88, cu = Math.floor(u / 26), cv = Math.floor(v / 18);
+        const hv = P[(P[cu & 255] + (cv & 255)) & 511] / 255, fu = u / 26 - cu, fv = v / 18 - cv;
+        const FC = [[198, 196, 110], [222, 204, 128], [148, 170, 86], [186, 168, 100], [170, 190, 96], [210, 214, 140]][Math.floor(hv * 6) % 6];
+        const fk = sm(0.12, 0.35, fw);
+        mx(FC, fk * 0.95);
+        if (fu < 0.06 || fv < 0.08) mx([72, 90, 48], fk * 0.8);
+      }
+      if (fm > 0) { mx([f0, f1, f2], fm * 0.85); const t = 0.78 + 0.44 * (n2(x / 2.3, y / 2.3) * 0.5 + 0.5); const k = 1 + (t - 1) * fm; cr *= k; cg *= k; cb *= k; }
+      mx([228, 216, 170], (1 - sm(0.004, 0.016, L)) * 0.7 * (1 - cliffW(deg)));
+      let b = 1 + 0.8 * (lit - LZ); b = Math.max(0.6, Math.min(1.2, b));
+      if (WR[1] > 0) b *= 1 + 0.07 * WR[1] * Math.sin((x * 0.8 + y * 0.6) / 6 + 4 * n2(x / 70, y / 70)) * (1 - sm(0.6, 0.85, e));
+      if (WR[4] > 0) b *= 1 + 0.05 * WR[4] * n2(x / 4, y / 4);
+      cr *= b; cg *= b * 0.99; cb *= b * (b < 1 ? 1.04 : 0.97);
+      // north-west swamp pools and marsh
+      const pw = WR[5] * (1 - sm(0.4, 0.58, e)) * sm(0.03, 0.08, L);
+      if (pw > 0.02) {
+        const pn = fbm(x / 26 + 70, y / 26, 3);
+        mx([92, 118, 96], pw * 0.22);
+        const pool = sm(0.17, 0.21, pn) * pw, edge = (sm(0.13, 0.17, pn) - sm(0.17, 0.21, pn)) * pw;
+        mx([70, 92, 74], edge * 0.6); mx([118, 156, 158], pool * 0.92);
+      }
+      if (!M[i - 1] || !M[i + 1] || !M[i - W] || !M[i + W]) { cr = cr * 0.45 + 30; cg = cg * 0.45 + 34; cb = cb * 0.45 + 30; }
+    } else if (r < 578) {
+      const t = sm(330, 578, r);
+      cr = 152 + (104 - 152) * t; cg = 190 + (146 - 190) * t; cb = 211 + (178 - 211) * t;
+      const v = 1 + 0.025 * n2(x / 80, y / 80); cr *= v; cg *= v; cb *= v;
+      const s = Math.min(1, sm(0.03, 0.42, h1[i]) * 0.85 + sm(0.02, 0.45, h2[i]) * 0.38);
+      cr += (200 - cr) * s; cg += (229 - cg) * s; cb += (226 - cb) * s;
+      const fo = sm(0.36, 0.47, h1[i]) * 0.75; cr += (236 - cr) * fo; cg += (245 - cg) * fo; cb += (240 - cb) * fo;
+      const rim = sm(566, 578, r); cr *= 1 - 0.35 * rim; cg *= 1 - 0.3 * rim; cb *= 1 - 0.25 * rim;
+    } else {
+      const t = sm(578, 1000, r); cr = 20 - 10 * t; cg = 28 - 14 * t; cb = 58 - 26 * t;
+    }
+    // cloud shadow (light from the north-west)
+    const si = i - 9 * W - 9;
+    if (si > 0 && CD[si] > 0) { const sa = sm(0.3, 0.5, CD[si]) * 0.28; cr *= 1 - sa; cg *= 1 - sa; cb *= 1 - sa * 0.8; }
+    const o = i * 4; px[o] = cr; px[o + 1] = cg; px[o + 2] = cb; px[o + 3] = 255;
+  }
+  // stars (behind clouds)
+  for (let k = 0; k < 900; k++) {
+    const x = Math.floor(rnd() * W), y = Math.floor(rnd() * H); if (Math.hypot(x - CX, y - CY) < 590) continue;
+    const o = (y * W + x) * 4, v = 150 + rnd() * 105; px[o] = v; px[o + 1] = v * 0.97; px[o + 2] = v * 0.92;
+  }
+  // clouds over everything at the rim
+  for (let y = 4; y < H - 4; y++) for (let x = 4; x < W - 4; x++) {
+    const i = y * W + x, d = CD[i]; if (d <= 0.28) continue;
+    const a = sm(0.3, 0.46, d); if (a <= 0) continue;
+    const diff = d - CD[i - 3 * W - 3], thick = sm(0.45, 0.95, d);
+    const b = Math.max(0, Math.min(1, 0.45 + 6 * diff + thick * 0.4));
+    const cr = 150 + (253 - 150) * b, cg = 164 + (253 - 164) * b, cb = 182 + (250 - 182) * b;
+    const o = i * 4; px[o] += (cr - px[o]) * a; px[o + 1] += (cg - px[o + 1]) * a; px[o + 2] += (cb - px[o + 2]) * a;
+  }
+  ctx.putImageData(img, 0, 0);
+
+  // ---------- rivers ----------
+  const RIV = new Uint8Array(N);
+  const F = (x, y) => { const i = (Math.round(y) * W + Math.round(x)); return M[i] ? E[i] + 0.5 * Lv[i] : -1; };
+  const rivers = [], srcs = [];
+  for (let t = 0; t < 400 && rivers.length < 14; t++) {
+    const [sx, sy] = pol(rnd() * 360 - 180, 95 + rnd() * 170);
+    const si = Math.round(sy) * W + Math.round(sx);
+    if (!M[si] || E[si] < 0.42 || E[si] > 1.0) continue;
+    if (Math.hypot(sx - HX, sy - HY) < 45) continue;
+    { const sd = Math.atan2(sy - CY, sx - CX) / D2R; if (sd > -62 && sd < 2) continue; }
+    if (srcs.some(([a, b]) => Math.hypot(a - sx, b - sy) < 70)) continue;
+    let x = sx, y = sy, dir = null; const pts = [[x, y]]; let ok = false; const seen = new Map();
+    for (let s = 0; s < 420; s++) {
+      let bv = Infinity, bx = 0, by = 0, ba = 0;
+      for (let k = 0; k < 16; k++) {
+        const an = k * Math.PI / 8, nx = x + 3 * Math.cos(an), ny = y + 3 * Math.sin(an);
+        let v = F(nx, ny);
+        if (dir !== null) { const dd = Math.abs(((an - dir + 3 * Math.PI) % (2 * Math.PI)) - Math.PI); v += dd * 0.006; if (dd > 1.7) v += 1; }
+        if (v < bv) { bv = v; bx = nx; by = ny; ba = an; }
+      }
+      x = bx; y = by; dir = ba; pts.push([x, y]);
+      const key = Math.round(x / 4) + ',' + Math.round(y / 4); if (seen.has(key) && pts.length - seen.get(key) > 3) break; seen.set(key, pts.length);
+      const ii = Math.round(y) * W + Math.round(x);
+      if (!M[ii] || RIV[ii]) { ok = true; break; }
+    }
+    if (!ok || pts.length < 30) continue;
+    srcs.push([sx, sy]); rivers.push(pts);
+    for (const [a, b] of pts) for (let oy = -3; oy <= 3; oy++) for (let ox = -3; ox <= 3; ox++) RIV[(Math.round(b) + oy) * W + Math.round(a) + ox] = 1;
+  }
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const pts of rivers) {
+    const n = pts.length;
+    for (let k = 1; k < n; k++) {
+      ctx.strokeStyle = 'rgba(70,128,170,0.95)'; ctx.lineWidth = 1 + 2.2 * (k / n);
+      ctx.beginPath(); ctx.moveTo(pts[k - 1][0], pts[k - 1][1]); ctx.lineTo(pts[k][0], pts[k][1]); ctx.stroke();
+    }
+  }
+  // ---------- lava flows (north-east) ----------
+  const flows = [];
+  const addFlow = (a0, r0, ph) => {
+    const pts = [];
+    for (let r = r0; r < 460; r += 3) {
+      const a = a0 + 7 * n2(r / 55, ph) + 2 * n2(r / 14, ph + 3);
+      const [x, y] = pol(a, r); const ii = Math.round(y) * W + Math.round(x);
+      if (!M[ii] || Lv[ii] < 0.035) break;
+      pts.push([x, y]);
+    }
+    if (pts.length > 10) flows.push(pts);
+    return pts;
+  };
+  [[-53, 120, 1.3], [-43, 135, 5.1], [-19, 128, 8.7], [-8, 140, 12.2]].forEach(([a0, r0, ph]) => {
+    const main = addFlow(a0, r0, ph);
+    if (main.length > 40) { const r1 = r0 + main.length * 3 * 0.5; addFlow(a0 + (a0 < -30 ? 5 : -5), r1, ph + 20); }
+  });
+  for (const pts of flows) {
+    const n = pts.length;
+    pts.forEach(([x, y], k) => {
+      const w = 3 + 6 * (k / n) + 2.5 * n2(k / 5, x / 50);
+      ctx.fillStyle = 'rgba(58,44,38,0.85)';
+      for (let j = 0; j < 2; j++) { ctx.beginPath(); ctx.arc(x + (rnd() - 0.5) * w * 0.9, y + (rnd() - 0.5) * w * 0.9, Math.max(1.5, w * (0.6 + rnd() * 0.5)), 0, 7); ctx.fill(); }
+    });
+    pts.forEach(([x, y], k) => {
+      if (k % 3) return;
+      const w = 2 + 5 * (k / n);
+      ctx.fillStyle = 'rgba(34,26,24,0.55)'; ctx.beginPath(); ctx.arc(x + (rnd() - 0.5) * w * 1.6, y + (rnd() - 0.5) * w * 1.6, 1 + rnd() * 2, 0, 7); ctx.fill();
+    });
+  }
+  ctx.lineCap = 'round';
+  for (const pts of flows) {
+    const n = pts.length;
+    for (const [col, w0, w1, blur] of [['#c4461c', 1.2, 2.8, 8], ['#f59a3a', 0.7, 1.6, 3], ['#ffe08a', 0.3, 0.7, 0]]) {
+      ctx.strokeStyle = col; ctx.shadowColor = 'rgba(255,110,30,0.9)'; ctx.shadowBlur = blur;
+      for (let k = 1; k < n; k++) {
+        if (n2(k / 4, n) > 0.28) continue;
+        ctx.lineWidth = w0 + (w1 - w0) * (k / n);
+        ctx.beginPath(); ctx.moveTo(pts[k - 1][0], pts[k - 1][1]); ctx.lineTo(pts[k][0], pts[k][1]); ctx.stroke();
+      }
+    }
+    ctx.shadowBlur = 0;
+  }
+  // ---------- lakes (north-west) ----------
+  let lakes = 0;
+  for (let t = 0; t < 400 && lakes < 9; t++) {
+    const [lx, ly] = pol(186 + rnd() * 50, 130 + rnd() * 200); const li = Math.round(ly) * W + Math.round(lx);
+    if (!M[li] || E[li] > 0.55 || Lv[li] < 0.06) continue;
+    const s = 5 + rnd() * 8; ctx.beginPath();
+    for (let k = 0; k <= 24; k++) { const an = k / 24 * Math.PI * 2, rr = s * (1 + 0.25 * n2(Math.cos(an) * 1.5 + t, Math.sin(an) * 1.5)); const X = lx + rr * Math.cos(an) * 1.3, Y = ly + rr * Math.sin(an) * 0.8; k ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); }
+    ctx.closePath(); ctx.fillStyle = '#a3c8d8'; ctx.fill(); ctx.strokeStyle = '#5f8296'; ctx.lineWidth = 1; ctx.stroke(); lakes++;
+  }
+  // ---------- scattered trees in open country ----------
+  for (let t = 0; t < 5200; t++) {
+    const [tx, ty] = pol(rnd() * 360 - 180, 80 + rnd() * 300); const ti = Math.round(ty) * W + Math.round(tx);
+    if (!M[ti] || E[ti] > 0.55 || FM[ti] > 0.3 || Lv[ti] < 0.03) continue;
+    if (rnd() > REG[regIdx(Math.atan2(ty - CY, tx - CX) / D2R)].trees) continue;
+    const s = 1.2 + rnd() * 1.1;
+    ctx.fillStyle = 'rgba(48,62,32,0.35)'; ctx.beginPath(); ctx.arc(tx + 0.9, ty + 0.9, s, 0, 7); ctx.fill();
+    ctx.fillStyle = '#5d7a3e'; ctx.beginPath(); ctx.arc(tx, ty, s, 0, 7); ctx.fill();
+  }
+  return { M };
+}
+
+function overlay(M) {
+  const svg = document.getElementById('o');
+  const ink = '#3a2f1f';
+  let s = `<defs>
+<path id="seaA" d="M ${pol(222, 448).join(' ')} A 448 448 0 0 1 ${pol(266, 448).join(' ')}"/>
+<path id="seaB" d="M ${pol(104, 448).join(' ')} A 448 448 0 0 0 ${pol(58, 448).join(' ')}"/>
+<path id="cloudA" d="M ${pol(242, 560).join(' ')} A 560 560 0 0 1 ${pol(298, 560).join(' ')}"/>
+<radialGradient id="cg" cx="0.42" cy="0.38" r="0.6"><stop offset="0" stop-color="#ffffff"/><stop offset="0.55" stop-color="#eef2f6" stop-opacity="0.95"/><stop offset="0.85" stop-color="#b4c0cd" stop-opacity="0.7"/><stop offset="1" stop-color="#9aa8b8" stop-opacity="0"/></radialGradient>
+<linearGradient id="bowl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9cc0d4"/><stop offset="1" stop-color="#4b7393"/></linearGradient>
+</defs>`;
+  // region borders that follow the ridgelines
+  for (let k = 0; k < 6; k++) {
+    let d = '';
+    for (let r = 105; r < 420; r += 6) {
+      const deg = BORD[k] - borderOff(k, r) / r / D2R; const [x, y] = pol(deg, r);
+      if (!M[Math.round(y) * W + Math.round(x)]) break;
+      d += (d ? ' L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1);
+    }
+    s += `<path d="${d}" fill="none" stroke="${ink}" stroke-opacity="0.55" stroke-width="1.6" stroke-dasharray="7 5"/>`;
+  }
+  const halo = 'stroke="rgba(246,240,220,0.55)" stroke-width="3" paint-order="stroke" stroke-linejoin="round"';
+  for (const [d, r] of [[-112, 190], [-74, 175], [-100, 305], [-66, 300]]) {
+    const [x, y] = pol(d, r);
+    s += `<g transform="translate(${x.toFixed(1)},${y.toFixed(1)})"><circle r="11" fill="rgba(246,240,220,0.6)"/><g stroke="#2b2219" stroke-linecap="round" fill="none"><path d="M-6 6 L6 -6 M-6 -6 L6 6" stroke-width="2"/><path d="M2 -8.5 Q7.5 -7.5 8.5 -2 M-2 -8.5 Q-7.5 -7.5 -8.5 -2" stroke-width="1.8"/></g></g>`;
+  }
+  for (const g of REG) {
+    const [x, y] = pol(g.c, g.lr);
+    s += `<text x="${x.toFixed(1)}" y="${(y + 10).toFixed(1)}" text-anchor="middle" font-size="27" font-weight="500" letter-spacing="4" fill="${ink}" ${halo}>${g.n}</text>`;
+  }
+  s += `<text x="${CX - 140}" y="${CY - 72}" text-anchor="middle" font-size="19" font-style="italic" fill="#2f2a24" ${halo}>Mount Everest</text>`;
+  s += `<text x="${CX + 150}" y="${CY + 52}" text-anchor="middle" font-size="19" font-style="italic" fill="#2f2a24" ${halo}>Mount St. Helens</text>`;
+  s += `<text font-size="34" letter-spacing="12" fill="#34536a"><textPath href="#seaA" startOffset="50%" text-anchor="middle">RIM SEA</textPath></text>`;
+  s += `<text font-size="34" letter-spacing="12" fill="#34536a"><textPath href="#seaB" startOffset="50%" text-anchor="middle">RIM SEA</textPath></text>`;
+  s += `<text font-size="32" letter-spacing="12" fill="#3e5368" stroke="rgba(255,255,255,0.6)" stroke-width="3" paint-order="stroke"><textPath href="#cloudA" startOffset="50%" text-anchor="middle">CLOUDWALL</textPath></text>`;
+  // side-view inset
+  const bx = 1250, by = 1040, bw = 332, bh = 226, mx = bx + bw / 2, wy = by + 84;
+  let st = ''; for (let k = 0; k < 40; k++) st += `<circle cx="${(bx + 6 + rnd() * (bw - 12)).toFixed(1)}" cy="${(by + 6 + rnd() * 120).toFixed(1)}" r="${(0.5 + rnd()).toFixed(1)}" fill="#e8e6dc" opacity="${(0.4 + rnd() * 0.6).toFixed(2)}"/>`;
+  const cc = document.createElement('canvas'); cc.width = bw * 2; cc.height = bh * 2;
+  { const g = cc.getContext('2d'), im = g.createImageData(cc.width, cc.height), d = im.data, cw = cc.width, ch = cc.height, D = new Float32Array(cw * ch);
+    for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) { const dl = (x - 60) / 70, dr = (x - (cw - 60)) / 70, col = Math.max(Math.exp(-dl * dl), Math.exp(-dr * dr)), rise = sm(10, 160, y); D[y * cw + x] = col * 0.62 * rise + (0.85 * fbm(x / 60 + 400, y / 60, 5) + 0.25 * fbm(x / 18, y / 18 + 300, 3)) * sm(0.15, 0.6, col); }
+    for (let y = 4; y < ch; y++) for (let x = 4; x < cw; x++) { const i = y * cw + x, v = D[i], a = sm(0.3, 0.46, v); if (a <= 0) continue; const b = Math.max(0, Math.min(1, 0.45 + 6 * (v - D[i - 3 * cw - 3]) + 0.4 * sm(0.45, 0.95, v))); const o = i * 4; d[o] = 150 + 103 * b; d[o + 1] = 164 + 89 * b; d[o + 2] = 182 + 68 * b; d[o + 3] = 255 * a; }
+    g.putImageData(im, 0, 0); }
+  const cl = `<image href="${cc.toDataURL()}" x="${bx}" y="${by}" width="${bw}" height="${bh}"/>`;
+  let isl = `M${mx - 78} ${wy + 1}`; for (let x = mx - 78; x <= mx + 78; x += 6) isl += ` L${x} ${(wy - 2 - rnd() * 4).toFixed(1)}`; isl += ` L${mx + 78} ${wy + 1} Z`;
+  let rock = `M${mx - 76} ${wy + 2}`; for (let x = mx - 66; x <= mx + 76; x += 10) rock += ` L${x} ${(wy + 2 + 78 * Math.sin(Math.PI * (x - mx + 76) / 152) + (rnd() - 0.5) * 12).toFixed(1)}`; rock += ` L${mx + 76} ${wy + 2} Z`;
+  s += `<g>
+<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" fill="#0f1730" stroke="${ink}" stroke-width="2.5"/>
+${st}
+<path d="M${mx - 112} ${wy} A112 104 0 0 0 ${mx + 112} ${wy} Z" fill="url(#bowl)" stroke="#2f4a60" stroke-width="1.5"/>
+<path d="${rock}" fill="#8a7d69" opacity="0.6" stroke="#5a4f40" stroke-width="1"/>
+<ellipse cx="${mx}" cy="${wy}" rx="112" ry="13" fill="#bcdbe4" stroke="#4f7090" stroke-width="1.2"/>
+<path d="${isl}" fill="#9db26c" stroke="#4c5a3c" stroke-width="1.2" stroke-linejoin="round"/>
+<path d="M${mx - 22} ${wy - 3} L${mx - 6} ${wy - 40} L${mx + 12} ${wy - 3} Z" fill="#eef0ee" stroke="#4a4a46" stroke-width="1"/>
+<path d="M${mx - 6} ${wy - 40} L${mx + 12} ${wy - 3} L${mx - 1} ${wy - 3} Z" fill="#b5bbc0"/>
+<path d="M${mx + 6} ${wy - 2} L${mx + 22} ${wy - 24} L${mx + 28} ${wy - 24} L${mx + 44} ${wy - 2} Z" fill="#8a6a55" stroke="#4a3a2e" stroke-width="1"/>
+<path d="M${mx + 58} ${wy - 3} L${mx + 63} ${wy - 16} L${mx + 67} ${wy - 3} M${mx + 66} ${wy - 3} L${mx + 71} ${wy - 13} L${mx + 75} ${wy - 3}" fill="#e2ddd2" stroke="#6a6458" stroke-width="0.8"/>
+${cl}
+<rect x="${bx + 5}" y="${by + 5}" width="${bw - 10}" height="${bh - 10}" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="1"/>
+<text x="${mx}" y="${by + bh - 12}" text-anchor="middle" font-size="17" font-style="italic" fill="#e3e8ee">Side view</text>
+</g>`;
+  svg.setAttribute('font-family', "'EB Garamond', Georgia, serif");
+  svg.innerHTML = s;
+}
+
+setTimeout(() => {
+  const { M } = render();
+  overlay(M);
+  document.getElementById('msg').remove();
+}, 30);
+</script>
+</body>
+</html>

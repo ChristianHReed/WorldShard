@@ -1,0 +1,15 @@
+[package]
+name = "worldshard"
+version = "0.1.0"
+edition = "2021"
+description = "WorldShard: an open-world game on a broken chunk of Earth floating in space"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "mapgen"
+path = "src/bin/mapgen.rs"
+
+[profile.release]
+opt-level = 3
