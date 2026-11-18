@@ -9,6 +9,14 @@ spread out from their base. Content and items are player-driven.
 
 ![Top-down view of the generated island](docs/images/world_preview.png)
 
+## Scale
+
+- **Island:** the land area of Australia (about 7.7 million km²), so about 3,100 km across.
+- **Rim Sea:** three island widths of water from the shore to the Cloudwall.
+- **Peaks:** real heights. Mount Everest is 8,849 m and Mount St. Helens 2,549 m.
+- **Clock:** a game day is a real day, so crossing a region on foot takes 3–5 game days.
+- **Fly-through mode (testing):** press F or tap **Fly**. E/Q or **Up**/**Down** change height. R or the speed button cycles 30 m/s, 300 m/s, 3 km/s and 30 km/s.
+
 ## The six regions
 
 | Region | Nature |
@@ -26,13 +34,14 @@ Full world design: [docs/map-and-world.md](docs/map-and-world.md).
 
 | Path | What it is |
 |---|---|
-| `src/worldgen/` | **Rust** world generator — the island's shape, heights, region colours, lava flows and lakes. No dependencies. Produces exactly the same island as the design map and the web prototype. |
-| `src/meshgen.rs` | Turns the world into mesh data any renderer can upload: terrain, lava glow, the Rim Sea, trees / bushes / rocks / mine entrances (merged per 240 m chunk) and the Cloudwall. |
+| `src/worldgen/` | **Rust** world generator, no dependencies. `island.rs` is the design-map recipe (shape, regions, colours); `terrain.rs` samples the full-size world anywhere in metres, with real peak heights and ground-level detail. |
+| `src/lod.rs` | Level of detail: a quadtree of terrain chunks, 256 m near the camera and coarser further out. |
+| `src/meshgen.rs` | Mesh data any renderer can upload: terrain chunks (with skirts, water and lava), trees / bushes / rocks / mine entrances in 128 m cells, grass in 32 m cells, the Cloudwall and the sky dome. |
 | `src/sky.rs` | Day and night: sun and moon direction, light, sky and fog colours for any time of day. |
 | `src/save.rs` | The save format (read and write), no dependencies. |
 | `game/` | **The game** in [Bevy](https://bevyengine.org) 0.16: draws the world, walking / running / swimming / jumping, mouse and touch controls, day/night, region banners, compass, autosave. `game/web/index.html` is its web page. |
 | `.github/workflows/web.yml` | Builds the game for the web (WebAssembly) on every push and publishes it to GitHub Pages from `main`. |
-| `src/bin/mapgen.rs` | Builds the world and writes a shaded preview (`world_preview.ppm`) and a 16-bit heightmap (`world_height16.pgm`, value / 4 − 512 = metres). |
+| `src/bin/mapgen.rs` | Checks the full-size world (peak heights, chunk counts) and writes a shaded preview (`world_preview.ppm`, 4 km per pixel) and a 16-bit heightmap (`world_height16.pgm`, value − 10,000 = metres). |
 | `web-prototype/index.html` | The first playable version: a single-page WebGL 2 web app. Walk the island in first person on phone or desktop, swim, day/night cycle, Cloudwall barrier, compass, minimap and region banners. Reference for the Rust port. |
 | `tools/island-map.html` | The illustrated top-down design map (canvas shaded relief) built from the same generator. |
 | `docs/` | World design, free asset sources, prototype notes. |
@@ -82,6 +91,8 @@ Google Drive); **Open save** loads one back.
 - [x] World generator ported to Rust (verified identical to the JS version)
 - [x] Rust game in Bevy, built for the web with WebAssembly by GitHub Actions
 - [x] Terrain, lava, sea, trees/rocks/mines, Cloudwall, day/night and walking ported to Rust
+- [x] Full-size world (Australia-sized island), streamed terrain, fly-through mode
+- [ ] Breath of the Wild look: soft two-tone lighting, wind, shadows, painted textures
 - [ ] Minimap in the Rust version
 - [ ] Replace placeholder trees/rocks/mines with CC0 assets ([docs/3d-asset-sources.md](docs/3d-asset-sources.md))
 - [ ] Native inhabitants, items and player-built content

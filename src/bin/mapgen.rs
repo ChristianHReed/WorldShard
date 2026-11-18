@@ -1,88 +1,62 @@
-//! Builds the world and writes a shaded top-down preview (PPM) plus a
-//! 16-bit heightmap (PGM) — handy for checking the generator and for
-//! importing the terrain into other tools.
+//! Checks the full-size world and writes a shaded top-down preview (PPM)
+//! plus a 16-bit heightmap (PGM, 1 m per step, sea level at 10,000).
 use std::io::Write;
-use worldshard::worldgen::grid::{GN, GV};
-use worldshard::worldgen::World;
+use worldshard::lod;
+use worldshard::meshgen::*;
+use worldshard::worldgen::island::{EX, EY, HX, HY};
+use worldshard::worldgen::terrain::*;
 
 fn main() -> std::io::Result<()> {
     let t0 = std::time::Instant::now();
-    let w = World::generate(|_| {});
-    eprintln!("generated {}x{} grid in {:.2?}", GV, GV, t0.elapsed());
-    let (mut hmin, mut hmax) = (f32::MAX, f32::MIN);
-    for &h in &w.h {
-        hmin = hmin.min(h);
-        hmax = hmax.max(h);
+    let t = Terrain::new();
+    eprintln!("world ready in {:.2?}", t0.elapsed());
+    let (ex, ez) = to_world(EX, EY);
+    let (hx, hz) = to_world(HX, HY);
+    eprintln!("Mount Everest {:.0} m, St. Helens centre {:.0} m", t.height(ex, ez), t.height(hx, hz));
+    eprintln!("Cloudwall at {:.0} km from the centre, island about {:.0} km wide", CLOUD_R / 1000.0, ISLAND_WIDTH / 1000.0);
+    let (sx, sz) = spawn_point();
+    eprintln!("spawn ({sx:.0}, {sz:.0}) at {:.0} m: {:?}", t.height(sx, sz), t.place_name(sx, sz));
+
+    // what the game builds around the spawn point
+    let t1 = std::time::Instant::now();
+    let keys = lod::select([sx, t.height(sx, sz) + 1.7, sz], 1.7);
+    let mut tris = 0;
+    for &k in &keys {
+        let c = build_chunk(&t, k);
+        tris += c.terrain.map_or(0, |m| m.triangle_count()) + c.water.map_or(0, |m| m.triangle_count()) + c.lava.map_or(0, |m| m.triangle_count());
     }
-    eprintln!("height range {hmin:.1} m .. {hmax:.1} m");
-    for &(x, z) in &[
-        (-803.5, 464.0),
-        (0.0, 0.0),
-        (-112.0, -152.0),
-        (858.0, -720.0),
-        (-700.0, -600.0),
-        (0.0, 820.0),
-    ] {
-        eprintln!(
-            "h({x},{z}) = {:.3}  place = {:?}",
-            w.height_at(x, z),
-            w.place_name(x, z)
-        );
-    }
-    // shaded colour preview
-    let mut ppm = Vec::with_capacity(GV * GV * 3 + 32);
-    write!(ppm, "P6\n{GV} {GV}\n255\n")?;
-    for j in 0..GV {
-        for i in 0..GV {
-            let k = j * GV + i;
-            let h = w.h[k];
-            let hx = w.h[j * GV + (i + 1).min(GN)];
-            let hz = w.h[(j + 1).min(GN) * GV + i];
-            let shade = if h > 0.0 {
-                (1.0 - ((hx - h) + (hz - h)) * 0.03).clamp(0.55, 1.3)
+    eprintln!("{} terrain chunks, {} triangles, built in {:.2?}", keys.len(), tris, t1.elapsed());
+
+    // preview: 1 pixel = 4 km over ±2,200 km
+    const N: usize = 1100;
+    let step = 4000.0;
+    let o = -(N as f64) / 2.0 * step;
+    let mut ppm = Vec::with_capacity(N * N * 3 + 32);
+    write!(ppm, "P6\n{N} {N}\n255\n")?;
+    let mut pgm = Vec::with_capacity(N * N * 2 + 32);
+    write!(pgm, "P5\n{N} {N}\n65535\n")?;
+    for j in 0..N {
+        for i in 0..N {
+            let (x, z) = (o + i as f64 * step, o + j as f64 * step);
+            let s = t.sample(x, z);
+            let hx = t.height(x + step, z);
+            let shade = if s.h > 0.0 { (1.0 - (hx - s.h) / 1500.0).clamp(0.55, 1.35) as f32 } else { 1.0 };
+            let c = if s.water.is_some() && s.h < s.water.unwrap() {
+                let d = ((s.water.unwrap() - s.h) / 300.0).clamp(0.0, 1.0) as f32;
+                [0.4 - 0.32 * d, 0.78 - 0.5 * d, 0.8 - 0.35 * d]
             } else {
-                1.0
+                s.col
             };
-            let c = if h > 0.0 {
-                w.col[k]
-            } else {
-                let t = (-h / 30.0).clamp(0.0, 1.0);
-                [0.55 - 0.4 * t, 0.8 - 0.5 * t, 0.8 - 0.35 * t]
-            };
-            let g = w.glow[k];
             for ch in 0..3 {
-                let mut v = c[ch] * shade;
-                if g > 0.0 {
-                    v = v + g * [1.0, 0.45, 0.1][ch];
-                }
+                let v = c[ch] * shade + s.glow * [1.0, 0.45, 0.1][ch];
                 ppm.push((v.clamp(0.0, 1.0) * 255.0) as u8);
             }
+            let v = (s.h + 10_000.0).clamp(0.0, 65535.0) as u16;
+            pgm.extend_from_slice(&v.to_be_bytes());
         }
     }
     std::fs::write("world_preview.ppm", ppm)?;
-    // 16-bit heightmap, sea level at 0 -> 2048, 0.25 m per step
-    let mut pgm = Vec::with_capacity(GV * GV * 2 + 32);
-    write!(pgm, "P5\n{GV} {GV}\n65535\n")?;
-    for &h in &w.h {
-        let v = ((h + 512.0) * 4.0).clamp(0.0, 65535.0) as u16;
-        pgm.extend_from_slice(&v.to_be_bytes());
-    }
     std::fs::write("world_height16.pgm", pgm)?;
-    eprintln!("wrote world_preview.ppm and world_height16.pgm");
-    // mesh statistics (what the game will upload)
-    use worldshard::meshgen::*;
-    let t1 = std::time::Instant::now();
-    let terrain = terrain_mesh(&w);
-    let lava = lava_mesh(&w);
-    let water = water_mesh(&w);
-    let props = scatter(&w);
-    let kinds = PropKinds::build();
-    let chunks = prop_chunks(&props, &kinds);
-    let clouds = cloud_meshes(12);
-    let prop_tris: usize = chunks.iter().map(|c| c.mesh.triangle_count()).sum();
-    let cloud_tris: usize = clouds.iter().map(|c| c.triangle_count()).sum();
-    eprintln!("meshes built in {:.2?}", t1.elapsed());
-    eprintln!("terrain {} tris, lava {} tris, water {} tris", terrain.triangle_count(), lava.triangle_count(), water.triangle_count());
-    eprintln!("{} props in {} chunks, {} tris; clouds {} tris", props.len(), chunks.len(), prop_tris, cloud_tris);
+    eprintln!("wrote world_preview.ppm and world_height16.pgm in {:.2?}", t0.elapsed());
     Ok(())
 }
