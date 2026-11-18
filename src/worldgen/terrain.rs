@@ -33,7 +33,7 @@ pub const ST_HELENS_M: f64 = 2549.0;
 const BASE_M: f64 = 1700.0;
 const EV_MASSIF_M: f64 = 5600.0;
 const EV_MASSIF_R: f64 = 55.0; // px
-const EV_HORN_R: f64 = 7.0; // px
+const EV_HORN_R: f64 = 2.6; // px (about 12 km: a steep summit pyramid)
 const EV_HORN_M: f64 = 2766.0; // summit = EVEREST_M
 const HEL_M: f64 = 1649.0; // rim = ST_HELENS_M
 const CLIFF_M: f64 = 320.0;
@@ -257,7 +257,7 @@ impl Terrain {
         let d1 = (p.x - EX).hypot(p.y - EY);
         let d2 = (p.x - HX).hypot(p.y - HY);
         let mut d = 55.0 * n.fbm(wx / 9000.0 + 31.7, wz / 9000.0 - 12.3, 4);
-        let rug = sm(1500.0, 4500.0, hm) * sm(1.5, 9.0, d1) * sm(10.0, 28.0, d2);
+        let rug = sm(1500.0, 4500.0, hm) * sm(0.8, 4.0, d1) * sm(10.0, 28.0, d2);
         if rug > 0.0 {
             d += (n.ridged(wx / 14000.0 - 51.1, wz / 14000.0 + 7.7, 5) - 0.45) * 1400.0 * rug;
         }

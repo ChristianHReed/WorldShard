@@ -31,7 +31,7 @@ use {getrandom as _, getrandom02 as _};
 const EYE: f64 = 1.7;
 /// Trees and rocks are drawn this far around the player; grass closer.
 const PROP_RADIUS: f64 = 520.0;
-const GRASS_RADIUS: f64 = 72.0;
+const GRASS_RADIUS: f64 = 56.0;
 /// Fly-through speeds (metres per second).
 const FLY_SPEEDS: [f64; 4] = [30.0, 300.0, 3000.0, 30000.0];
 
@@ -366,7 +366,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
         Text::new(status.clone()),
         TextFont { font_size: 13.0, ..default() },
         TextColor(ink.with_alpha(0.85)),
-        Node { position_type: PositionType::Absolute, top: Val::Px(34.0), left: Val::Px(12.0), ..default() },
+        Node { position_type: PositionType::Absolute, top: Val::Px(56.0), left: Val::Px(12.0), ..default() },
         StatusText,
     ));
     let compass_row = commands
@@ -804,7 +804,20 @@ fn place_relative(
     mut anchored: Query<(&Anchor, &mut Transform), (Without<Camera3d>, Without<SkyDome>)>,
     mut cams: Query<&mut Transform, (With<Camera3d>, Without<Anchor>, Without<SkyDome>)>,
     mut sky: Query<&mut Transform, (With<SkyDome>, Without<Anchor>, Without<Camera3d>)>,
+    mut projections: Query<&mut Projection, With<Camera3d>>,
+    w: Res<GameWorld>,
 ) {
+    // the near clip plane moves out when flying high, which keeps the
+    // depth buffer precise for land and sea thousands of km away
+    let above = (pl.y - meshgen::drawn_height(&w.0, pl.x, pl.z).max(0.0)).max(0.0);
+    let near = (above * 0.02).clamp(0.3, 50_000.0) as f32;
+    for mut proj in &mut projections {
+        if let Projection::Perspective(p) = &mut *proj {
+            if (p.near - near).abs() > p.near * 0.05 {
+                p.near = near;
+            }
+        }
+    }
     for (a, mut tf) in &mut anchored {
         tf.translation = Vec3::new((a.x - pl.x) as f32, a.y as f32, (a.z - pl.z) as f32);
     }
@@ -838,11 +851,11 @@ fn sky_and_light(
 ) {
     let s = sun_state(pl.hours);
     clear.0 = rgb(s.sky_col);
-    ambient.brightness = 600.0 + 1200.0 * s.day;
+    ambient.brightness = 550.0 + 1050.0 * s.day;
     let amax = s.sky_amb[2].max(0.01);
     ambient.color = rgb([s.sky_amb[0] / amax, s.sky_amb[1] / amax, 1.0]);
     if let Ok((mut light, mut tf)) = sky_light.single_mut() {
-        let sun = 7000.0 * s.sun_col[0].max(s.sun_col[1]).max(s.sun_col[2]);
+        let sun = 6000.0 * s.sun_col[0].max(s.sun_col[1]).max(s.sun_col[2]);
         let moon = 9000.0 * s.moon_col[2];
         let (col, dir, lux) = if sun >= moon { (s.sun_col, s.sun_dir, sun) } else { ([0.6, 0.7, 1.0], s.moon_dir, moon) };
         let m = col[0].max(col[1]).max(col[2]).max(0.001);
@@ -898,7 +911,9 @@ fn update_hud(
     if let Ok(mut t) = texts.p0().single_mut() {
         let mut s = format!("Day {}  {}  |  {}", pl.day, clock_text(pl.hours), alt_text);
         if pl.fly {
-            s.push_str(&format!("  |  FLY {:.0} m above ground", above.max(0.0)));
+            let a = above.max(0.0);
+            let a = if a >= 10_000.0 { format!("{:.0} km", a / 1000.0) } else { format!("{:.0} m", a) };
+            s.push_str(&format!("\nFLY: {} above ground", a));
         }
         if t.0 != s {
             t.0 = s;

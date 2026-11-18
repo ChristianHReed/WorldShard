@@ -49,6 +49,17 @@ fn lin3(c: [f32; 3]) -> [f32; 4] {
 fn mix3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
 }
+/// Richer, slightly deeper colours for the land, closer to the lush
+/// painted look of Breath of the Wild than the flat map colours.
+pub fn ground_grade(c: [f32; 3]) -> [f32; 3] {
+    let l = c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11;
+    let sat = 1.35;
+    let g = [l + (c[0] - l) * sat, l + (c[1] - l) * sat, l + (c[2] - l) * sat];
+    // nudge yellow-greens toward green
+    let k = (c[1] - c[2]).max(0.0) * 0.25;
+    [(g[0] - k * 0.6).max(0.0) * 0.93, g[1] * 0.95, (g[2] - k * 0.2).max(0.0) * 0.92]
+}
+
 fn scale3(c: [f32; 3], s: f32) -> [f32; 3] {
     [c[0] * s, c[1] * s, c[2] * s]
 }
@@ -142,7 +153,7 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
             let (hl, hr) = (hb[(j + 1) * g + i], hb[(j + 1) * g + i + 2]);
             let (hu, hd) = (hb[j * g + i + 1], hb[(j + 2) * g + i + 1]);
             let nrm = norm3([(hl - hr) as f32, (2.0 * cell) as f32, (hu - hd) as f32]);
-            let mut c = s.col;
+            let mut c = if s.h > 0.0 && s.glow < 0.05 { ground_grade(s.col) } else { s.col };
             // steep slopes show rock; flat high ground keeps its grass or snow
             if s.h > 0.0 {
                 let steep = 1.0 - sm(0.62, 0.86, nrm[1] as f64) as f32;
@@ -688,7 +699,7 @@ pub fn grass_cell(t: &Terrain, ci: i64, cj: i64) -> Option<MeshData> {
     }
     let mut r = Rng::new(cell_seed(ci, cj, 2));
     let mut m = MeshData::default();
-    const STEP: f64 = 1.25;
+    const STEP: f64 = 0.8;
     let steps = (GRASS_CELL / STEP) as usize;
     for j in 0..steps {
         for i in 0..steps {
@@ -721,16 +732,16 @@ pub fn grass_cell(t: &Terrain, ci: i64, cj: i64) -> Option<MeshData> {
             }
             let h = tri_interp(ss[jj * L + ii].h, ss[jj * L + ii + 1].h, ss[(jj + 1) * L + ii].h, ss[(jj + 1) * L + ii + 1].h, u, w);
             let base = [(x0 + gx - ox) as f32, h as f32 - 0.05, (z0 + gz - oz) as f32];
-            let ground = s.col;
-            let root = lin3(scale3(ground, 0.8));
-            let tip = lin3(mix3(scale3(ground, 1.3), [0.85, 0.95, 0.45], 0.25));
-            let height = 0.35 + tall * 0.45;
-            for b in 0..3 {
-                let a = rot + b as f32 * 2.094;
+            let ground = ground_grade(s.col);
+            let root = lin3(scale3(ground, 0.92));
+            let tip = lin3(mix3(scale3(ground, 1.18), [0.62, 0.82, 0.32], 0.2));
+            let height = 0.22 + tall * 0.38;
+            for b in 0..4 {
+                let a = rot + b as f32 * 1.571 + tall;
                 let (ca, sa) = (a.cos(), a.sin());
-                let lean = 0.18 * height;
-                let p0 = [base[0] - sa * 0.06, base[1], base[2] + ca * 0.06];
-                let p1 = [base[0] + sa * 0.06, base[1], base[2] - ca * 0.06];
+                let lean = 0.22 * height;
+                let p0 = [base[0] - sa * 0.07, base[1], base[2] + ca * 0.07];
+                let p1 = [base[0] + sa * 0.07, base[1], base[2] - ca * 0.07];
                 let p2 = [base[0] + ca * lean, base[1] + height, base[2] + sa * lean];
                 let k = m.positions.len() as u32;
                 for (p, c) in [(p0, root), (p1, root), (p2, tip)] {
