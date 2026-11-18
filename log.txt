@@ -1,0 +1,18 @@
+page bytes: 31405
+zip url: https://opengameart.org/sites/default/files/stylized_nature_megakitstandard.zip
+-rw-r--r-- 1 runner runner 104088529 Nov 18 16:48 kit.zip
+kit.zip: Zip archive data, at least v2.0 to extract, compression method=store
+total 2504
+drwxr-xr-x 7 runner runner   4096 Nov 18 16:48 .
+drwxr-xr-x 3 runner runner   4096 Nov 18 16:48 ..
+dr-xr-xr-x 2 runner runner   4096 Jul 30  2024 FBX
+dr-xr-xr-x 2 runner runner   4096 Jul 30  2024 FBX (Unity)
+-rw-r--r-- 1 runner runner    852 Jul 30  2024 License_Standard.txt
+dr-xr-xr-x 2 runner runner   4096 Jul 30  2024 OBJ
+-rw-r--r-- 1 runner runner 598487 Jul 30  2024 Preview_1.jpg
+-rw-r--r-- 1 runner runner 679539 Jul 30  2024 Preview_2.jpg
+-rw-r--r-- 1 runner runner 440967 Jul 30  2024 Preview_3.jpg
+-rw-r--r-- 1 runner runner 796873 Jul 30  2024 Preview_4.jpg
+dr-xr-xr-x 2 runner runner   4096 Jul 30  2024 Textures
+dr-xr-xr-x 2 runner runner  12288 Jul 30  2024 glTF
+49M	/tmp/out
