@@ -1,0 +1,110 @@
+[1m[92m    Updating[0m crates.io index
+[1m[92m     Locking[0m 430 packages to highest compatible versions
+[1m[92m      Adding[0m bevy v0.16.1 [1m[33m(available: v0.20.1)[0m
+[1m[92m      Adding[0m getrandom v0.2.17 [1m[33m(available: v0.4.3)[0m
+[1m[92m      Adding[0m getrandom v0.3.4 [1m[33m(available: v0.4.3)[0m
+[1m[92m Downloading[0m crates ...
+[1m[92m  Downloaded[0m adler2 v2.0.1
+[1m[92m  Downloaded[0m base64 v0.22.1
+[1m[92m  Downloaded[0m bevy_gltf v0.16.1
+[1m[92m  Downloaded[0m crc32fast v1.5.5
+[1m[92m  Downloaded[0m ctrlc v3.5.3
+[1m[92m  Downloaded[0m fdeflate v0.3.7
+[1m[92m  Downloaded[0m flate2 v1.1.11
+[1m[92m  Downloaded[0m gltf v1.4.1
+[1m[92m  Downloaded[0m gltf-derive v1.4.1
+[1m[92m  Downloaded[0m gltf-json v1.4.1
+[1m[92m  Downloaded[0m inflections v1.1.1
+[1m[92m  Downloaded[0m itoa v1.0.19
+[1m[92m  Downloaded[0m miniz_oxide v0.8.9
+[1m[92m  Downloaded[0m miniz_oxide v0.9.1
+[1m[92m  Downloaded[0m nix v0.32.0
+[1m[92m  Downloaded[0m png v0.18.1
+[1m[92m  Downloaded[0m serde_json v1.0.154
+[1m[92m  Downloaded[0m simd-adler32 v0.3.10
+[1m[92m  Downloaded[0m smallvec v1.16.6
+[1m[92m  Downloaded[0m zlib-rs v0.6.8
+[1m[92m  Downloaded[0m zmij v1.0.23
+[1m[92m   Compiling[0m smallvec v1.16.6
+[1m[92m   Compiling[0m indexmap v2.14.2
+[1m[92m   Compiling[0m itertools v0.14.0
+[1m[92m   Compiling[0m parking_lot_core v0.9.12
+[1m[92m   Compiling[0m simd-adler32 v0.3.10
+[1m[92m   Compiling[0m parking_lot v0.12.5
+[1m[92m   Compiling[0m adler2 v2.0.1
+[1m[92m   Compiling[0m bevy_macro_utils v0.16.1
+[1m[92m   Compiling[0m crc32fast v1.5.5
+[1m[92m   Compiling[0m tracing-subscriber v0.3.23
+[1m[92m   Compiling[0m bevy_reflect_derive v0.16.1
+[1m[92m   Compiling[0m bevy_ecs_macros v0.16.1
+[1m[92m   Compiling[0m bevy_derive v0.16.1
+[1m[92m   Compiling[0m miniz_oxide v0.9.1
+[1m[92m   Compiling[0m naga v24.0.0
+[1m[92m   Compiling[0m flate2 v1.1.11
+[1m[92m   Compiling[0m miniz_oxide v0.8.9
+[1m[92m   Compiling[0m bevy_reflect v0.16.1
+[1m[92m   Compiling[0m fdeflate v0.3.7
+[1m[92m   Compiling[0m png v0.18.1
+[1m[92m   Compiling[0m tracing-wasm v0.2.1
+[1m[92m   Compiling[0m bevy_asset_macros v0.16.1
+[1m[92m   Compiling[0m image v0.25.10
+[1m[92m   Compiling[0m bevy_render_macros v0.16.1
+[1m[92m   Compiling[0m bevy_encase_derive v0.16.1
+[1m[92m   Compiling[0m zmij v1.0.23
+[1m[92m   Compiling[0m serde_json v1.0.154
+[1m[92m   Compiling[0m inflections v1.1.1
+[1m[92m   Compiling[0m itoa v1.0.19
+[1m[92m   Compiling[0m rustybuzz v0.14.1
+[1m[92m   Compiling[0m bevy_ecs v0.16.1
+[1m[92m   Compiling[0m bevy_math v0.16.1
+[1m[92m   Compiling[0m wgpu-hal v24.0.4
+[1m[92m   Compiling[0m bevy_color v0.16.2
+[1m[92m   Compiling[0m wgpu-core v24.0.5
+[1m[92m   Compiling[0m bevy_app v0.16.1
+[1m[92m   Compiling[0m bevy_input v0.16.1
+[1m[92m   Compiling[0m bevy_log v0.16.1
+[1m[92m   Compiling[0m bevy_asset v0.16.1
+[1m[92m   Compiling[0m bevy_window v0.16.1
+[1m[92m   Compiling[0m bevy_image v0.16.1
+[1m[92m   Compiling[0m bevy_transform v0.16.1
+[1m[92m   Compiling[0m bevy_time v0.16.1
+[1m[92m   Compiling[0m bevy_diagnostic v0.16.1
+[1m[92m   Compiling[0m bevy_mesh v0.16.1
+[1m[92m   Compiling[0m wgpu v24.0.5
+[1m[92m   Compiling[0m naga_oil v0.17.1
+[1m[92m   Compiling[0m bevy_render v0.16.1
+[1m[92m   Compiling[0m gltf-derive v1.4.1
+[1m[92m   Compiling[0m cosmic-text v0.13.2
+[1m[92m   Compiling[0m gltf-json v1.4.1
+[1m[92m   Compiling[0m bevy_a11y v0.16.1
+[1m[92m   Compiling[0m byteorder v1.5.0
+[1m[92m   Compiling[0m bevy_input_focus v0.16.1
+[1m[92m   Compiling[0m gltf v1.4.1
+[1m[92m   Compiling[0m percent-encoding v2.3.2
+[1m[92m   Compiling[0m base64 v0.22.1
+[1m[92m   Compiling[0m bevy_winit v0.16.1
+[1m[92m   Compiling[0m worldshard v0.1.0 (/home/runner/work/WorldShard/WorldShard)
+[1m[92m   Compiling[0m bevy_core_pipeline v0.16.1
+[1m[92m   Compiling[0m bevy_scene v0.16.1
+[1m[92m   Compiling[0m bevy_sprite v0.16.1
+[1m[92m   Compiling[0m bevy_pbr v0.16.1
+[1m[92m   Compiling[0m bevy_text v0.16.1
+[1m[92m   Compiling[0m bevy_ui v0.16.1
+[1m[92m   Compiling[0m bevy_gltf v0.16.1
+[1m[92m   Compiling[0m bevy_internal v0.16.1
+[1m[92m   Compiling[0m bevy v0.16.1
+[1m[92m   Compiling[0m worldshard-game v0.1.0 (/home/runner/work/WorldShard/WorldShard/game)
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 4m 20s
+wasm: 72274998 -> 26438759 bytes
+gzipped wasm bytes: 7357204
+total 25952
+drwxr-xr-x  4 runner runner     4096 Nov 18 17:02 .
+drwxr-xr-x 11 runner runner     4096 Nov 18 17:01 ..
+-rw-r--r--  1 runner runner        0 Nov 18 17:02 .nojekyll
+drwxr-xr-x  4 runner runner     4096 Nov 18 17:02 assets
+-rw-r--r--  1 runner runner     6703 Nov 18 17:02 index.html
+drwxr-xr-x  2 runner runner     4096 Nov 18 17:02 prototype
+-rw-r--r--  1 runner runner      113 Nov 18 17:02 wasm-parts.json
+-rw-r--r--  1 runner runner   101911 Nov 18 17:01 worldshard.js
+-rw-r--r--  1 runner runner 15000000 Nov 18 17:02 worldshard_bg.part0.wasm
+-rw-r--r--  1 runner runner 11438759 Nov 18 17:02 worldshard_bg.part1.wasm
