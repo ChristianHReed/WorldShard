@@ -33,8 +33,11 @@ jobs:
             unzip -l kit.zip > /tmp/out/listing.txt 2>&1
             unzip -q kit.zip -d x
             cd x
-            find . -type f \( -iname '*.gltf' -o -iname '*.glb' -o -iname '*.bin' -o -iname '*.png' -o -iname '*.jpg' -o -iname '*.txt' -o -iname '*.md' \) \
-              -not -ipath '*/fbx/*' -not -ipath '*/obj/*' -print0 | xargs -0 -I{} cp --parents {} /tmp/out/
+            ls -la
+            cp -r glTF /tmp/out/glTF
+            cp -f License*.txt Preview_1.jpg /tmp/out/ 2>/dev/null
+            chmod -R u+w /tmp/out
+            rm -f /tmp/out/glTF/desktop.ini
             du -sh /tmp/out
           } > "$LOG" 2>&1
           cd /tmp/out
