@@ -1,0 +1,116 @@
+name: Web build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # to publish build logs to the ci-logs branch
+  pages: write
+  id-token: write
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (with the wasm target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            game -> target
+
+      - name: Test the world library
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --release 2>&1 | tee test.log
+
+      - name: Build the game for the web
+        shell: bash
+        working-directory: game
+        env:
+          RUSTFLAGS: --cfg getrandom_backend="wasm_js"
+        run: |
+          set -o pipefail
+          cargo build --release --target wasm32-unknown-unknown 2>&1 | tee ../build.log
+
+      - name: Install wasm-bindgen (same version as the game uses)
+        shell: bash
+        run: |
+          V=$(cargo metadata --format-version 1 --manifest-path game/Cargo.toml | jq -r '.packages[] | select(.name=="wasm-bindgen") | .version' | head -1)
+          echo "wasm-bindgen $V"
+          cargo install wasm-bindgen-cli --version "$V" --locked
+
+      - name: Package the site
+        shell: bash
+        run: |
+          set -e
+          mkdir -p dist/prototype
+          wasm-bindgen --target web --no-typescript --out-dir dist --out-name worldshard \
+            game/target/wasm32-unknown-unknown/release/worldshard-game.wasm
+          # shrink the download with wasm-opt (skipped if it is unavailable)
+          if curl -sSfL https://github.com/WebAssembly/binaryen/releases/download/version_123/binaryen-version_123-x86_64-linux.tar.gz | tar xz -C /tmp; then
+            before=$(stat -c %s dist/worldshard_bg.wasm)
+            /tmp/binaryen-version_123/bin/wasm-opt -Os \
+              --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext \
+              --enable-mutable-globals --enable-reference-types --enable-multivalue \
+              dist/worldshard_bg.wasm -o /tmp/opt.wasm && mv /tmp/opt.wasm dist/worldshard_bg.wasm \
+              || echo "wasm-opt failed; keeping the unoptimised build"
+            echo "wasm: $before -> $(stat -c %s dist/worldshard_bg.wasm) bytes" | tee -a build.log
+          fi
+          gzip -9 -c dist/worldshard_bg.wasm | wc -c | xargs echo "gzipped wasm bytes:" | tee -a build.log
+          cp game/web/index.html dist/index.html
+          cp web-prototype/index.html dist/prototype/index.html
+          touch dist/.nojekyll
+          ls -la dist | tee -a build.log
+
+      - name: Smoke test in headless Chrome
+        continue-on-error: true
+        shell: bash
+        run: |
+          (cd dist && python3 -m http.server 8080 >/dev/null 2>&1 &)
+          mkdir -p /tmp/smoke-tool && cd /tmp/smoke-tool && npm init -y >/dev/null && npm install --silent puppeteer-core@24
+          cp "$GITHUB_WORKSPACE/tools/smoke-test.mjs" /tmp/smoke-tool/
+          timeout 900 node /tmp/smoke-tool/smoke-test.mjs http://localhost:8080/ "$GITHUB_WORKSPACE/smoke"
+
+      - name: Publish build logs (ci-logs branch)
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        shell: bash
+        run: |
+          mkdir -p /tmp/logs
+          cp build.log test.log /tmp/logs/ 2>/dev/null || true
+          cp -r smoke /tmp/logs/ 2>/dev/null || true
+          cd /tmp/logs
+          echo "${{ github.sha }} ${{ job.status }}" > run.txt
+          git init -q && git checkout -q -b ci-logs
+          git config user.name "ci" && git config user.email "ci@users.noreply.github.com"
+          git add -A && git commit -qm "Build logs for ${{ github.sha }}"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" ci-logs
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
