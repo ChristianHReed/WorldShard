@@ -17,6 +17,7 @@ jobs:
       - name: Download, unpack and publish
         shell: bash
         run: |
+          set +e +o pipefail
           mkdir -p /tmp/kit /tmp/out
           LOG=/tmp/out/log.txt
           {
