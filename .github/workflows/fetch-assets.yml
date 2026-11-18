@@ -14,27 +14,30 @@ jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
-      - name: Download and unpack
+      - name: Download, unpack and publish
         shell: bash
         run: |
-          set -e
           mkdir -p /tmp/kit /tmp/out
-          cd /tmp/kit
-          curl -sSfL -o kit.zip "https://opengameart.org/sites/default/files/stylized_nature_megakitstandard.zip" || \
-            curl -sSfL -o kit.zip "https://opengameart.org/sites/default/files/stylized_nature_megakit_standard.zip"
-          ls -la kit.zip
-          unzip -l kit.zip > /tmp/out/listing.txt
-          unzip -q kit.zip -d x
-          cd x
-          find . -type f \( -iname '*.gltf' -o -iname '*.glb' -o -iname '*.bin' -o -iname '*.png' -o -iname '*.jpg' -o -iname '*.txt' -o -iname '*.md' \) \
-            -not -path '*/FBX/*' -not -path '*/OBJ/*' -print0 | xargs -0 -I{} cp --parents {} /tmp/out/
-          du -sh /tmp/out
-          find /tmp/out -type f | head -400 > /tmp/out/files.txt
-
-      - name: Push to the assets-megakit branch
-        shell: bash
-        run: |
+          LOG=/tmp/out/log.txt
+          {
+            cd /tmp/kit
+            curl -sSL -A "Mozilla/5.0" -o page.html "https://opengameart.org/content/stylized-nature-megakit"
+            echo "page bytes: $(wc -c < page.html)"
+            URL=$(grep -o 'https\?://[^"]*sites/default/files/[^"]*\.zip' page.html | head -1)
+            [ -z "$URL" ] && URL="https://opengameart.org$(grep -o '/sites/default/files/[^"]*\.zip' page.html | head -1)"
+            echo "zip url: $URL"
+            curl -sSL -A "Mozilla/5.0" -o kit.zip "$URL"
+            ls -la kit.zip
+            file kit.zip
+            unzip -l kit.zip > /tmp/out/listing.txt 2>&1
+            unzip -q kit.zip -d x
+            cd x
+            find . -type f \( -iname '*.gltf' -o -iname '*.glb' -o -iname '*.bin' -o -iname '*.png' -o -iname '*.jpg' -o -iname '*.txt' -o -iname '*.md' \) \
+              -not -ipath '*/fbx/*' -not -ipath '*/obj/*' -print0 | xargs -0 -I{} cp --parents {} /tmp/out/
+            du -sh /tmp/out
+          } > "$LOG" 2>&1
           cd /tmp/out
+          find . -type f | sort > files.txt
           git init -q && git checkout -q -b assets-megakit
           git config user.name "ci" && git config user.email "ci@users.noreply.github.com"
           git add -A && git commit -qm "Quaternius Stylized Nature MegaKit (Standard, CC0): glTF files"
