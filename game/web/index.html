@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>WorldShard</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1020; color: #f2ead6;
+    font-family: Georgia, "Times New Roman", serif; -webkit-user-select: none; user-select: none; }
+  #bevy { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+  #loading { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; background: radial-gradient(circle at 50% 45%, #1d2a4a, #0b1020 70%); z-index: 5; text-align: center; padding: 20px; }
+  #loading h1 { margin: 0; font-size: 34px; letter-spacing: .18em; font-weight: normal; }
+  #loading p { margin: 0; opacity: .75; font-size: 15px; }
+  #loading.error p { color: #ffb4a0; opacity: 1; }
+  #saves { position: fixed; top: max(10px, env(safe-area-inset-top)); right: 10px; display: flex; gap: 6px; z-index: 4; }
+  #saves button, #saves a { font: 13px Georgia, serif; color: #f2ead6; background: rgba(12,16,30,.62); border: 1px solid rgba(242,234,214,.35);
+    border-radius: 6px; padding: 6px 10px; cursor: pointer; text-decoration: none; }
+  #toast { position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%); background: rgba(12,16,30,.8); padding: 8px 14px;
+    border-radius: 6px; font-size: 14px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 6; }
+</style>
+</head>
+<body>
+<canvas id="bevy" tabindex="0"></canvas>
+<div id="loading"><h1>WORLDSHARD</h1><p id="loading-msg">Building the world…</p></div>
+<div id="saves">
+  <button id="save-file" title="Download your save so you can keep it in Google Drive">Save file</button>
+  <button id="open-file" title="Load a save file you kept">Open save</button>
+  <a href="prototype/" title="The earlier JavaScript prototype">Prototype</a>
+</div>
+<input id="file" type="file" accept=".json,application/json" hidden>
+<div id="toast"></div>
+<script type="module">
+  import init from "./worldshard.js";
+
+  const KEY = "worldshard-save-v1";
+  const toast = (msg) => {
+    const t = document.getElementById("toast");
+    t.textContent = msg; t.style.opacity = 1;
+    clearTimeout(toast.t); toast.t = setTimeout(() => (t.style.opacity = 0), 2600);
+  };
+
+  // --- start the game ---
+  init().catch((e) => {
+    const msg = String((e && e.message) || e);
+    if (msg.includes("Using exceptions for control flow")) return; // Bevy's normal start-up
+    const l = document.getElementById("loading");
+    if (l) { l.classList.add("error"); document.getElementById("loading-msg").textContent = "Could not start: " + msg; }
+    console.error(e);
+  });
+
+  // --- save file: the game saves in the browser; this hands it to the player as a file ---
+  document.getElementById("save-file").onclick = async () => {
+    const data = localStorage.getItem(KEY);
+    if (!data) { toast("Nothing saved yet. Walk around first."); return; }
+    const day = (data.match(/"day":(\d+)/) || [])[1] || "1";
+    const name = `WorldShard-save-day${day}.json`;
+    const file = new File([data], name, { type: "application/json" });
+    // On phones the share sheet lets the player pick Google Drive directly.
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: "WorldShard save" }); return; }
+      catch (e) { if (e && e.name === "AbortError") return; }
+    }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(file); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast("Save file downloaded. Keep it in Google Drive.");
+  };
+
+  document.getElementById("open-file").onclick = () => document.getElementById("file").click();
+  document.getElementById("file").onchange = async (ev) => {
+    const f = ev.target.files && ev.target.files[0];
+    ev.target.value = "";
+    if (!f) return;
+    try {
+      const text = await f.text();
+      const s = text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
+      const d = JSON.parse(s);
+      if ((d.game && d.game !== "WorldShard") || typeof d.x !== "number" || typeof d.z !== "number") throw new Error("not a WorldShard save");
+      localStorage.setItem(KEY, s);
+      toast("Save loaded. Restarting…");
+      setTimeout(() => location.reload(), 600);
+    } catch (e) {
+      toast("That file is not a WorldShard save.");
+    }
+  };
+
+  // keep keyboard focus on the game after using the buttons
+  document.getElementById("bevy").addEventListener("pointerdown", (e) => e.currentTarget.focus());
+</script>
+</body>
+</html>

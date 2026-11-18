@@ -69,5 +69,20 @@ fn main() -> std::io::Result<()> {
     }
     std::fs::write("world_height16.pgm", pgm)?;
     eprintln!("wrote world_preview.ppm and world_height16.pgm");
+    // mesh statistics (what the game will upload)
+    use worldshard::meshgen::*;
+    let t1 = std::time::Instant::now();
+    let terrain = terrain_mesh(&w);
+    let lava = lava_mesh(&w);
+    let water = water_mesh(&w);
+    let props = scatter(&w);
+    let kinds = PropKinds::build();
+    let chunks = prop_chunks(&props, &kinds);
+    let clouds = cloud_meshes(12);
+    let prop_tris: usize = chunks.iter().map(|c| c.mesh.triangle_count()).sum();
+    let cloud_tris: usize = clouds.iter().map(|c| c.triangle_count()).sum();
+    eprintln!("meshes built in {:.2?}", t1.elapsed());
+    eprintln!("terrain {} tris, lava {} tris, water {} tris", terrain.triangle_count(), lava.triangle_count(), water.triangle_count());
+    eprintln!("{} props in {} chunks, {} tris; clouds {} tris", props.len(), chunks.len(), prop_tris, cloud_tris);
     Ok(())
 }

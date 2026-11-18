@@ -108,6 +108,11 @@ pub fn pol(deg: f64, r: f64) -> (f64, f64) {
     (CX + r * (deg * D2R).cos(), CY + r * (deg * D2R).sin())
 }
 
+/// Direction (degrees, map space) of a map point from the centre.
+pub fn to_map_deg(mx: f64, my: f64) -> f64 {
+    (my - CY).atan2(mx - CX) / D2R
+}
+
 /// Index of the region whose centre direction is nearest `deg`.
 pub fn region_index(deg: f64) -> usize {
     let mut best = 0;
