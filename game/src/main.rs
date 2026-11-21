@@ -439,12 +439,15 @@ fn setup(
         .id();
     commands.spawn((Text::new(""), TextFont { font_size: 40.0, ..default() }, TextColor(ink.with_alpha(0.0)), BannerTitle, ChildOf(banner)));
     commands.spawn((Text::new(""), TextFont { font_size: 18.0, ..default() }, TextColor(ink.with_alpha(0.0)), BannerSub, ChildOf(banner)));
+    let help = if quality.name == "full" {
+        "WASD / arrows move | hold mouse button and drag to look | Shift run | Space jump\n\
+         Fly (testing): F or the Fly button | E / Q up and down | R changes speed\n\
+         Phone: drag on the left to move (push far to run), drag on the right to look"
+    } else {
+        "Drag on the left to move (push far to run)\nDrag on the right to look"
+    };
     commands.spawn((
-        Text::new(
-            "WASD / arrows move | hold mouse button and drag to look | Shift run | Space jump\n\
-             Fly (testing): F or the Fly button | E / Q up and down | R changes speed\n\
-             Phone: drag on the left to move (push far to run), drag on the right to look",
-        ),
+        Text::new(help),
         TextFont { font_size: 12.0, ..default() },
         TextColor(ink.with_alpha(0.75)),
         Node { position_type: PositionType::Absolute, bottom: Val::Px(10.0), left: Val::Px(12.0), ..default() },
