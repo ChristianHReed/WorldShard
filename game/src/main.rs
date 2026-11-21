@@ -433,7 +433,14 @@ fn setup(
         StatusText,
     ));
     let compass_row = commands
-        .spawn(Node { position_type: PositionType::Absolute, top: Val::Px(10.0), width: Val::Percent(100.0), justify_content: JustifyContent::Center, ..default() })
+        .spawn(Node {
+            position_type: PositionType::Absolute,
+            // on narrow phone screens the compass sits under the clock
+            top: Val::Px(if quality.name == "full" { 10.0 } else { 34.0 }),
+            width: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            ..default()
+        })
         .id();
     commands.spawn((Text::new("N"), TextFont { font_size: 18.0, ..default() }, TextColor(ink), CompassText, ChildOf(compass_row)));
     let banner = commands
