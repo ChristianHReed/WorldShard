@@ -1,0 +1,139 @@
+{
+ "CommonTree_1": [
+  "Bark_NormalTree",
+  "Leaves_NormalTree"
+ ],
+ "CommonTree_2": [
+  "Bark_NormalTree",
+  "Leaves_NormalTree"
+ ],
+ "CommonTree_3": [
+  "Bark_NormalTree",
+  "Leaves_NormalTree"
+ ],
+ "CommonTree_4": [
+  "Bark_NormalTree",
+  "Leaves_NormalTree"
+ ],
+ "CommonTree_5": [
+  "Bark_NormalTree",
+  "Leaves_NormalTree"
+ ],
+ "Pine_1": [
+  "Bark_NormalTree",
+  "Leaves_Pine"
+ ],
+ "Pine_2": [
+  "Bark_NormalTree",
+  "Leaves_Pine"
+ ],
+ "Pine_3": [
+  "Bark_NormalTree",
+  "Leaves_Pine"
+ ],
+ "Pine_4": [
+  "Bark_NormalTree",
+  "Leaves_Pine"
+ ],
+ "Pine_5": [
+  "Bark_NormalTree",
+  "Leaves_Pine"
+ ],
+ "TwistedTree_2": [
+  "Bark_TwistedTree",
+  "Leaves_TwistedTree"
+ ],
+ "TwistedTree_5": [
+  "Bark_TwistedTree",
+  "Leaves_TwistedTree"
+ ],
+ "DeadTree_1": [
+  "Bark_DeadTree"
+ ],
+ "DeadTree_3": [
+  "Bark_DeadTree"
+ ],
+ "DeadTree_5": [
+  "Bark_DeadTree"
+ ],
+ "Bush_Common": [
+  "Leaves_TwistedTree"
+ ],
+ "Bush_Common_Flowers": [
+  "Leaves_NormalTree",
+  "Flowers"
+ ],
+ "Rock_Medium_1": [
+  "Rocks"
+ ],
+ "Rock_Medium_2": [
+  "Rocks"
+ ],
+ "Rock_Medium_3": [
+  "Rocks"
+ ],
+ "Fern_1": [
+  "Leaves"
+ ],
+ "Plant_1_Big": [
+  "Leaves"
+ ],
+ "Plant_7_Big": [
+  "Leaves"
+ ],
+ "Flower_3_Group": [
+  "Leaves",
+  "Flowers"
+ ],
+ "Flower_4_Group": [
+  "Leaves",
+  "Flowers"
+ ],
+ "Flower_3_Single": [
+  "Leaves",
+  "Flowers"
+ ],
+ "Flower_4_Single": [
+  "Leaves",
+  "Flowers"
+ ],
+ "Grass_Common_Short": [
+  "Grass"
+ ],
+ "Grass_Common_Tall": [
+  "Grass"
+ ],
+ "Grass_Wispy_Short": [
+  "Grass"
+ ],
+ "Grass_Wispy_Tall": [
+  "Grass"
+ ],
+ "Clover_1": [
+  "Leaves"
+ ],
+ "Clover_2": [
+  "Leaves"
+ ],
+ "Mushroom_Common": [
+  "Mushrooms"
+ ],
+ "Mushroom_Laetiporus": [
+  "Mushrooms"
+ ],
+ "Pebble_Round_1": [
+  "PathRocks"
+ ],
+ "Pebble_Round_2": [
+  "PathRocks"
+ ],
+ "Pebble_Round_3": [
+  "PathRocks"
+ ],
+ "Pebble_Square_1": [
+  "PathRocks"
+ ],
+ "Pebble_Square_2": [
+  "PathRocks"
+ ]
+}
