@@ -18,6 +18,31 @@ const browser = await puppeteer.launch({
 });
 let ok = true;
 try {
+  // first, as a phone (iPhone-sized screen, touch)
+  {
+    const phone = await browser.newPage();
+    phone.on("console", (m) => note(`phone console.${m.type()}: ${m.text()}`));
+    phone.on("pageerror", (e) => note(`phone pageerror: ${e.message}`));
+    await phone.emulate({
+      viewport: { width: 390, height: 844, deviceScaleFactor: 3, isMobile: true, hasTouch: true },
+      userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+    });
+    phone.setDefaultNavigationTimeout(180000);
+    await phone.goto(url, { waitUntil: "load" });
+    try {
+      await phone.waitForFunction(() => !document.getElementById("loading"), { timeout: 240000, polling: 500 });
+      note("phone: world is drawing");
+    } catch {
+      ok = false;
+      note("phone: TIMEOUT waiting for the world");
+    }
+    await new Promise((r) => setTimeout(r, 25000));
+    const size = await phone.evaluate(() => { const c = document.getElementById("bevy"); return `${c.width}x${c.height}`; });
+    note(`phone canvas: ${size}`);
+    await phone.screenshot({ path: `${out}/0-phone.png` });
+    await phone.close();
+  }
+
   const page = await browser.newPage();
   page.on("console", (m) => note(`console.${m.type()}: ${m.text()}`));
   page.on("pageerror", (e) => note(`pageerror: ${e.message}`));

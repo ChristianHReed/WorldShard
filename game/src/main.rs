@@ -18,6 +18,7 @@ use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::primitives::Aabb;
 use bevy::render::render_resource::TextureFormat;
 use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
+use bevy::window::WindowResolution;
 
 use worldshard::lod::{self, NodeKey};
 use worldshard::meshgen::{self, model, MeshData, Placement, PropKinds, Tint, DETAIL_CELL, GRASS_CELL, MODELS, PROP_CELL};
@@ -32,13 +33,50 @@ use {getrandom as _, getrandom02 as _};
 
 const EYE: f64 = 1.7;
 /// Trees and rocks are drawn this far around the player; grass closer.
-const PROP_RADIUS: f64 = 520.0;
-/// Within this distance trees and rocks are the real models; further out
-/// they are the simple stand-in shapes.
-const NEAR_RADIUS: f64 = 100.0;
-/// Flowers, ferns, clover, mushrooms and grass clumps.
-const DETAIL_RADIUS: f64 = 44.0;
-const GRASS_RADIUS: f64 = 56.0;
+/// How much detail to draw. Phones get less, so they don't run out of memory.
+#[derive(Resource, Clone, Copy, Debug)]
+struct Quality {
+    /// Render resolution as a multiple of CSS pixels (None: the device's own).
+    scale: Option<f32>,
+    split_k: f64,
+    prop_radius: f64,
+    /// Real tree and rock models within this distance (stand-ins beyond).
+    near_radius: f64,
+    /// Flowers, ferns, clover, mushrooms and grass clumps.
+    detail_radius: f64,
+    grass_radius: f64,
+    msaa: bool,
+    name: &'static str,
+}
+
+impl Quality {
+    fn detect() -> Quality {
+        let full = Quality { scale: None, split_k: lod::SPLIT_K, prop_radius: 520.0, near_radius: 100.0, detail_radius: 44.0, grass_radius: 56.0, msaa: true, name: "full" };
+        #[cfg(target_arch = "wasm32")]
+        {
+            let Some(w) = web_sys::window() else { return full };
+            let dpr = w.device_pixel_ratio() as f32;
+            let iw = w.inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(1280.0);
+            let ih = w.inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(800.0);
+            let lite = w
+                .local_storage()
+                .ok()
+                .flatten()
+                .and_then(|s| s.get_item("worldshard-quality").ok().flatten())
+                .map_or(false, |v| v == "lite");
+            let phone = iw.min(ih) < 700.0;
+            if lite {
+                return Quality { scale: Some(dpr.min(0.75)), split_k: 0.6, prop_radius: 200.0, near_radius: 50.0, detail_radius: 0.0, grass_radius: 0.0, msaa: false, name: "lite" };
+            }
+            if phone {
+                return Quality { scale: Some(dpr.min(1.0)), split_k: 0.8, prop_radius: 320.0, near_radius: 70.0, detail_radius: 30.0, grass_radius: 40.0, msaa: true, name: "phone" };
+            }
+            return Quality { scale: Some(dpr.min(1.5)), ..full };
+        }
+        #[allow(unreachable_code)]
+        full
+    }
+}
 /// Fly-through speeds (metres per second).
 const FLY_SPEEDS: [f64; 4] = [30.0, 300.0, 3000.0, 30000.0];
 
@@ -188,7 +226,13 @@ fn remove_loading_cover() {}
 // ---------------------------------------------------------------------
 
 fn main() {
+    let quality = Quality::detect();
+    let mut resolution = WindowResolution::default();
+    if let Some(scale) = quality.scale {
+        resolution = resolution.with_scale_factor_override(scale);
+    }
     App::new()
+        .insert_resource(quality)
         .insert_resource(ClearColor(Color::srgb(0.55, 0.72, 0.92)))
         .insert_resource(Banner::default())
         .insert_resource(TouchState::default())
@@ -197,6 +241,7 @@ fn main() {
         .insert_resource(MipDone::default())
         .add_plugins(DefaultPlugins.set(AssetPlugin { meta_check: AssetMetaCheck::Never, ..default() }).set(WindowPlugin {
             primary_window: Some(Window {
+                resolution,
                 title: "WorldShard".into(),
                 canvas: Some("#bevy".into()),
                 fit_canvas_to_parent: true,
@@ -211,6 +256,7 @@ fn main() {
             (move_player, stream_world, stream_plants, place_relative, sky_and_light, update_hud, autosave, hide_loader).chain(),
         )
         .add_systems(Update, add_mipmaps)
+        .add_systems(Update, log_memory)
         .run();
 }
 
@@ -253,7 +299,9 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
+    quality: Res<Quality>,
 ) {
+    info!("WorldShard quality: {:?}", *quality);
     let world = Terrain::new();
 
     let mats = Mats {
@@ -353,6 +401,7 @@ fn setup(
     // ---- camera: hazy distance, a little extra colour ----
     commands.spawn((
         Camera3d::default(),
+        if quality.msaa { Msaa::Sample4 } else { Msaa::Off },
         Projection::Perspective(PerspectiveProjection { fov: 65f32.to_radians(), near: 0.3, far: 30_000_000.0, ..default() }),
         Transform::from_xyz(0.0, player.y as f32, 0.0),
         DistanceFog {
@@ -399,12 +448,15 @@ fn setup(
         .id();
     commands.spawn((Text::new(""), TextFont { font_size: 40.0, ..default() }, TextColor(ink.with_alpha(0.0)), BannerTitle, ChildOf(banner)));
     commands.spawn((Text::new(""), TextFont { font_size: 18.0, ..default() }, TextColor(ink.with_alpha(0.0)), BannerSub, ChildOf(banner)));
+    let help = if quality.name == "full" {
+        "WASD / arrows move | hold mouse button and drag to look | Shift run | Space jump\n\
+         Fly (testing): F or the Fly button | E / Q up and down | R changes speed\n\
+         Phone: drag on the left to move (push far to run), drag on the right to look"
+    } else {
+        "Drag on the left to move (push far to run)\nDrag on the right to look"
+    };
     commands.spawn((
-        Text::new(
-            "WASD / arrows move | hold mouse button and drag to look | Shift run | Space jump\n\
-             Fly (testing): F or the Fly button | E / Q up and down | R changes speed\n\
-             Phone: drag on the left to move (push far to run), drag on the right to look",
-        ),
+        Text::new(help),
         TextFont { font_size: 12.0, ..default() },
         TextColor(ink.with_alpha(0.75)),
         Node { position_type: PositionType::Absolute, bottom: Val::Px(10.0), left: Val::Px(12.0), ..default() },
@@ -697,6 +749,7 @@ fn stream_world(
     w: Res<GameWorld>,
     mats: Res<Mats>,
     pl: Res<Player>,
+    q: Res<Quality>,
     mut st: ResMut<Streamer>,
 ) {
     let t = &w.0;
@@ -705,7 +758,7 @@ fn stream_world(
     let above = pl.y - ground;
 
     // terrain: build missing chunks nearest first, a few per frame
-    let want = lod::select([pl.x, pl.y, pl.z], above);
+    let want = lod::select_k([pl.x, pl.y, pl.z], above, q.split_k);
     let budget = if first { usize::MAX } else { 3 };
     let mut built = 0;
     for k in &want {
@@ -746,7 +799,7 @@ fn stream_world(
     }
 
     // grass tufts close to the player (not when flying)
-    let grass_wanted = if above < 60.0 { cells_near(pl.x, pl.z, GRASS_CELL, GRASS_RADIUS) } else { Vec::new() };
+    let grass_wanted = if above < 60.0 && q.grass_radius > 0.0 { cells_near(pl.x, pl.z, GRASS_CELL, q.grass_radius) } else { Vec::new() };
     let mut gb = if first { usize::MAX } else { 4 };
     for &(i, j) in &grass_wanted {
         if gb == 0 {
@@ -934,6 +987,7 @@ fn stream_plants(
     mats: Res<Mats>,
     ma: Res<ModelAssets>,
     pl: Res<Player>,
+    q: Res<Quality>,
     mut pt: ResMut<Plants>,
 ) {
     let t = &w.0;
@@ -942,11 +996,11 @@ fn stream_plants(
     let ground = meshgen::drawn_height(t, pl.x, pl.z).max(0.0);
     let above = pl.y - ground;
     let (near_want, far_want, detail_want) = if above < 400.0 {
-        let all = cells_near(pl.x, pl.z, PROP_CELL, PROP_RADIUS);
-        let near: Vec<(i64, i64)> = cells_near(pl.x, pl.z, PROP_CELL, NEAR_RADIUS);
+        let all = cells_near(pl.x, pl.z, PROP_CELL, q.prop_radius);
+        let near: Vec<(i64, i64)> = cells_near(pl.x, pl.z, PROP_CELL, q.near_radius);
         let near_set: HashSet<(i64, i64)> = near.iter().copied().collect();
         let far: Vec<(i64, i64)> = all.into_iter().filter(|c| !near_set.contains(c)).collect();
-        let detail = if above < 60.0 { cells_near(pl.x, pl.z, DETAIL_CELL, DETAIL_RADIUS) } else { Vec::new() };
+        let detail = if above < 60.0 && q.detail_radius > 0.0 { cells_near(pl.x, pl.z, DETAIL_CELL, q.detail_radius) } else { Vec::new() };
         (near, far, detail)
     } else {
         (Vec::new(), Vec::new(), Vec::new())
@@ -969,7 +1023,7 @@ fn stream_plants(
         budget -= 1;
     }
     // far cells: one merged mesh of stand-in shapes each
-    let mut budget = if first { usize::MAX } else { 4 };
+    let mut budget = if first { 60 } else { 4 };
     for &c in &far_want {
         if budget == 0 {
             break;
@@ -1320,6 +1374,20 @@ fn autosave(time: Res<Time>, pl: Res<Player>, mut save: ResMut<SaveState>) {
     save.since_save = 0.0;
     save.last = [pl.x, pl.y, pl.z];
     save.last_visited = pl.visited.len();
+}
+
+/// Writes the game's memory use to the browser console now and then
+/// (handy when a phone runs out of memory).
+fn log_memory(time: Res<Time>, mut next: Local<f32>) {
+    if time.elapsed_secs() < *next {
+        return;
+    }
+    *next = time.elapsed_secs() + 20.0;
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mb = core::arch::wasm32::memory_size::<0>() as f64 * 65536.0 / 1_048_576.0;
+        info!("WorldShard memory: {:.0} MB", mb);
+    }
 }
 
 fn hide_loader(st: Res<Streamer>, mut frames: Local<u32>) {
