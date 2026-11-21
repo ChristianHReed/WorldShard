@@ -16,6 +16,7 @@ use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::primitives::Aabb;
 use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
+use bevy::window::WindowResolution;
 
 use worldshard::lod::{self, NodeKey};
 use worldshard::meshgen::{self, MeshData, PropKinds, GRASS_CELL, PROP_CELL};
@@ -30,8 +31,46 @@ use {getrandom as _, getrandom02 as _};
 
 const EYE: f64 = 1.7;
 /// Trees and rocks are drawn this far around the player; grass closer.
-const PROP_RADIUS: f64 = 520.0;
-const GRASS_RADIUS: f64 = 56.0;
+/// How much detail to draw. Phones get less, so they don't run out of memory.
+#[derive(Resource, Clone, Copy, Debug)]
+struct Quality {
+    /// Render resolution as a multiple of CSS pixels (None: the device's own).
+    scale: Option<f32>,
+    split_k: f64,
+    prop_radius: f64,
+    grass_radius: f64,
+    msaa: bool,
+    name: &'static str,
+}
+
+impl Quality {
+    fn detect() -> Quality {
+        let full = Quality { scale: None, split_k: lod::SPLIT_K, prop_radius: 520.0, grass_radius: 56.0, msaa: true, name: "full" };
+        #[cfg(target_arch = "wasm32")]
+        {
+            let Some(w) = web_sys::window() else { return full };
+            let dpr = w.device_pixel_ratio() as f32;
+            let iw = w.inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(1280.0);
+            let ih = w.inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(800.0);
+            let lite = w
+                .local_storage()
+                .ok()
+                .flatten()
+                .and_then(|s| s.get_item("worldshard-quality").ok().flatten())
+                .map_or(false, |v| v == "lite");
+            let phone = iw.min(ih) < 700.0;
+            if lite {
+                return Quality { scale: Some(dpr.min(0.75)), split_k: 0.6, prop_radius: 200.0, grass_radius: 0.0, msaa: false, name: "lite" };
+            }
+            if phone {
+                return Quality { scale: Some(dpr.min(1.0)), split_k: 0.8, prop_radius: 320.0, grass_radius: 40.0, msaa: true, name: "phone" };
+            }
+            return Quality { scale: Some(dpr.min(1.5)), ..full };
+        }
+        #[allow(unreachable_code)]
+        full
+    }
+}
 /// Fly-through speeds (metres per second).
 const FLY_SPEEDS: [f64; 4] = [30.0, 300.0, 3000.0, 30000.0];
 
@@ -182,13 +221,20 @@ fn remove_loading_cover() {}
 // ---------------------------------------------------------------------
 
 fn main() {
+    let quality = Quality::detect();
+    let mut resolution = WindowResolution::default();
+    if let Some(scale) = quality.scale {
+        resolution = resolution.with_scale_factor_override(scale);
+    }
     App::new()
+        .insert_resource(quality)
         .insert_resource(ClearColor(Color::srgb(0.55, 0.72, 0.92)))
         .insert_resource(Banner::default())
         .insert_resource(TouchState::default())
         .insert_resource(Streamer::default())
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
+                resolution,
                 title: "WorldShard".into(),
                 canvas: Some("#bevy".into()),
                 fit_canvas_to_parent: true,
@@ -202,6 +248,7 @@ fn main() {
             Update,
             (move_player, stream_world, place_relative, sky_and_light, update_hud, autosave, hide_loader).chain(),
         )
+        .add_systems(Update, log_memory)
         .run();
 }
 
@@ -239,7 +286,13 @@ fn spawn_anchored(
     parent
 }
 
-fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+fn setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    quality: Res<Quality>,
+) {
+    info!("WorldShard quality: {:?}", *quality);
     let world = Terrain::new();
 
     let mats = Mats {
@@ -339,6 +392,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
     // ---- camera: hazy distance, a little extra colour ----
     commands.spawn((
         Camera3d::default(),
+        if quality.msaa { Msaa::Sample4 } else { Msaa::Off },
         Projection::Perspective(PerspectiveProjection { fov: 65f32.to_radians(), near: 0.3, far: 30_000_000.0, ..default() }),
         Transform::from_xyz(0.0, player.y as f32, 0.0),
         DistanceFog {
@@ -683,6 +737,7 @@ fn stream_world(
     kinds: Res<Kinds>,
     mats: Res<Mats>,
     pl: Res<Player>,
+    q: Res<Quality>,
     mut st: ResMut<Streamer>,
 ) {
     let t = &w.0;
@@ -691,7 +746,7 @@ fn stream_world(
     let above = pl.y - ground;
 
     // terrain: build missing chunks nearest first, a few per frame
-    let want = lod::select([pl.x, pl.y, pl.z], above);
+    let want = lod::select_k([pl.x, pl.y, pl.z], above, q.split_k);
     let budget = if first { usize::MAX } else { 3 };
     let mut built = 0;
     for k in &want {
@@ -748,9 +803,9 @@ fn stream_world(
         v.sort_by_key(|&(i, j)| (i - ci).abs() + (j - cj).abs());
         v
     };
-    let props_wanted = if above < 400.0 { near_cells(PROP_CELL, PROP_RADIUS) } else { Vec::new() };
-    let grass_wanted = if above < 60.0 { near_cells(GRASS_CELL, GRASS_RADIUS) } else { Vec::new() };
-    let mut pb = if first { usize::MAX } else { 2 };
+    let props_wanted = if above < 400.0 { near_cells(PROP_CELL, q.prop_radius) } else { Vec::new() };
+    let grass_wanted = if above < 60.0 && q.grass_radius > 0.0 { near_cells(GRASS_CELL, q.grass_radius) } else { Vec::new() };
+    let mut pb = if first { 40 } else { 2 };
     for &(i, j) in &props_wanted {
         if pb == 0 {
             break;
@@ -1003,6 +1058,20 @@ fn autosave(time: Res<Time>, pl: Res<Player>, mut save: ResMut<SaveState>) {
     save.since_save = 0.0;
     save.last = [pl.x, pl.y, pl.z];
     save.last_visited = pl.visited.len();
+}
+
+/// Writes the game's memory use to the browser console now and then
+/// (handy when a phone runs out of memory).
+fn log_memory(time: Res<Time>, mut next: Local<f32>) {
+    if time.elapsed_secs() < *next {
+        return;
+    }
+    *next = time.elapsed_secs() + 20.0;
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mb = core::arch::wasm32::memory_size::<0>() as f64 * 65536.0 / 1_048_576.0;
+        info!("WorldShard memory: {:.0} MB", mb);
+    }
 }
 
 fn hide_loader(st: Res<Streamer>, mut frames: Local<u32>) {
