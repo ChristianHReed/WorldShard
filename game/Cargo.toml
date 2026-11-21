@@ -45,7 +45,8 @@ getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
 
 [profile.release]
 opt-level = "s"     # engine code: small download
-lto = "thin"
+lto = "fat"
+codegen-units = 1
 strip = "debuginfo"
 
 [profile.release.package.worldshard]

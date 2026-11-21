@@ -64,7 +64,7 @@ jobs:
           # shrink the download with wasm-opt (skipped if it is unavailable)
           if curl -sSfL https://github.com/WebAssembly/binaryen/releases/download/version_123/binaryen-version_123-x86_64-linux.tar.gz | tar xz -C /tmp; then
             before=$(stat -c %s dist/worldshard_bg.wasm)
-            /tmp/binaryen-version_123/bin/wasm-opt -Os \
+            /tmp/binaryen-version_123/bin/wasm-opt -Oz \
               --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext \
               --enable-mutable-globals --enable-reference-types --enable-multivalue \
               dist/worldshard_bg.wasm -o /tmp/opt.wasm && mv /tmp/opt.wasm dist/worldshard_bg.wasm \
@@ -75,7 +75,6 @@ jobs:
           # split the game into pieces under 15 MB (fits hosts with file-size limits,
           # such as a Claude artifact); the page joins them back together
           (cd dist && split -b 15000000 -d -a 1 --additional-suffix=.wasm worldshard_bg.wasm worldshard_bg.part \
-            && rm worldshard_bg.wasm \
             && python3 -c "import json,os,glob; print(json.dumps([{'file':f,'size':os.path.getsize(f)} for f in sorted(glob.glob('worldshard_bg.part*.wasm'))]))" > wasm-parts.json \
             && cat wasm-parts.json)
           cp game/web/index.html dist/index.html

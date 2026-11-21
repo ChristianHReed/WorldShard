@@ -14,9 +14,15 @@
   #loading h1 { margin: 0; font-size: 34px; letter-spacing: .18em; font-weight: normal; }
   #loading p { margin: 0; opacity: .75; font-size: 15px; }
   #loading.error p { color: #ffb4a0; opacity: 1; }
+  #loading button { font: 15px Georgia, serif; color: #f2ead6; background: rgba(255,255,255,.1); border: 1px solid rgba(242,234,214,.4);
+    border-radius: 6px; padding: 8px 14px; margin: 4px; }
   #saves { position: fixed; top: max(10px, env(safe-area-inset-top)); right: 10px; display: flex; gap: 6px; z-index: 4; }
   #saves button, #saves a { font: 13px Georgia, serif; color: #f2ead6; background: rgba(12,16,30,.62); border: 1px solid rgba(242,234,214,.35);
     border-radius: 6px; padding: 6px 10px; cursor: pointer; text-decoration: none; }
+  @media (max-width: 640px) {
+    #saves { top: calc(max(10px, env(safe-area-inset-top)) + 56px); flex-direction: column; align-items: flex-end; gap: 5px; }
+    #saves button, #saves a { padding: 5px 8px; font-size: 12px; }
+  }
   #toast { position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%); background: rgba(12,16,30,.8); padding: 8px 14px;
     border-radius: 6px; font-size: 14px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 6; }
 </style>
@@ -27,6 +33,7 @@
 <div id="saves">
   <button id="save-file" title="Download your save so you can keep it in Google Drive">Save file</button>
   <button id="open-file" title="Load a save file you kept">Open save</button>
+  <button id="quality" title="Lite uses less memory and battery (for older phones)">Quality</button>
   <a id="proto-link" href="prototype/" title="The earlier JavaScript prototype">Prototype</a>
 </div>
 <input id="file" type="file" accept=".json,application/json" hidden>
@@ -48,40 +55,91 @@
     set(v) { try { localStorage.setItem(KEY, v); return true; } catch { return false; } },
   };
 
-  // --- download the game (in pieces, so every file stays small) and start it ---
-  async function loadWasm() {
+  // --- quality: "lite" uses less memory; picked automatically after a crash ---
+  const QKEY = "worldshard-quality";
+  const BOOT = "worldshard-booting";
+  const getQ = () => { try { return localStorage.getItem(QKEY) || "auto"; } catch { return "auto"; } };
+  const setQ = (q) => { try { localStorage.setItem(QKEY, q); } catch {} };
+  const qBtn = document.getElementById("quality");
+  qBtn.textContent = getQ() === "lite" ? "Lite" : "Auto";
+  qBtn.onclick = () => { setQ(getQ() === "lite" ? "auto" : "lite"); location.reload(); };
+
+  // A phone that runs out of memory reloads the page by itself. If the last
+  // start never finished, use lite quality; if lite also failed, stop and ask.
+  let crashed = false;
+  try { crashed = sessionStorage.getItem(BOOT) === "1"; sessionStorage.setItem(BOOT, "1"); } catch {}
+  const startedOk = setInterval(() => {
+    if (!document.getElementById("loading")) {
+      clearInterval(startedOk);
+      setTimeout(() => { try { sessionStorage.removeItem(BOOT); } catch {} }, 15000);
+    }
+  }, 500);
+  function stop(message) {
+    const l = document.getElementById("loading");
+    l.classList.add("error");
+    msg(message);
+    const again = document.createElement("div");
+    again.innerHTML = '<button id="retry-lite">Try again (lite)</button><button id="retry-full">Try full quality</button>';
+    l.appendChild(again);
+    document.getElementById("retry-lite").onclick = () => { setQ("lite"); try { sessionStorage.removeItem(BOOT); } catch {} location.reload(); };
+    document.getElementById("retry-full").onclick = () => { setQ("auto"); try { sessionStorage.removeItem(BOOT); } catch {} location.reload(); };
+  }
+
+  // --- download the game (one file, compiled while it downloads) and start it ---
+  async function gameModule() {
+    const res = await fetch("worldshard_bg.wasm");
+    if (res.ok && res.body) {
+      const total = Number(res.headers.get("content-length")) || 0;
+      let got = 0;
+      const counted = res.body.pipeThrough(new TransformStream({
+        transform(chunk, ctl) {
+          got += chunk.length;
+          if (total) msg(`Downloading the world… ${Math.min(99, Math.round((got / total) * 100))}%`);
+          ctl.enqueue(chunk);
+        },
+      }));
+      return new Response(counted, { headers: { "Content-Type": "application/wasm" } });
+    }
+    // hosts with a file-size limit get the game in pieces
     const parts = await (await fetch("wasm-parts.json")).json();
-    const sizes = parts.map((p) => p.size);
-    const total = sizes.reduce((a, b) => a + b, 0);
-    const bytes = new Uint8Array(total);
-    let got = 0;
+    const totalP = parts.reduce((a, p) => a + p.size, 0);
+    const bytes = new Uint8Array(totalP);
+    let at = 0;
     for (const p of parts) {
-      const res = await fetch(p.file);
-      if (!res.ok) throw new Error(`could not download ${p.file} (${res.status})`);
-      const reader = res.body.getReader();
+      const r = await fetch(p.file);
+      if (!r.ok) throw new Error(`could not download ${p.file} (${r.status})`);
+      const reader = r.body.getReader();
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
-        bytes.set(value, got);
-        got += value.length;
-        msg(`Downloading the world… ${Math.round((got / total) * 100)}%`);
+        bytes.set(value, at);
+        at += value.length;
+        msg(`Downloading the world… ${Math.round((at / totalP) * 100)}%`);
       }
     }
-    if (got !== total) throw new Error("download was incomplete");
     return bytes;
   }
 
-  try {
-    const bytes = await loadWasm();
-    msg("Building the world…");
-    await new Promise((r) => setTimeout(r, 30)); // let the message show
-    await init({ module_or_path: bytes });
-  } catch (e) {
-    const text = String((e && e.message) || e);
-    if (!text.includes("Using exceptions for control flow")) { // Bevy's normal start-up
-      const l = document.getElementById("loading");
-      if (l) { l.classList.add("error"); msg("Could not start: " + text); }
-      console.error(e);
+  if (crashed && getQ() === "lite") {
+    stop("The game ran out of memory on this device, even in lite quality.");
+  } else {
+    if (crashed) {
+      setQ("lite");
+      qBtn.textContent = "Lite";
+      toast("Lite quality: the last start ran out of memory");
+    }
+    try {
+      const mod = await gameModule();
+      msg("Building the world…");
+      await new Promise((r) => setTimeout(r, 30)); // let the message show
+      await init({ module_or_path: mod });
+    } catch (e) {
+      const text = String((e && e.message) || e);
+      if (!text.includes("Using exceptions for control flow")) { // Bevy's normal start-up
+        const l = document.getElementById("loading");
+        if (l) { l.classList.add("error"); msg("Could not start: " + text); }
+        console.error(e);
+      }
     }
   }
 

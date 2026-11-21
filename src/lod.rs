@@ -81,6 +81,12 @@ pub fn view_distance(above: f64) -> f64 {
 /// The chunks to draw for a camera at `cam` (x, y, z) standing `above` metres
 /// over the ground. Sorted nearest first.
 pub fn select(cam: [f64; 3], above: f64) -> Vec<NodeKey> {
+    select_k(cam, above, SPLIT_K)
+}
+
+/// Like `select`, with a different split distance: smaller `k` means
+/// fewer, coarser chunks (for phones).
+pub fn select_k(cam: [f64; 3], above: f64, k_split: f64) -> Vec<NodeKey> {
     let far = view_distance(above);
     let mut out = Vec::new();
     let mut stack = vec![NodeKey::ROOT];
@@ -93,7 +99,7 @@ pub fn select(cam: [f64; 3], above: f64) -> Vec<NodeKey> {
         if d > far {
             continue;
         }
-        if k.level < MAX_LEVEL && !k.ocean_only() && d < SPLIT_K * k.size() {
+        if k.level < MAX_LEVEL && !k.ocean_only() && d < k_split * k.size() {
             stack.extend_from_slice(&k.children());
         } else {
             out.push(k);
