@@ -1,0 +1,51 @@
+name: Fetch Medieval Village MegaKit
+
+# One-off helper: downloads the Quaternius Medieval Village MegaKit
+# (Standard, CC0) and puts its glTF files on the `assets-village` branch so
+# they can be picked and added to the game.
+on:
+  push:
+    branches: [fetch-village]
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download, unpack and publish
+        shell: bash
+        run: |
+          set +e +o pipefail
+          mkdir -p /tmp/kit /tmp/out
+          LOG=/tmp/out/log.txt
+          {
+            cd /tmp/kit
+            curl -sSL -A "Mozilla/5.0" -o page.html "https://opengameart.org/content/medieval-village-megakit"
+            echo "page bytes: $(wc -c < page.html)"
+            URL=$(grep -o 'https\?://[^"]*sites/default/files/[^"]*\.zip' page.html | head -1)
+            [ -z "$URL" ] && URL="https://opengameart.org$(grep -o '/sites/default/files/[^"]*\.zip' page.html | head -1)"
+            echo "zip url: $URL"
+            curl -sSL -A "Mozilla/5.0" -o kit.zip "$URL"
+            ls -la kit.zip
+            file kit.zip
+            unzip -l kit.zip > /tmp/out/listing.txt 2>&1
+            unzip -q kit.zip -d x
+            cd x
+            find . -maxdepth 3 -type d | sort
+            G=$(find . -type d -iname 'gltf' | head -1)
+            echo "glTF folder: $G"
+            cp -r "$G" /tmp/out/glTF
+            find . -maxdepth 2 -iname 'licen*' -exec cp -f {} /tmp/out/ \;
+            find . -maxdepth 2 -iname '*preview*' -exec cp -f {} /tmp/out/ \;
+            chmod -R u+w /tmp/out
+            find /tmp/out -name desktop.ini -delete
+            du -sh /tmp/out
+          } > "$LOG" 2>&1
+          cd /tmp/out
+          find . -type f | sort > files.txt
+          git init -q && git checkout -q -b assets-village
+          git config user.name "ci" && git config user.email "ci@users.noreply.github.com"
+          git add -A && git commit -qm "Quaternius Medieval Village MegaKit (Standard, CC0): glTF files"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" assets-village
