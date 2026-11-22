@@ -13,7 +13,7 @@ use bevy::asset::{AssetId, AssetMetaCheck, RenderAssetUsages};
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::input::mouse::MouseMotion;
 use bevy::pbr::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, DistanceFog, ExtendedMaterial, FogFalloff, MaterialExtension, NotShadowCaster};
-use bevy::render::render_resource::{AsBindGroup, ShaderRef};
+use bevy::render::render_resource::{AsBindGroup, ShaderRef, ShaderType};
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::primitives::Aabb;
@@ -56,7 +56,7 @@ struct Quality {
 
 impl Quality {
     fn detect() -> Quality {
-        let full = Quality { scale: None, split_k: lod::SPLIT_K, prop_radius: 520.0, near_radius: 100.0, detail_radius: 44.0, grass_radius: 56.0, msaa: true, shadow_distance: 700.0, cascades: 3, shadow_map: 2048, name: "full" };
+        let full = Quality { scale: None, split_k: lod::SPLIT_K, prop_radius: 520.0, near_radius: 100.0, detail_radius: 44.0, grass_radius: 56.0, msaa: true, shadow_distance: 400.0, cascades: 1, shadow_map: 2048, name: "full" };
         #[cfg(target_arch = "wasm32")]
         {
             let Some(w) = web_sys::window() else { return full };
@@ -74,7 +74,7 @@ impl Quality {
                 return Quality { scale: Some(dpr.min(0.75)), split_k: 0.6, prop_radius: 200.0, near_radius: 50.0, detail_radius: 0.0, grass_radius: 0.0, msaa: false, shadow_distance: 0.0, cascades: 1, shadow_map: 512, name: "lite" };
             }
             if phone {
-                return Quality { scale: Some(dpr.min(1.0)), split_k: 0.8, prop_radius: 320.0, near_radius: 70.0, detail_radius: 30.0, grass_radius: 40.0, msaa: true, shadow_distance: 250.0, cascades: 2, shadow_map: 1024, name: "phone" };
+                return Quality { scale: Some(dpr.min(1.0)), split_k: 0.8, prop_radius: 320.0, near_radius: 70.0, detail_radius: 30.0, grass_radius: 40.0, msaa: true, shadow_distance: 160.0, cascades: 1, shadow_map: 1024, name: "phone" };
             }
             return Quality { scale: Some(dpr.min(1.5)), ..full };
         }
@@ -101,23 +101,25 @@ const HAZE_DENSITY: f32 = 2.8e-6;
 const HAZE_SCALE_HEIGHT: f32 = 8000.0;
 
 /// Terrain material: standard lighting plus the height haze (haze.wgsl).
+/// All in one uniform block: WebGL2 allows only 14 per shader and Bevy's
+/// standard lighting already uses most of them.
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 struct Haze {
     #[uniform(100)]
+    u: HazeUniform,
+}
+
+#[derive(ShaderType, Reflect, Debug, Clone)]
+struct HazeUniform {
     color: Vec4,
-    #[uniform(101)]
     params: Vec4,
     /// toward the sun (xyz), shadow strength (w)
-    #[uniform(102)]
     sun_dir: Vec4,
     /// Everest relative to the camera (x, z), spire height and radius
-    #[uniform(103)]
     everest: Vec4,
-    /// Everest's massif height and radius
-    #[uniform(104)]
+    /// Everest's body: height, radius, shape exponent
     everest_base: Vec4,
     /// St. Helens relative to the camera (x, z), cone height and radius
-    #[uniform(105)]
     helens: Vec4,
 }
 
@@ -360,14 +362,14 @@ fn setup(
                 fog_enabled: false,
                 ..default()
             },
-            extension: Haze {
+            extension: Haze { u: HazeUniform {
                 color: Vec4::new(0.5, 0.62, 0.8, 1.0),
                 params: Vec4::new(HAZE_DENSITY, HAZE_SCALE_HEIGHT, 0.0, 0.0),
                 sun_dir: Vec4::new(0.5, 0.7, 0.3, 0.0),
                 everest: Vec4::ZERO,
                 everest_base: Vec4::new(EV_MASSIF_M as f32, EV_MASSIF_R as f32, EV_MASSIF_P as f32, 0.0),
                 helens: Vec4::ZERO,
-            },
+            } },
         }),
         water: materials.add(StandardMaterial {
             base_color: Color::WHITE,
@@ -1330,13 +1332,13 @@ fn sky_and_light(
     }
     if let Some(g) = ground_materials.get_mut(&mats.ground) {
         let lin = haze.to_linear();
-        g.extension.color = Vec4::new(lin.red, lin.green, lin.blue, 1.0);
+        g.extension.u.color = Vec4::new(lin.red, lin.green, lin.blue, 1.0);
         // the giants' shadows: from the sun by day, faintly from the moon
         let (dir, strength) = if s.sun_dir[1] > -0.02 { (s.sun_dir, s.day) } else { (s.moon_dir, 0.5 * (1.0 - s.day)) };
-        g.extension.sun_dir = Vec4::new(dir[0], dir[1].max(0.02), dir[2], strength);
+        g.extension.u.sun_dir = Vec4::new(dir[0], dir[1].max(0.02), dir[2], strength);
         let t = &w.0;
-        g.extension.everest = Vec4::new((t.everest.0 - pl.x) as f32, (t.everest.1 - pl.z) as f32, t.ev_spire_m as f32, EV_SPIRE_R as f32);
-        g.extension.helens = Vec4::new((t.helens.0 - pl.x) as f32, (t.helens.1 - pl.z) as f32, t.hel_m as f32, HEL_R as f32);
+        g.extension.u.everest = Vec4::new((t.everest.0 - pl.x) as f32, (t.everest.1 - pl.z) as f32, t.ev_spire_m as f32, EV_SPIRE_R as f32);
+        g.extension.u.helens = Vec4::new((t.helens.0 - pl.x) as f32, (t.helens.1 - pl.z) as f32, t.hel_m as f32, HEL_R as f32);
     }
     if let Ok(h) = dome.single() {
         if let Some(mat) = materials.get_mut(&h.0) {
