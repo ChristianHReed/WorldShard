@@ -6,6 +6,7 @@
 //!
 //! World space: metres, +x east, +z south, y up, island centre at (0, 0).
 
+use super::borders::{BorderPath, BridgeSite, Canyon, River, ABUTMENT_BLEND, ABUTMENT_R, DECK_HALF_W};
 use super::island::*;
 use super::noise::{angd, lerp, sm, Rng};
 
@@ -81,32 +82,52 @@ impl Lava {
     }
 }
 
+/// The lava flows (the designer's choice: they pour from Mount St. Helens).
+/// They leave through the crater's open north side as one flow, then split
+/// and run north-east across the Northeast to the sea, staying north of the
+/// Great Canyon.
 fn build_lava(isl: &Island) -> Lava {
     let n = &isl.noise;
     let mut flows: Vec<Vec<(f64, f64)>> = Vec::new();
-    let add_flow = |a0: f64, r0: f64, ph: f64, flows: &mut Vec<Vec<(f64, f64)>>| -> usize {
+    let p0 = (HX, HY - 5.0);
+    let p1 = (HX + 4.0, HY - 45.0);
+    for (k, &(a0, ph)) in [(-56.0, 1.3), (-44.0, 5.1), (-30.0, 8.7), (-17.0, 12.2)].iter().enumerate() {
+        let p2 = pol(a0, 210.0);
+        let p3 = pol(a0, 470.0);
+        let bez = |t: f64| -> (f64, f64) {
+            let u = 1.0 - t;
+            let (a, b, c, d) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
+            (a * p0.0 + b * p1.0 + c * p2.0 + d * p3.0, a * p0.1 + b * p1.1 + c * p2.1 + d * p3.1)
+        };
         let mut pts = Vec::new();
-        let mut r = r0;
-        while r < 460.0 {
-            let a = a0 + 7.0 * n.n2(r / 55.0, ph) + 2.0 * n.n2(r / 14.0, ph + 3.0);
-            let (x, y) = pol(a, r);
-            if isl.land_at(x, y) < 0.035 {
+        let mut t = 0.0;
+        let mut last = bez(0.0);
+        while t < 1.0 {
+            // step about 3 px along the curve
+            let mut t2 = t + 0.002;
+            while t2 < 1.0 && {
+                let q = bez(t2);
+                (q.0 - last.0).hypot(q.1 - last.1) < 3.0
+            } {
+                t2 += 0.002;
+            }
+            t = t2;
+            let (x, y) = bez(t.min(1.0));
+            // the flows wander, more as they spread out
+            let (dx, dy) = (x - last.0, y - last.1);
+            let dl = dx.hypot(dy).max(1e-9);
+            let wob = (4.0 * n.n2(t * 9.0, ph) + 1.5 * n.n2(t * 40.0, ph + 3.0)) * sm(0.03, 0.2, t);
+            let (wx, wy) = (x - dy / dl * wob, y + dx / dl * wob);
+            last = (x, y);
+            if t > 0.15 && isl.land_at(wx, wy) < 0.035 {
                 break;
             }
-            pts.push((x, y));
-            r += 3.0;
+            pts.push((wx, wy));
         }
-        let len = pts.len();
-        if len > 10 {
+        if pts.len() > 10 {
             flows.push(pts);
         }
-        len
-    };
-    for &(a0, r0, ph) in &[(-53.0, 120.0, 1.3), (-43.0, 135.0, 5.1), (-19.0, 128.0, 8.7), (-8.0, 140.0, 12.2)] {
-        let main = add_flow(a0, r0, ph, &mut flows);
-        if main > 40 {
-            add_flow(a0 + if a0 < -30.0 { 5.0 } else { -5.0 }, r0 + main as f64 * 1.5, ph + 20.0, &mut flows);
-        }
+        let _ = k;
     }
     let mut lava = Lava { crust: vec![0.0; MW * MH], core: vec![0.0; MW * MH] };
     let stamp = |arr: &mut Vec<f32>, x: f64, y: f64, rad: f64| {
@@ -296,6 +317,14 @@ pub struct Sample {
     /// Slow patchiness (about −1..1, a few hundred metres across), for
     /// grouping things: boulder fields, copses, flower drifts, mushroom rings.
     pub patch: f32,
+    /// Inside the Great Canyon (dry, though far below the sea).
+    pub canyon: bool,
+    /// In a river.
+    pub river: bool,
+    /// How sandy and how rocky the ground is (0–1), for the ground detail
+    /// drawn close up (grass where it is neither).
+    pub sand: f32,
+    pub rock: f32,
 }
 
 /// The seeded, full-size world.
@@ -312,6 +341,17 @@ pub struct Terrain {
     /// The giants' range: peaks just under each giant, joined by ridges.
     pub peaks: Vec<RangePeak>,
     pub ridges: Vec<Ridge>,
+    /// The deep canyon between the Northeast and Southeast.
+    pub canyon: Canyon,
+    /// Rivers on the lowland borders.
+    pub rivers: Vec<River>,
+    /// The bridge city across the canyon.
+    pub bridge: BridgeSite,
+    /// The bridge city's buildings, sorted along the deck.
+    pub city: Vec<crate::city::Lot>,
+    /// Off while the world is being set up (the border features are
+    /// measured from the land without them).
+    features: bool,
 }
 
 /// Map-space measurements for one spot.
@@ -327,6 +367,7 @@ impl Terrain {
     pub fn new() -> Terrain {
         let island = Island::new();
         let lava = build_lava(&island);
+        let canyon = Canyon::new(&island, CANYON_BORDER);
         let mut t = Terrain {
             island,
             lava,
@@ -337,7 +378,13 @@ impl Terrain {
             hel_m: 0.0,
             peaks: Vec::new(),
             ridges: Vec::new(),
+            canyon,
+            rivers: Vec::new(),
+            bridge: BridgeSite { centre: (0.0, 0.0), axis: (1.0, 0.0), half_len: 0.0, span_half: 0.0, half_w: DECK_HALF_W, deck_y: 0.0, spring_half: 0.0, spring_y: 0.0 },
+            features: false,
+            city: Vec::new(),
         };
+        t.rivers = RIVER_BORDERS.iter().map(|&k| River::new(&t.island, k)).collect();
         // the giants' range: place the peaks and ridges, then size each
         // peak's spire so its summit lands near its target height
         t.peaks = range_peak_spots()
@@ -399,6 +446,41 @@ impl Terrain {
             }
             t.lakes.push(Lake { x, z, r, level: level - 2.0 });
         }
+        // where the land really meets the sea along the canyon and the rivers
+        // (the coastline's noise moves it a few km from the map's outline):
+        // the canyon must end, and its natural wall stand, short of the
+        // nearest point of the shore anywhere across its width
+        let shore = t.real_shore(&t.canyon.path, &[-35_000.0, -17_500.0, 0.0, 17_500.0, 35_000.0]);
+        t.canyon.path.coast_s = shore;
+        for i in 0..t.rivers.len() {
+            let shore = t.real_shore(&t.rivers[i].path, &[0.0]);
+            t.rivers[i].path.coast_s = shore;
+        }
+        // rivers: their water falls steadily from the central range to the sea
+        for i in 0..t.rivers.len() {
+            let ground: Vec<f64> = t.rivers[i].path.pts.iter().map(|&(x, z)| t.height_no_lakes(x, z)).collect();
+            t.rivers[i].set_levels(&ground);
+        }
+        // the bridge city at the canyon's midway point: its deck is level
+        // with the higher rim, and each end stands on flattened ground
+        let ((cx, cz), (tx, tz)) = t.canyon.path.at(t.canyon.mid_s);
+        let axis = (-tz, tx);
+        let span_half = t.canyon.half_width(t.canyon.mid_s);
+        let half_len = span_half + 1_500.0;
+        let rim = |sgn: f64| t.height_no_lakes(cx + axis.0 * sgn * (span_half + 2_500.0), cz + axis.1 * sgn * (span_half + 2_500.0));
+        let deck_y = rim(1.0).max(rim(-1.0)).max(5.0) + 20.0;
+        t.bridge = BridgeSite { centre: (cx, cz), axis, half_len, span_half, half_w: DECK_HALF_W, deck_y, spring_half: span_half * 0.8, spring_y: deck_y - 8_000.0 };
+        t.features = true;
+        // the great arch springs from the walls 8 km below the deck
+        let mut x = 0.0;
+        while x < span_half {
+            if t.height_no_lakes(cx + axis.0 * x, cz + axis.1 * x) >= t.bridge.spring_y {
+                break;
+            }
+            x += 50.0;
+        }
+        t.bridge.spring_half = x;
+        t.city = crate::city::layout(&t.bridge);
         t
     }
 
@@ -491,16 +573,17 @@ impl Terrain {
                 h += w * inland * self.region_relief(k, wx, wz);
             }
         }
-        // the region borders are ridgelines
-        if p.r > 110.0 {
-            let mut br: f64 = 0.0;
-            for k in 0..6 {
+        // mountain ranges along the North / Northeast and Northwest / North
+        // borders, from the central range out to the coast
+        if p.r > 95.0 {
+            for k in RANGE_BORDERS {
                 let pd = (angd(p.deg - self.island.border_angle(k, p.r)) * D2R * p.r).abs();
-                br = br.max((-(pd / 22.0).powi(2)).exp());
-            }
-            if br > 0.01 {
-                let ridge = 0.55 + 0.45 * n.ridged(wx / 9_000.0 + 3.1, wz / 9_000.0, 4);
-                h += br * 1300.0 * ridge * sm(110.0, 190.0, p.r) * inland;
+                if pd < 32.0 {
+                    let core = (-(pd / 9.0).powf(1.6)).exp();
+                    let crest = 0.55 + 0.45 * n.ridged(wx / 18_000.0 + 7.0 * k as f64, wz / 18_000.0, 4);
+                    let peaks = n.ridged(wx / 6_000.0 + 2.0, wz / 6_000.0 - 1.0, 4) - 0.45;
+                    h += core * (3_400.0 * crest + 1_400.0 * peaks) * sm(95.0, 130.0, p.r) * sm(0.0, 25_000.0, shore);
+                }
             }
         }
         // a range of lesser mountains around the giants
@@ -550,8 +633,12 @@ impl Terrain {
             let breach = north * (-(d2 / (2.4 * HEL_CRATER_R)).powi(2)).exp();
             h += self.hel_m * (cone - 0.4 * crater - 0.25 * breach).max(0.0);
         }
-        // white cliffs along the east coast
-        h += cliff_w(p.deg) * CLIFF_M * sm(0.0, 500.0, shore) * sm(230.0, 300.0, p.r);
+        // white cliffs along the east coast: sheer walls of varying height
+        let cw = cliff_w(p.deg) * sm(230.0, 300.0, p.r);
+        if cw > 0.0 {
+            let tall = CLIFF_M * (1.0 + 0.9 * n.fbm(wx / 30_000.0 + 4.0, wz / 30_000.0, 3)).clamp(0.3, 1.7);
+            h += cw * tall * sm(0.0, 140.0, shore + 60.0 * n.n2(wx / 900.0, wz / 900.0));
+        }
         // lava flows run in shallow channels
         let crust = self.lava.crust_at(p.x, p.y);
         if crust > 0.0 {
@@ -561,7 +648,112 @@ impl Terrain {
         h += (5.0 * n.fbm(wx / 700.0 - 3.3, wz / 700.0 + 9.1, 3) + 0.8 * n.fbm(wx / 110.0 + 1.9, wz / 110.0, 2))
             * sm(0.0, 3000.0, shore)
             * sm(300.0, 3000.0, d1);
+        if self.features {
+            h = self.border_features(p, wx, wz, h);
+        }
         h
+    }
+
+    /// The canyon (with its sea wall and the bridge's flattened ends) and
+    /// the rivers, cut into the land.
+    fn border_features(&self, p: &MapPt, wx: f64, wz: f64, h: f64) -> f64 {
+        let n = &self.island.noise;
+        let mut h = h;
+        let b = &self.bridge;
+        for (ex, ez) in b.ends() {
+            let d = (wx - ex).hypot(wz - ez);
+            if d < ABUTMENT_BLEND {
+                h = lerp(h, b.deck_y - 1.0, sm(ABUTMENT_BLEND, ABUTMENT_R, d));
+            }
+        }
+        if let Some((d, s)) = self.canyon.path.nearest(wx, wz, p.r) {
+            h += self.canyon.sea_wall(d, s);
+            h -= self.canyon.carve(n, wx, wz, d, s);
+        }
+        for rv in &self.rivers {
+            if let Some((d, s)) = rv.locate(n, wx, wz, p.r) {
+                h = rv.cut(h, d, s);
+            }
+        }
+        h
+    }
+
+    /// The first distance along `path` where the ground (without the
+    /// canyon and rivers) drops into the sea, nearest of the lines run
+    /// `offsets` metres to either side of the path.
+    fn real_shore(&self, path: &BorderPath, offsets: &[f64]) -> f64 {
+        let end = *path.s.last().unwrap_or(&path.coast_s);
+        let mut best = end;
+        for &off in offsets {
+            let mut s = (path.coast_s - 60_000.0).max(0.0);
+            let mut wet = 0;
+            while s < end {
+                let ((x, z), (dx, dz)) = path.at(s);
+                if self.height_no_lakes(x - dz * off, z + dx * off) < 0.0 {
+                    wet += 1;
+                    if wet == 3 {
+                        best = best.min(s - 500.0);
+                        break;
+                    }
+                } else {
+                    wet = 0;
+                }
+                s += 250.0;
+            }
+        }
+        best
+    }
+
+    /// How far the canyon has cut down here (0 outside it).
+    pub fn canyon_cut(&self, wx: f64, wz: f64) -> f64 {
+        let p = self.map_pt(wx, wz);
+        match self.canyon.path.nearest(wx, wz, p.r) {
+            Some((d, s)) => self.canyon.carve(&self.island.noise, wx, wz, d, s),
+            None => 0.0,
+        }
+    }
+
+    /// The river water level here, if a river runs here.
+    fn river_water(&self, p: &MapPt, wx: f64, wz: f64) -> Option<f64> {
+        for rv in &self.rivers {
+            if let Some((d, s)) = rv.locate(&self.island.noise, wx, wz, p.r) {
+                if d < rv.half_width(s) * 1.3 && s < rv.path.coast_s + 3_000.0 {
+                    return Some(rv.level_at(s));
+                }
+            }
+        }
+        None
+    }
+
+    /// A sea stack (a rock pillar standing in the sea off the cliffs): its
+    /// height here, if there is one.
+    fn sea_stack(&self, p: &MapPt, wx: f64, wz: f64, shore: f64) -> Option<f64> {
+        let cw = cliff_w(p.deg) * sm(230.0, 300.0, p.r);
+        let off = -shore;
+        if cw <= 0.0 || !(60.0..4_000.0).contains(&off) {
+            return None;
+        }
+        const CELL: f64 = 700.0;
+        let (ci, cj) = ((wx / CELL).floor() as i64, (wz / CELL).floor() as i64);
+        let mut best: Option<f64> = None;
+        for dj in -1..=1 {
+            for di in -1..=1 {
+                let mut r = Rng::new(((ci + di) as u64).wrapping_mul(73_856_093) ^ ((cj + dj) as u64).wrapping_mul(19_349_663) ^ 0x5eed);
+                if r.next() > 0.28 {
+                    continue;
+                }
+                let sx = ((ci + di) as f64 + 0.2 + 0.6 * r.next()) * CELL;
+                let sz = ((cj + dj) as f64 + 0.2 + 0.6 * r.next()) * CELL;
+                let rad = 50.0 + 100.0 * r.next();
+                let top = CLIFF_M * (0.25 + 0.75 * r.next()) * cw;
+                let d = (wx - sx).hypot(wz - sz);
+                let v = top * sm(rad * 1.2, rad * 0.8, d) - 2.0;
+                if v > 0.0 {
+                    best = Some(best.map_or(v, |b: f64| b.max(v)));
+                }
+            }
+        }
+        best
     }
 
     fn sea_floor(shore: f64) -> f64 {
@@ -576,7 +768,12 @@ impl Terrain {
     fn height_no_lakes(&self, wx: f64, wz: f64) -> f64 {
         let p = self.map_pt(wx, wz);
         if p.l <= 0.0 {
-            return Self::sea_floor(Self::shore_dist(&p));
+            let shore = Self::shore_dist(&p);
+            let floor = Self::sea_floor(shore);
+            return match self.sea_stack(&p, wx, wz, shore) {
+                Some(top) => top.max(floor),
+                None => floor,
+            };
         }
         self.land_height(&p, wx, wz)
     }
@@ -744,17 +941,77 @@ impl Terrain {
             let d2 = (x - HX).hypot(y - HY);
             mix!([132.0, 96.0, 72.0], 0.8 * (-(d2 / 46.0).powf(2.2)).exp());
             mix!([70.0, 52.0, 42.0], 0.7 * (-(d2 / 11.0).powi(2)).exp());
-            // white cliffs along the east coast
+            // white cliffs along the east coast, layered
             let cw = cliff_w(p.deg) * sm(230.0, 300.0, p.r) * (1.0 - sm(400.0, 2500.0, shore));
-            mix!([226.0, 221.0, 208.0], cw * 0.8);
+            if cw > 0.0 {
+                let layer = (h / 45.0 + n.n2(wx / 2_000.0, wz / 2_000.0)).sin();
+                let c = if layer > 0.6 { [196.0, 190.0, 176.0] } else { [230.0, 226.0, 214.0] };
+                mix!(c, cw * 0.85);
+                s.rock = s.rock.max((cw * sm(30.0, 90.0, h)) as f32);
+            }
+            // ground detail: sand, rock (grass where neither)
+            s.sand = s.sand.max((wr[1] * (1.0 - sm(850.0, 1_150.0, h))) as f32);
+            s.rock = s.rock.max((wr[0] * sm(700.0, 1_600.0, h) * 0.8 + wr[1] * sm(900.0, 1_150.0, h)).min(1.0) as f32);
+            s.rock = s.rock.max((sm(3_400.0, 4_700.0, h) * (1.0 - snow)) as f32);
+            // shores: beaches of each region's sand or stones, darker where wet
+            let beach = sm(320.0 + 200.0 * n.n2(wx / 1_500.0, wz / 1_500.0 + 3.0), 40.0, shore) * sm(14.0, 4.0, h) * (1.0 - cw);
+            if beach > 0.0 {
+                const SHORE: [[f64; 3]; 6] = [
+                    [150.0, 146.0, 138.0],
+                    [74.0, 68.0, 66.0],
+                    [224.0, 206.0, 150.0],
+                    [120.0, 112.0, 96.0],
+                    [232.0, 218.0, 172.0],
+                    [108.0, 102.0, 76.0],
+                ];
+                let mut bc = [0.0; 3];
+                for (k, w) in wr.iter().enumerate() {
+                    for c in 0..3 {
+                        bc[c] += w * SHORE[k][c];
+                    }
+                }
+                mix!(bc, beach);
+                mix!([bc[0] * 0.68, bc[1] * 0.68, bc[2] * 0.7], beach * sm(1.6, 0.4, h));
+                s.sand = s.sand.max((beach * (wr[1] + wr[2] + wr[4])) as f32);
+                s.rock = s.rock.max((beach * (wr[0] + wr[3]) * 0.7) as f32);
+            }
+            // the Great Canyon: walls of coloured rock in bands, dark old
+            // rock in the inner gorge
+            let cut = if self.features { self.canyon_cut(wx, wz) } else { 0.0 };
+            if cut > 0.0 {
+                s.canyon = true;
+                const STRATA: [[f64; 3]; 5] = [
+                    [184.0, 104.0, 70.0],
+                    [214.0, 190.0, 150.0],
+                    [166.0, 92.0, 64.0],
+                    [198.0, 140.0, 96.0],
+                    [150.0, 120.0, 104.0],
+                ];
+                let band = ((h / 1_150.0) + 0.6 * n.n2(wx / 20_000.0, wz / 20_000.0 + 2.0)).rem_euclid(5.0) as usize;
+                let c = if h < -32_000.0 { [86.0, 78.0, 84.0] } else { STRATA[band.min(4)] };
+                let t = sm(0.0, 300.0, cut);
+                mix!(c, t);
+                s.rock = s.rock.max(t as f32);
+            }
+            // rivers: gravel banks at the water's edge
+            if self.features {
+                if let Some(lv) = self.river_water(&p, wx, wz) {
+                    mix!([150.0, 140.0, 112.0], 0.6 * sm(lv + 3.0, lv + 0.5, h));
+                    if h < lv {
+                        s.water = Some(lv);
+                        s.river = true;
+                    }
+                }
+            }
             // forest: the map's forests, broken up into woods and clearings
             let fine = n.fbm(wx / 3200.0 - 8.0, wz / 3200.0 + 2.0, 3);
             let fm_map = sm(1.0 - fd - 0.07, 1.0 - fd + 0.07, n.fbm(x / 60.0, y / 60.0, 3) * 1.4 + 0.5);
-            let fm = (fm_map * sm(-0.35, 0.05, fine + fd * 0.6 - 0.3)) * (1.0 - sm(2600.0, 3400.0, h)) * sm(60.0, 400.0, shore);
+            let fm = (fm_map * sm(-0.35, 0.05, fine + fd * 0.6 - 0.3)) * (1.0 - sm(2600.0, 3400.0, h)) * sm(60.0, 400.0, shore) * (1.0 - sm(0.0, 300.0, cut));
             s.forest = fm as f32;
             // Southeast farmland: real-size fields
             let fw = wr[2] * (1.0 - fm) * (1.0 - sm(1200.0, 1800.0, h)) * sm(300.0, 1500.0, shore)
-                * sm(-0.25, -0.05, n.fbm(x / 110.0 + 9.0, y / 110.0, 2));
+                * sm(-0.25, -0.05, n.fbm(x / 110.0 + 9.0, y / 110.0, 2))
+                * (1.0 - sm(0.0, 300.0, cut));
             if fw > 0.01 {
                 let u = wx * 0.88 + wz * 0.47;
                 let v = -wx * 0.47 + wz * 0.88;
@@ -810,17 +1067,30 @@ impl Terrain {
                 mix!([200.0, 90.0, 30.0], c);
                 s.glow = c as f32;
             }
-            if h < 0.6 && s.water.is_none() {
+            if h < 0.6 && s.water.is_none() && !s.canyon {
                 s.water = Some(0.0);
             }
             s.h = h;
         } else {
             s.h = Self::sea_floor(shore);
-            let t = sm(0.0, 3000.0, -shore);
-            cr = lerp(214.0, 120.0, t);
-            cg = lerp(204.0, 130.0, t);
-            cb = lerp(160.0, 120.0, t);
-            s.water = Some(0.0);
+            let stack = self.sea_stack(&p, wx, wz, shore).filter(|&top| top > s.h);
+            if let Some(top) = stack.filter(|&top| top > 0.5) {
+                // a sea stack: the cliffs' white rock, in layers
+                s.h = top;
+                let layer = (top / 45.0).sin();
+                let c = if layer > 0.6 { [196.0, 190.0, 176.0] } else { [230.0, 226.0, 214.0] };
+                (cr, cg, cb) = (c[0], c[1], c[2]);
+                s.rock = 1.0;
+            } else {
+                if let Some(top) = stack {
+                    s.h = top;
+                }
+                let t = sm(0.0, 3000.0, -shore);
+                cr = lerp(214.0, 120.0, t);
+                cg = lerp(204.0, 130.0, t);
+                cb = lerp(160.0, 120.0, t);
+                s.water = Some(0.0);
+            }
         }
         s.col = [(cr / 255.0).clamp(0.0, 1.0) as f32, (cg / 255.0).clamp(0.0, 1.0) as f32, (cb / 255.0).clamp(0.0, 1.0) as f32];
         s
@@ -848,7 +1118,16 @@ impl Terrain {
         if (mx - HX).hypot(my - HY) < 30.0 && h > 15_000.0 {
             return ("Mount St. Helens", "The volcano beside Everest");
         }
-        let g = &REGIONS[region_index((my - CY).atan2(mx - CX) / D2R)];
+        if let Some(dh) = self.bridge.deck_at(wx, wz) {
+            if dh > h - 50.0 {
+                return ("The Bridge City", "A city stretched across the canyon");
+            }
+        }
+        if self.canyon_cut(wx, wz) > 3_000.0 {
+            return ("The Great Canyon", "Between the Northeast and the Southeast");
+        }
+        let deg = (my - CY).atan2(mx - CX) / D2R;
+        let g = &REGIONS[self.island.region_at(deg, mx, my)];
         (g.name, g.desc)
     }
 }

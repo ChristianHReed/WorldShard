@@ -17,6 +17,9 @@ pub struct MeshData {
     pub normals: Vec<[f32; 3]>,
     pub colors: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
+    /// Terrain only: how sandy and how rocky each point is (for the ground
+    /// detail the terrain shader draws close up). Empty for other meshes.
+    pub uvs: Vec<[f32; 2]>,
 }
 
 impl MeshData {
@@ -36,6 +39,14 @@ impl MeshData {
         // corners: 0 = (x0,z0), 1 = (x1,z0), 2 = (x0,z1), 3 = (x1,z1)
         self.indices.extend_from_slice(&[b, b + 2, b + 1, b + 1, b + 2, b + 3]);
     }
+    /// A flat face with corners `a b c d` in counter-clockwise order as
+    /// seen from its front (`c` and `d` may be the same point: a triangle).
+    pub fn face(&mut self, a: [f32; 3], b: [f32; 3], c: [f32; 3], d: [f32; 3], col: [f32; 4]) {
+        let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let v = [d[0] - a[0], d[1] - a[1], d[2] - a[2]];
+        let n = norm3([u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]);
+        self.quad([a, d, b, c], n, [col; 4]);
+    }
 }
 
 #[inline]
@@ -43,7 +54,7 @@ fn lin(c: f32) -> f32 {
     c.max(0.0).powf(2.2)
 }
 #[inline]
-fn lin3(c: [f32; 3]) -> [f32; 4] {
+pub(crate) fn lin3(c: [f32; 3]) -> [f32; 4] {
     [lin(c[0]), lin(c[1]), lin(c[2]), 1.0]
 }
 fn mix3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
@@ -63,7 +74,7 @@ pub fn ground_grade(c: [f32; 3]) -> [f32; 3] {
 fn scale3(c: [f32; 3], s: f32) -> [f32; 3] {
     [c[0] * s, c[1] * s, c[2] * s]
 }
-fn norm3(v: [f32; 3]) -> [f32; 3] {
+pub(crate) fn norm3(v: [f32; 3]) -> [f32; 3] {
     let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-9);
     [v[0] / l, v[1] / l, v[2] / l]
 }
@@ -147,21 +158,28 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
     for j in 0..v {
         for i in 0..v {
             let s = s_at(i, j);
-            if s.h > -2.0 || s.water.map_or(false, |w| w > 0.0) {
+            if s.h > -2.0 || s.canyon || s.water.map_or(false, |w| w > 0.0) {
                 any_land = true;
             }
+            let land = s.h > 0.0 || s.canyon;
             let (hl, hr) = (hb[(j + 1) * g + i], hb[(j + 1) * g + i + 2]);
             let (hu, hd) = (hb[j * g + i + 1], hb[(j + 2) * g + i + 1]);
             let nrm = norm3([(hl - hr) as f32, (2.0 * cell) as f32, (hu - hd) as f32]);
-            let mut c = if s.h > 0.0 && s.glow < 0.05 { ground_grade(s.col) } else { s.col };
+            let mut c = if land && s.glow < 0.05 { ground_grade(s.col) } else { s.col };
             // hollows and valleys darker, crests a little lighter (soft shading)
-            if s.h > 0.0 {
+            if land {
                 let lap = ((hl + hr + hu + hd) / 4.0 - s.h) / (cell * 0.5);
                 let occl = lap.clamp(-1.0, 1.0) as f32;
                 c = scale3(c, 1.0 - 0.32 * occl.max(0.0) + 0.06 * (-occl).max(0.0));
             }
-            // steep slopes show rock; flat high ground keeps its grass or snow
-            if s.h > 0.0 {
+            // less of the sky reaches down into the canyon
+            if s.canyon {
+                c = scale3(c, 1.0 - 0.38 * (-s.h / 45_000.0).clamp(0.0, 1.0) as f32);
+            }
+            // steep slopes show rock; flat high ground keeps its grass or
+            // snow (the canyon walls and white cliffs have their own rock)
+            let mut steep_rock = 0.0f32;
+            if s.h > 0.0 && !s.canyon && s.rock < 0.5 {
                 // high up, rock shows through the snow on gentler slopes too
                 let high = sm(3800.0, 4800.0, s.h) as f32;
                 // the rocky North shows bare rock on gentler slopes too
@@ -174,10 +192,14 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
                 let steep = steep_low + (steep_high - steep_low) * high;
                 let rock = mix3([0.50, 0.47, 0.43], [0.46, 0.46, 0.52], high);
                 c = mix3(c, rock, steep * 0.7 * (1.0 - s.glow));
+                steep_rock = steep * 0.9;
+            } else if s.canyon || s.rock >= 0.5 {
+                steep_rock = 1.0 - sm(0.55, 0.85, nrm[1] as f64) as f32;
             }
             m.positions.push(local(i, j));
             m.normals.push(nrm);
             m.colors.push(lin3(c));
+            m.uvs.push([s.sand, s.rock.max(steep_rock)]);
         }
     }
     for j in 0..n {
@@ -221,6 +243,7 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
                 let mut c = m.colors[k as usize];
                 c[3] = 1.0 - skirt / SKIRT_SCALE;
                 m.colors.push(c);
+                m.uvs.push(m.uvs[k as usize]);
             }
             // front face outward, so the side you see is lit like the ground
             // (seen from behind, its normal flips and it goes dark blue)
@@ -243,10 +266,11 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
                 let mut p = [[0f32; 3]; 4];
                 let mut c = [[0f32; 4]; 4];
                 for (k, &(a, b)) in corners.iter().enumerate() {
+                    let lv = s_at(a, b).water.unwrap_or(level);
                     let mut q = local(a, b);
-                    q[1] = level as f32;
+                    q[1] = lv as f32;
                     p[k] = q;
-                    let depth = (level - h_at(a, b)).max(0.0) as f32;
+                    let depth = (lv - h_at(a, b)).max(0.0) as f32;
                     c[k] = lin3(if lake { lake_colour(depth) } else { sea_colour(depth) });
                 }
                 wm.quad(p, [0.0, 1.0, 0.0], c);
@@ -465,6 +489,8 @@ pub enum PropKind {
     Bush,
     Rock,
     Mine,
+    /// A building of the bridge city: drawn as a box with a roof, sized to it.
+    House,
 }
 
 /// The six prop shapes.
@@ -524,9 +550,100 @@ impl PropKinds {
             PropKind::Dead => &self.dead,
             PropKind::Bush => &self.bush,
             PropKind::Rock => &self.rock,
-            PropKind::Mine => &self.mine,
+            PropKind::Mine | PropKind::House => &self.mine,
         }
     }
+}
+
+/// A distant stand-in for a building: walls and a pitched roof, turned
+/// like the real model (front toward its street).
+pub(crate) fn house_box(m: &mut MeshData, pos: [f32; 3], rot: f32, w: f32, l: f32, height: f32, tint: Tint) {
+    let tower = w < 4.5 && l < 4.5 && height > 20.0;
+    let wall_h = if tower { height - 6.8 } else { height - w * 0.55 - 0.5 };
+    let walls = match tint {
+        Tint::Dry => [0.86, 0.78, 0.62],
+        Tint::Dark => [0.74, 0.74, 0.72],
+        Tint::Desert => [0.84, 0.70, 0.52],
+        _ => [0.88, 0.85, 0.78],
+    };
+    let roof = match tint {
+        Tint::Dark => [0.36, 0.38, 0.44],
+        Tint::Desert => [0.62, 0.32, 0.20],
+        _ => [0.70, 0.30, 0.20],
+    };
+    // Bevy's turn about the up axis: x' = x cos + z sin, z' = -x sin + z cos
+    let (c, s) = (rot.cos(), rot.sin());
+    let tf = |p: [f32; 3]| [pos[0] + c * p[0] + s * p[2], pos[1] + p[1], pos[2] - s * p[0] + c * p[2]];
+    let (hx, hz) = (w / 2.0, l / 2.0);
+    let mut quad = |a: [f32; 3], b: [f32; 3], cc: [f32; 3], d: [f32; 3], col: [f32; 3]| {
+        m.face(tf(a), tf(b), tf(cc), tf(d), lin3(col));
+    };
+    // four walls
+    quad([-hx, 0.0, hz], [hx, 0.0, hz], [hx, wall_h, hz], [-hx, wall_h, hz], walls);
+    quad([hx, 0.0, -hz], [-hx, 0.0, -hz], [-hx, wall_h, -hz], [hx, wall_h, -hz], scale3(walls, 0.9));
+    quad([hx, 0.0, hz], [hx, 0.0, -hz], [hx, wall_h, -hz], [hx, wall_h, hz], scale3(walls, 0.8));
+    quad([-hx, 0.0, -hz], [-hx, 0.0, hz], [-hx, wall_h, hz], [-hx, wall_h, -hz], scale3(walls, 0.85));
+    if tower {
+        // a pyramid roof
+        let top = [0.0, height, 0.0];
+        let (ex, ez) = (hx + 0.8, hz + 0.8);
+        let e = [[-ex, wall_h, ez], [ex, wall_h, ez], [ex, wall_h, -ez], [-ex, wall_h, -ez]];
+        for k in 0..4 {
+            quad(e[k], e[(k + 1) % 4], top, top, roof);
+        }
+    } else {
+        // a pitched roof with its ridge along the depth, and gable ends
+        let ry = height;
+        let (ex, ez) = (hx + 0.55, hz + 0.45);
+        quad([ex, wall_h - 0.4, ez], [ex, wall_h - 0.4, -ez], [0.0, ry, -ez], [0.0, ry, ez], roof);
+        quad([-ex, wall_h - 0.4, -ez], [-ex, wall_h - 0.4, ez], [0.0, ry, ez], [0.0, ry, -ez], scale3(roof, 0.85));
+        quad([-hx, wall_h, hz], [hx, wall_h, hz], [0.0, ry, hz], [0.0, ry, hz], walls);
+        quad([hx, wall_h, -hz], [-hx, wall_h, -hz], [0.0, ry, -hz], [0.0, ry, -hz], scale3(walls, 0.9));
+    }
+}
+
+/// On (or right beside) the bridge city's deck, where nothing grows.
+pub fn on_deck(t: &Terrain, x: f64, z: f64) -> bool {
+    let b = &t.bridge;
+    let (u, v) = b.to_deck(x, z);
+    u.abs() < b.half_len + 60.0 && v.abs() < b.half_w + 20.0
+}
+
+/// The height the player stands at: the ground, or the bridge deck when
+/// they are on it (and not far below it in the canyon).
+pub fn stand_height(t: &Terrain, x: f64, z: f64, y: f64) -> f64 {
+    let g = drawn_height(t, x, z);
+    match t.bridge.deck_at(x, z) {
+        Some(d) if y > d - 30.0 => d.max(g),
+        _ => g,
+    }
+}
+
+/// The ground (or the water, or the bridge deck) under someone at height
+/// `y`: what "how high up" is measured from. The sea counts as level
+/// ground; the canyon goes far below it.
+pub fn ground_under(t: &Terrain, x: f64, z: f64, y: f64) -> f64 {
+    let g = stand_height(t, x, z, y);
+    if g < 0.0 && t.canyon_cut(x, z) > 1.0 {
+        g
+    } else {
+        g.max(0.0)
+    }
+}
+
+/// Walking on the bridge: the parapets keep you from stepping off its
+/// sides where it crosses the canyon.
+pub fn keep_on_deck(t: &Terrain, x0: f64, z0: f64, x1: f64, z1: f64, feet_y: f64) -> (f64, f64) {
+    let b = &t.bridge;
+    if b.deck_at(x0, z0).is_none() || feet_y < b.deck_y - 2.0 {
+        return (x1, z1);
+    }
+    let (u, v) = b.to_deck(x1, z1);
+    let lim = b.half_w - crate::bridge::PARAPET_T - 0.4;
+    if u.abs() < b.span_half + 600.0 && v.abs() > lim {
+        return b.from_deck(u, v.clamp(-lim, lim));
+    }
+    (x1, z1)
 }
 
 /// Mine entrances in the North (world metres).
@@ -589,6 +706,8 @@ const LEAVES: &[&str] = &["Leaves"];
 const FLOWER: &[&str] = &["Leaves", "Flowers"];
 const GRASS: &[&str] = &["Grass"];
 const PEBBLE: &[&str] = &["PathRocks"];
+/// The bridge city's buildings (parts as written by tools/prepare_village.py).
+pub const VILLAGE: &[&str] = &["MI_WoodTrim", "MI_Plaster", "MI_UnevenBrick", "MI_RoundTiles", "MI_WindowGlass", "MI_RockTrim", "MI_Brick", "MI_MetalOrnaments"];
 
 macro_rules! m {
     ($n:expr, $p:expr, $h:expr, $f:expr) => {
@@ -637,6 +756,19 @@ pub const MODELS: &[ModelInfo] = &[
     m!("Pebble_Round_3", PEBBLE, 0.1, None),
     m!("Pebble_Square_1", PEBBLE, 0.13, None),
     m!("Pebble_Square_2", PEBBLE, 0.14, None),
+    // the bridge city (same order as crate::city::BUILDINGS)
+    m!("House_4x6_2", VILLAGE, 9.4, Some(PropKind::House)),
+    m!("House_4x8_3", VILLAGE, 12.18, Some(PropKind::House)),
+    m!("House_6x6_2", VILLAGE, 10.62, Some(PropKind::House)),
+    m!("House_6x8_2", VILLAGE, 10.62, Some(PropKind::House)),
+    m!("House_6x8_3", VILLAGE, 13.62, Some(PropKind::House)),
+    m!("House_6x10_2", VILLAGE, 10.62, Some(PropKind::House)),
+    m!("House_8x8_3", VILLAGE, 14.55, Some(PropKind::House)),
+    m!("House_8x12_2", VILLAGE, 11.55, Some(PropKind::House)),
+    m!("Tower_4x4_6", VILLAGE, 24.79, Some(PropKind::House)),
+    m!("Tower_4x4_9", VILLAGE, 33.79, Some(PropKind::House)),
+    m!("Prop_Wagon", VILLAGE, 1.53, None),
+    m!("Prop_Crate", VILLAGE, 1.06, None),
 ];
 
 /// Indexes into `MODELS`.
@@ -656,6 +788,8 @@ pub mod model {
     pub const CLOVER: u16 = 31; // 2
     pub const MUSHROOM: u16 = 33; // 2
     pub const PEBBLE: u16 = 35; // 5
+    /// The bridge city's buildings (crate::city::BUILDINGS, in order).
+    pub const BUILDING: u16 = 40; // 12
     /// Not a model: a mine entrance, drawn from the placeholder shapes.
     pub const MINE: u16 = u16::MAX;
 }
@@ -832,8 +966,19 @@ pub fn prop_placements(t: &Terrain, ci: i64, cj: i64) -> Vec<Placement> {
             if q > 0.3 {
                 continue; // nothing anywhere is denser than this
             }
+            if on_deck(t, jx, jz) {
+                continue;
+            }
             let s = t.sample(jx, jz);
-            if s.water.is_some() || s.h < 2.0 || s.glow > 0.0 || s.shore < 30.0 {
+            // boulders along the rocky North and South shores
+            if (s.region == 0 || s.region == 3) && s.water.is_none() && s.h > 0.3 && s.shore < 160.0 && !s.canyon {
+                if q < 0.08 {
+                    let m = model::ROCK + ((pick * 997.0) as u16 % 3);
+                    out.push(Placement { model: m, pos: [(jx - ox) as f32, (s.h - 0.3) as f32, (jz - oz) as f32], rot, scale: (0.6 + size * 1.6) as f32, tint: Tint::Normal });
+                }
+                continue;
+            }
+            if s.water.is_some() || (s.h < 2.0 && !s.canyon) || s.glow > 0.0 || s.shore < 30.0 {
                 continue;
             }
             if s.wet > 0.3 {
@@ -858,6 +1003,11 @@ pub fn prop_placements(t: &Terrain, ci: i64, cj: i64) -> Vec<Placement> {
             }
             out.push(Placement { model: m, pos: [(jx - ox) as f32, (s.h - 0.15) as f32, (jz - oz) as f32], rot, scale: sc as f32, tint });
         }
+    }
+    // the bridge city's buildings
+    for l in crate::city::lots_in(&t.bridge, &t.city, x0, z0, x0 + PROP_CELL, z0 + PROP_CELL) {
+        let tint = [Tint::Normal, Tint::Dry, Tint::Dark, Tint::Desert][l.look as usize % 4];
+        out.push(Placement { model: model::BUILDING + l.kind, pos: [(l.x - ox) as f32, l.y as f32, (l.z - oz) as f32], rot: l.rot, scale: 1.0, tint });
     }
     for (mx, mz) in mines {
         if mx >= x0 && mx < x0 + PROP_CELL && mz >= z0 && mz < z0 + PROP_CELL {
@@ -901,7 +1051,7 @@ fn placeholder_height(k: PropKind) -> f32 {
         PropKind::Dead => 7.5,
         PropKind::Bush => 1.7,
         PropKind::Rock => 1.4,
-        PropKind::Mine => 1.0,
+        PropKind::Mine | PropKind::House => 1.0,
     }
 }
 
@@ -911,6 +1061,13 @@ fn placeholder_height(k: PropKind) -> f32 {
 pub fn placeholder_mesh(kinds: &PropKinds, placements: &[Placement], far: bool) -> Option<MeshData> {
     let mut m = MeshData::default();
     for p in placements {
+        if far && p.model >= model::BUILDING && p.model != model::MINE {
+            let b = &crate::city::BUILDINGS[(p.model - model::BUILDING) as usize];
+            if MODELS[p.model as usize].far.is_some() {
+                house_box(&mut m, p.pos, p.rot, b.w as f32, b.l as f32, b.height, p.tint);
+            }
+            continue;
+        }
         let (kind, scale) = if p.model == model::MINE {
             (PropKind::Mine, 1.0)
         } else if far {
@@ -948,7 +1105,7 @@ pub fn detail_placements(t: &Terrain, ci: i64, cj: i64) -> Vec<Placement> {
             let (q, pick, size) = (r.next(), r.next(), r.next());
             let rot = r.next() as f32 * std::f32::consts::TAU;
             let (s, h) = lat.at(gx, gz);
-            if s.water.is_some() || s.glow > 0.0 || s.h < 2.0 || s.shore < 20.0 || s.h > 4300.0 {
+            if s.water.is_some() || s.glow > 0.0 || (s.h < 2.0 && !s.canyon) || s.shore < 20.0 || s.h > 4300.0 || on_deck(t, x0 + gx, z0 + gz) {
                 continue;
             }
             let v = |base: u16, n: u16| base + ((pick * 997.0) as u16 % n);
@@ -1057,7 +1214,7 @@ impl Lattice {
                 ss.push(t.sample(x0 + i as f64 * Self::CELL, z0 + j as f64 * Self::CELL));
             }
         }
-        if ss.iter().all(|s| s.water.is_some() || s.h < 2.0) {
+        if ss.iter().all(|s| s.water.is_some() || (s.h < 2.0 && !s.canyon)) {
             return None;
         }
         Some(Lattice { ss })
@@ -1095,7 +1252,7 @@ pub fn grass_cell(t: &Terrain, ci: i64, cj: i64) -> Option<MeshData> {
             ss.push(t.sample(x0 + i as f64 * cell, z0 + j as f64 * cell));
         }
     }
-    if ss.iter().all(|s| s.water.is_some() || s.h < 2.0) {
+    if ss.iter().all(|s| s.water.is_some() || (s.h < 2.0 && !s.canyon)) || on_deck(t, x0 + GRASS_CELL / 2.0, z0 + GRASS_CELL / 2.0) {
         return None;
     }
     let mut r = Rng::new(cell_seed(ci, cj, 2));
@@ -1128,7 +1285,7 @@ pub fn grass_cell(t: &Terrain, ci: i64, cj: i64) -> Option<MeshData> {
                 _ => 0.0,
             };
             let dens = base_density * (1.0 - sm(3600.0, 4300.0, s.h)) * sm(30.0, 80.0, s.shore) * (1.0 - s.forest as f64 * 0.5);
-            if q > dens || s.water.is_some() || s.glow > 0.0 || s.wet > 0.3 || s.h < 2.0 {
+            if q > dens || s.water.is_some() || s.glow > 0.0 || s.wet > 0.3 || (s.h < 2.0 && !s.canyon) {
                 continue;
             }
             let h = tri_interp(ss[jj * L + ii].h, ss[jj * L + ii + 1].h, ss[(jj + 1) * L + ii].h, ss[(jj + 1) * L + ii + 1].h, u, w);
@@ -1271,7 +1428,41 @@ mod tests {
         assert_eq!(MODELS[model::ROCK as usize].name, "Rock_Medium_1");
         assert_eq!(MODELS[model::GRASS as usize].name, "Grass_Common_Short");
         assert_eq!(MODELS[model::PEBBLE as usize + 4].name, "Pebble_Square_2");
-        assert_eq!(MODELS.len(), model::PEBBLE as usize + 5);
+        assert_eq!(MODELS[model::PEBBLE as usize + 5].name, "House_4x6_2");
+        assert_eq!(MODELS.len(), model::BUILDING as usize + crate::city::BUILDINGS.len());
+        for (k, b) in crate::city::BUILDINGS.iter().enumerate() {
+            assert_eq!(MODELS[model::BUILDING as usize + k].name, b.name);
+        }
+    }
+
+    #[test]
+    fn canyon_and_bridge_city() {
+        let t = Terrain::new();
+        let b = &t.bridge;
+        // a chunk deep in the canyon beside the bridge is land, with detail channels
+        let (x, z) = b.from_deck(0.0, 2_000.0);
+        let keys = lod::select([x, -40_000.0, z], 1.7);
+        let c = build_chunk(&t, keys[0]);
+        let tm = c.terrain.expect("canyon floor");
+        assert_eq!(tm.uvs.len(), tm.positions.len());
+        assert!(tm.positions.iter().any(|p| p[1] < -30_000.0));
+        assert!(c.water.is_none(), "no sea in the canyon");
+        // standing on the deck, and the parapets keep you on it
+        let (dx, dz) = b.from_deck(-1_000.0, 0.0);
+        assert_eq!(stand_height(&t, dx, dz, b.deck_y + 1.7), b.deck_y);
+        assert!(stand_height(&t, dx, dz, -30_000.0) < -30_000.0);
+        let (ox, oz) = b.from_deck(-1_000.0, 80.0);
+        let (kx, kz) = keep_on_deck(&t, dx, dz, ox, oz, b.deck_y);
+        assert!(b.deck_at(kx, kz).is_some());
+        // houses in the prop cells on the deck, and no trees
+        let (hx, hz) = b.from_deck(500.0, 20.0);
+        let (ci, cj) = ((hx / PROP_CELL).floor() as i64, (hz / PROP_CELL).floor() as i64);
+        let p = prop_placements(&t, ci, cj);
+        assert!(p.iter().any(|q| q.model >= model::BUILDING && q.model != model::MINE), "no houses");
+        let (cx, cz) = ((ci as f64 + 0.5) * PROP_CELL, (cj as f64 + 0.5) * PROP_CELL);
+        assert!(p.iter().all(|q| q.model >= model::BUILDING || !on_deck(&t, cx + q.pos[0] as f64, cz + q.pos[2] as f64)));
+        let kinds = PropKinds::build();
+        assert!(placeholder_mesh(&kinds, &p, true).map_or(0, |m| m.triangle_count()) > 50);
     }
 
     #[test]

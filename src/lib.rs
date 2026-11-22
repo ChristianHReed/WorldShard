@@ -4,6 +4,8 @@
 //! region colours, lava, lakes) from the same seed and recipe as the
 //! design map, so every build of the game produces the same world.
 pub mod lod;
+pub mod bridge;
+pub mod city;
 pub mod meshgen;
 pub mod places;
 pub mod save;

@@ -40,6 +40,9 @@ struct HazeU {
     // (x, z relative to the camera, spire height, spire radius),
     // (body height, body radius, body shape, how far its shadow reaches sideways)
     peaks: array<vec4<f32>, 24>,
+    // ground detail and surf: x, z the camera's position wrapped every
+    // 4,096 m, y seconds, w detail strength
+    detail: vec4<f32>,
 }
 @group(2) @binding(100) var<uniform> hz: HazeU;
 
@@ -90,6 +93,33 @@ fn giant_shadow(p: vec3<f32>) -> f32 {
     return shade * hz.sun_dir.w;
 }
 
+// A hash that repeats every `n` cells, so patterns tied to the ground stay
+// put while the camera's position (passed wrapped every 4,096 m) wraps.
+fn hash2(i: vec2<i32>, n: i32) -> f32 {
+    // (i is never negative: see vnoise)
+    let w = i % vec2<i32>(n, n);
+    var h = u32(w.x) * 374761393u + u32(w.y) * 668265263u;
+    h = (h ^ (h >> 13u)) * 1274126177u;
+    h = h ^ (h >> 16u);
+    return f32(h & 0xffffu) / 65535.0;
+}
+
+// Smooth value noise with cells `cell` metres across (4,096 / cell must be whole).
+fn vnoise(q: vec2<f32>, cell: f32) -> f32 {
+    let n = i32(4096.0 / cell);
+    // shifted by a whole number of repeats so the cells counted are never
+    // negative (integer remainders of negative numbers differ on WebGL)
+    let g = (q + vec2<f32>(65536.0, 65536.0)) / cell;
+    let i = vec2<i32>(floor(g));
+    let f = fract(g);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = hash2(i, n);
+    let b = hash2(i + vec2<i32>(1, 0), n);
+    let c = hash2(i + vec2<i32>(0, 1), n);
+    let d = hash2(i + vec2<i32>(1, 1), n);
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
 // The fraction of light lost through a layer that thins with height
 // (scale height `sh`), from height h0 to h1 over `dist` metres.
 fn layer_fog(density: f32, sh: f32, h0: f32, h1: f32, dist: f32) -> f32 {
@@ -113,6 +143,49 @@ fn fragment(
     let out = deferred_output(in, pbr_input);
 #else
     var out: FragmentOutput;
+#ifdef VERTEX_UVS_A
+    // close up, the ground gets texture: blades and clumps in the grass,
+    // ripples in the sand, cracks in the rock (uv: how sandy, how rocky)
+    let wp = in.world_position.xyz;
+    let dcam = distance(view.world_position, wp);
+    let fade = (1.0 - smoothstep(90.0, 320.0, dcam)) * hz.detail.w;
+    if (fade > 0.0) {
+        let q = wp.xz + hz.detail.xz;
+        let nrm = normalize(in.world_normal);
+        // steep faces take their pattern from the wall, not the ground plan
+        var qs = q;
+        if (abs(nrm.y) < 0.6) {
+            if (abs(nrm.x) > abs(nrm.z)) {
+                qs = vec2<f32>(q.y, wp.y);
+            } else {
+                qs = vec2<f32>(q.x, wp.y);
+            }
+        }
+        let sand = clamp(in.uv.x, 0.0, 1.0);
+        let rock = clamp(in.uv.y, 0.0, 1.0);
+        let grass = (1.0 - sand) * (1.0 - rock);
+        let n1 = vnoise(qs, 2.0);
+        let n2 = vnoise(qs, 0.5);
+        let n3 = vnoise(qs, 8.0);
+        var k = 1.0 + grass * (0.22 * (n1 - 0.5) + 0.16 * (n2 - 0.5) + 0.12 * (n3 - 0.5));
+        let ripple = sin((q.x * 0.82 + q.y * 0.57) * 7.0 + n3 * 6.0) * (1.0 - smoothstep(40.0, 140.0, dcam));
+        k = k + sand * (0.06 * ripple + 0.08 * (n2 - 0.5));
+        let crack = 1.0 - abs(2.0 * vnoise(qs, 1.0) - 1.0);
+        k = k - rock * (0.38 * smoothstep(0.88, 0.98, crack) - 0.2 * (n1 - 0.5) - 0.1 * (n2 - 0.5));
+        var col = pbr_input.material.base_color.rgb * mix(1.0, k, fade);
+        col = mix(col, col * vec3<f32>(1.08, 1.04, 0.86), grass * fade * smoothstep(0.55, 0.8, n3) * 0.6);
+        pbr_input.material.base_color = vec4<f32>(col, pbr_input.material.base_color.a);
+    }
+    // surf washing up the beaches and breaking at the foot of the cliffs
+    if (wp.y > -1.0 && wp.y < 2.0 && dcam < 2500.0 && (in.uv.x > 0.2 || in.uv.y > 0.5)) {
+        let q2 = wp.xz + hz.detail.xz;
+        let wash = 0.55 + 0.45 * sin(hz.detail.y * 0.9 + vnoise(q2, 32.0) * 6.283);
+        let edge = wash * 0.9 - 0.15 + 0.25 * (vnoise(q2, 2.0) - 0.5);
+        let foam = smoothstep(edge - 0.3, edge, wp.y) * (1.0 - smoothstep(edge, edge + 0.08, wp.y));
+        let a = foam * 0.8 * (1.0 - smoothstep(800.0, 2500.0, dcam));
+        pbr_input.material.base_color = vec4<f32>(mix(pbr_input.material.base_color.rgb, vec3<f32>(0.9, 0.94, 0.96), a), pbr_input.material.base_color.a);
+    }
+#endif
     out.color = apply_pbr_lighting(pbr_input);
     // where this point's light is worked out: the skirts that hide the
     // seams between chunks hang below their edge (the vertex colour's alpha

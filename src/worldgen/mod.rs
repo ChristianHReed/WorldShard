@@ -1,4 +1,5 @@
 //! Engine-independent world generation.
+pub mod borders;
 pub mod island;
 pub mod noise;
 

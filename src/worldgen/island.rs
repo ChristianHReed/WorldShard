@@ -19,8 +19,15 @@ pub const EY: f64 = CY - 38.0;
 pub const HX: f64 = CX + 62.0;
 pub const HY: f64 = CY + 30.0;
 
-/// Region borders (degrees, map space: 0 = east, 90 = south).
+/// Region borders (degrees, map space: 0 = east, 90 = south). Border k
+/// separates region k from region k + 1 (in `REGIONS` order).
 pub const BORD: [f64; 6] = [-60.0, 0.0, 60.0, 120.0, 180.0, 240.0];
+/// What runs along each border (the designer's choices): mountain ranges
+/// between North and Northeast and between Northwest and North, the deep
+/// canyon between Northeast and Southeast, and rivers on the rest.
+pub const RANGE_BORDERS: [usize; 2] = [0, 5];
+pub const CANYON_BORDER: usize = 1;
+pub const RIVER_BORDERS: [usize; 3] = [2, 3, 4];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RegionId {
@@ -167,18 +174,46 @@ impl Island {
         16.0 * self.noise.n2(r / 70.0, k as f64 * 3.7)
     }
 
-    /// Soft region weights for a direction (sum to 1), with wobbly borders.
+    /// Region weights for a spot (sum to 1). Each region lies between two
+    /// border lines (`border_angle`), where the canyon, rivers and ranges
+    /// run, so regions change right at those features. The change is sharp
+    /// out in the regions and softer near the centre, where the borders meet.
     pub fn region_weights(&self, deg: f64, x: f64, y: f64, out: &mut [f64; 6]) {
-        let dj = deg + 10.0 * self.noise.n2(x / 110.0, y / 110.0);
+        let r = (x - CX).hypot(y - CY).max(1.0);
+        let b = 1.5 + 30.0 * (-r / 40.0).exp();
+        // for each border: how far past it (toward larger angles) the spot is
+        let mut past = [0.0; 6];
+        for (k, v) in past.iter_mut().enumerate() {
+            let pd = angd(deg - self.border_angle(k, r)) * D2R * r;
+            *v = sm(-b, b, pd);
+        }
+        // region q runs from border q-1 to border q
         let mut ws = 0.0;
-        for (k, g) in REGIONS.iter().enumerate() {
-            let w = (1.0 - ((angd(dj - g.centre)).abs() - 22.0) / 16.0).clamp(0.0, 1.0);
-            out[k] = w;
+        for q in 0..6 {
+            let w = past[(q + 5) % 6] * (1.0 - past[q]);
+            out[q] = w;
             ws += w;
+        }
+        if ws <= 0.0 {
+            out[region_index(deg)] = 1.0;
+            return;
         }
         for w in out.iter_mut() {
             *w /= ws;
         }
+    }
+
+    /// The region a spot belongs to (the largest weight).
+    pub fn region_at(&self, deg: f64, x: f64, y: f64) -> usize {
+        let mut wr = [0.0; 6];
+        self.region_weights(deg, x, y, &mut wr);
+        let mut best = 0;
+        for k in 1..6 {
+            if wr[k] > wr[best] {
+                best = k;
+            }
+        }
+        best
     }
 
     /// "Landness": > 0 on land, < 0 in the sea, roughly distance-like.
@@ -233,7 +268,7 @@ impl Island {
         e += (rr - 0.4) * 0.26 * sm(8.0, 70.0, d1) * (-d1 / 340.0).exp() * inland;
         // region borders are ridgelines
         let mut br: f64 = 0.0;
-        for k in 0..6 {
+        for k in RANGE_BORDERS {
             let pd = (angd(deg - BORD[k]) * D2R * r + self.border_off(k, r)).abs();
             br = br.max((-(pd / 26.0) * (pd / 26.0)).exp());
         }
@@ -270,7 +305,7 @@ impl Island {
         let inland = (l * 5.0).min(1.0);
         e += (rr - 0.4) * 0.26 * sm(8.0, 70.0, d1) * (-d1 / 340.0).exp() * inland;
         let mut br: f64 = 0.0;
-        for k in 0..6 {
+        for k in RANGE_BORDERS {
             let pd = (angd(deg - BORD[k]) * D2R * r + self.border_off(k, r)).abs();
             br = br.max((-(pd / 26.0) * (pd / 26.0)).exp());
         }
