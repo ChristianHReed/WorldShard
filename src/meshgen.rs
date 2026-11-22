@@ -217,7 +217,9 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
                 m.normals.push(m.normals[k as usize]);
                 m.colors.push(m.colors[k as usize]);
             }
-            m.indices.extend_from_slice(&[a, base, b, b, base, base + 1]);
+            // front face outward, so the side you see is lit like the ground
+            // (seen from behind, its normal flips and it goes dark blue)
+            m.indices.extend_from_slice(&[a, b, base, b, base + 1, base]);
         }
     }
     if any_land {
