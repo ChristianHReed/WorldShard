@@ -31,7 +31,7 @@ pub const ST_HELENS_M: f64 = 5.0 * 2549.0;
 
 // Shapes of the giants, metres. The spire and St. Helens' cone are scaled
 // when the world is built so the summits land exactly on the heights above.
-const EV_SPIRE_R: f64 = 45_000.0;
+const EV_SPIRE_R: f64 = 55_000.0;
 const EV_MASSIF_M: f64 = 6_000.0;
 const EV_MASSIF_R: f64 = 90_000.0;
 const HEL_R: f64 = 22_000.0;
@@ -472,7 +472,9 @@ impl Terrain {
                     cb += (c[2] - cb) * t;
                 }};
             }
-            // high ground: tan, then grey rock, then snow (by real height)
+            // the North's highlands are bare grey rock (rock mines)
+            mix!([128.0, 125.0, 122.0], wr[0] * sm(700.0, 1600.0, h) * 0.75);
+            // high ground: tan, then grey rock, then snow (by height)
             mix!([176.0, 160.0, 118.0], sm(2200.0, 3600.0, h) * 0.85);
             mix!([150.0, 146.0, 140.0], sm(3400.0, 4700.0, h));
             mix!([236.0, 241.0, 250.0], sm(4900.0, 5700.0, h + 300.0 * n.n2(wx / 3000.0, wz / 3000.0)));

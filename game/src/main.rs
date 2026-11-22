@@ -93,7 +93,7 @@ struct Kinds(PropKinds);
 
 /// Haze that is thick near the ground and thins with height: distant
 /// lowlands fade into the sky while far summits stay visible.
-const HAZE_DENSITY: f32 = 4.0e-6;
+const HAZE_DENSITY: f32 = 2.8e-6;
 const HAZE_SCALE_HEIGHT: f32 = 8000.0;
 
 /// Terrain material: standard lighting plus the height haze (haze.wgsl).
@@ -438,7 +438,7 @@ fn setup(
     commands.spawn((
         Camera3d::default(),
         if quality.msaa { Msaa::Sample4 } else { Msaa::Off },
-        Projection::Perspective(PerspectiveProjection { fov: 65f32.to_radians(), near: 0.3, far: 30_000_000.0, ..default() }),
+        Projection::Perspective(PerspectiveProjection { fov: 55f32.to_radians(), near: 0.3, far: 30_000_000.0, ..default() }),
         Transform::from_xyz(0.0, player.y as f32, 0.0),
         DistanceFog {
             color: Color::srgb(0.72, 0.82, 0.93),
