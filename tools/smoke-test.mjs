@@ -40,6 +40,16 @@ try {
     const size = await phone.evaluate(() => { const c = document.getElementById("bevy"); return `${c.width}x${c.height}`; });
     note(`phone canvas: ${size}`);
     await phone.screenshot({ path: `${out}/0-phone.png` });
+    // the map screen on a phone
+    try {
+      await phone.waitForFunction(() => !!window.wsMap, { timeout: 300000, polling: 500 });
+      await phone.click("#map-btn");
+      await new Promise((r) => setTimeout(r, 1500));
+      await phone.screenshot({ path: `${out}/0b-phone-map.png` });
+    } catch (e) {
+      ok = false;
+      note(`phone map: ${e.message}`);
+    }
     await phone.close();
   }
 
@@ -82,6 +92,10 @@ try {
     ["8-north-highlands", { x: 0, z: -1127000, yaw: 3.27, pitch: 0.04, hours: 9 }],
     ["9-southwest-plains", { x: -1100000, z: 300000, yaw: 1.3, pitch: 0.03, hours: 17 }],
     ["10-everest-evening-shadow", { x: 393776, z: -171304, yaw: 4.712, pitch: 0.1, hours: 17.5 }],
+    ["14-cloudwall-at-dawn", { fly: true, y: 2000, x: 1500000, z: 0, yaw: 1.5708, pitch: 0.06, hours: 6.6 }],
+    ["15-clouds-overhead", { x: -905738, z: 522928, yaw: 1.05, pitch: 0.55, hours: 13 }],
+    ["16-night-sky", { x: -905738, z: 522928, yaw: 2.5, pitch: 0.5, hours: 23 }],
+    ["17-range-from-the-west", { x: -900000, z: -150000, yaw: 1.5708, pitch: 0.12, hours: 10 }],
   ];
   for (const [name, p] of scenes) {
     const data = JSON.stringify({ game: "WorldShard", v: 2, day: 2, visited: [], playSec: 0, savedAt: 0, ...p });
@@ -98,6 +112,42 @@ try {
     await new Promise((r) => setTimeout(r, 8000));
     await page.screenshot({ path: `${out}/${name}.png` });
     note(`screenshot ${name}.png`);
+  }
+
+  // the map, fast travel to a place, and the settings sliders
+  try {
+    await page.waitForFunction(() => !!window.wsMap && !!window.wsPlaces, { timeout: 300000, polling: 500 });
+    await page.click("#map-btn");
+    await new Promise((r) => setTimeout(r, 1500));
+    await page.screenshot({ path: `${out}/11-map.png` });
+    note("screenshot 11-map.png");
+    const target = await page.evaluate(() => {
+      const p = JSON.parse(window.wsPlaces).places.find((q) => q.name === "Northeast");
+      [...document.querySelectorAll("#map-places .place")].find((b) => b.textContent.startsWith("Northeast")).click();
+      return p;
+    });
+    await page.waitForFunction((t) => {
+      const me = (window.wsPlayer || "").split(",").map(Number);
+      return Math.hypot(me[0] - t.x, me[1] - t.z) < 2000;
+    }, { timeout: 180000, polling: 250 }, target);
+    note(`travelled to the Northeast (${target.x}, ${target.z})`);
+    await new Promise((r) => setTimeout(r, 12000));
+    await page.screenshot({ path: `${out}/12-after-travel-northeast.png` });
+    note("screenshot 12-after-travel-northeast.png");
+    await page.click("#settings-btn");
+    await new Promise((r) => setTimeout(r, 800));
+    await page.screenshot({ path: `${out}/13-settings.png` });
+    const before = await page.evaluate(() => JSON.parse(window.wsSettings).view);
+    await page.evaluate(() => {
+      const el = document.getElementById("s-view");
+      el.value = 6000;
+      el.dispatchEvent(new Event("input"));
+    });
+    await page.waitForFunction(() => JSON.parse(window.wsSettings).view === 6000, { timeout: 10000, polling: 250 });
+    note(`settings: land view distance ${before} km -> 6000 km applied`);
+  } catch (e) {
+    ok = false;
+    note(`map/travel/settings: ${e.message}`);
   }
 } catch (e) {
   ok = false;

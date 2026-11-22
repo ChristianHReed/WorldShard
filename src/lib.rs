@@ -5,6 +5,7 @@
 //! design map, so every build of the game produces the same world.
 pub mod lod;
 pub mod meshgen;
+pub mod places;
 pub mod save;
 pub mod sky;
 pub mod worldgen;

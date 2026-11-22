@@ -13,8 +13,13 @@ spread out from their base. Content and items are player-driven.
 
 - **Island:** the land area of Australia (about 7.7 million km²), so about 3,100 km across.
 - **Rim Sea:** three island widths of water from the shore to the Cloudwall.
-- **Peaks:** 25 times their real heights, so they tower over the island and can be seen from anywhere on it: Mount Everest 221,225 m (a steep spire on a body about 1,100 km across), Mount St. Helens 63,725 m (crater open to the north), in a range of lesser mountains.
+- **Peaks:** 25 times their real heights, so they tower over the island and can be seen from anywhere on it: Mount Everest 221,225 m (a steep spire on a body about 1,100 km across), Mount St. Helens 63,725 m (crater open to the north).
+- **The giants' range:** six peaks of 154–199 km around Everest and four of 41–54 km around St. Helens, joined by ridges, with lesser mountains below.
 - **Shadows:** sun shadows near the player (trees, rocks, hills), the giants' shadows across the land, and soft shading in hollows.
+- **Sky:** drifting clouds (puffy low clouds and high streaks), the sun's glow, the moon and stars at night. The Cloudwall towers about 700 km high at the edge of the Rim Sea, so it shows above the horizon.
+- **Biomes:** each region has its own ground colours, plants, rocks and air: mist in the South forest and Northwest swamp (thickest in the morning), dust over the Northeast desert, clear air in the North and Southwest.
+- **Map and fast travel:** the Map button (or M) shows the island; travel to a named place or tap any spot.
+- **Settings:** sliders for land view distance, land detail, trees and rocks, grass and plants, and shadows.
 - **Regions' landforms:** North high knife-edged rock mountains and canyons; Northeast a high plateau of stepped mesas, tall dunes and volcanic cones; Southeast soft rolling hills; South steep tall wooded hills and ravines; Southwest flat plains with lone rock domes; Northwest flat low wetland. The region borders rise as ridgelines.
 - **Clock:** a game day is a real day, so crossing a region on foot takes 3–5 game days.
 - **Fly-through mode (testing):** press F or tap **Fly**. E/Q or **Up**/**Down** change height. R or the speed button cycles 30 m/s, 300 m/s, 3 km/s and 30 km/s.
