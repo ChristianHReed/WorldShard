@@ -199,7 +199,8 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
             m.positions.push(local(i, j));
             m.normals.push(nrm);
             m.colors.push(lin3(c));
-            m.uvs.push([s.sand, s.rock.max(steep_rock)]);
+            // (the shader draws the canyon's beds of rock where x is below 0)
+            m.uvs.push([if s.canyon { -1.0 } else { s.sand }, s.rock.max(steep_rock)]);
         }
     }
     for j in 0..n {
@@ -276,7 +277,7 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
                 wm.quad(p, [0.0, 1.0, 0.0], c);
             }
             // glowing lava only on detailed chunks (from afar it is in the ground colour)
-            if cell <= 64.0 && corners.iter().any(|&(a, b)| s_at(a, b).glow > 0.2) {
+            if cell <= 64.0 && corners.iter().any(|&(a, b)| s_at(a, b).glow > 0.03) {
                 let lift = (0.4 + cell * 0.02) as f32;
                 let mut p = [[0f32; 3]; 4];
                 let mut c = [[0f32; 4]; 4];
@@ -284,8 +285,10 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
                     let mut q = local(a, b);
                     q[1] += lift;
                     p[k] = q;
+                    // white-hot in the middle, cooling to dark crust at the edges
                     let gl = s_at(a, b).glow;
-                    c[k] = [3.4 * gl, 0.9 * gl, 0.12 * gl, 1.0];
+                    let hot = gl * gl * (3.0 - 2.0 * gl);
+                    c[k] = [0.03 + 3.4 * hot, 0.022 + 0.9 * hot, 0.018 + 0.12 * hot, 1.0];
                 }
                 lava.quad(p, [0.0, 1.0, 0.0], c);
             }

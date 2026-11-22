@@ -152,7 +152,8 @@ try {
       el.value = 6000;
       el.dispatchEvent(new Event("input"));
     });
-    await page.waitForFunction(() => JSON.parse(window.wsSettings).view === 6000, { timeout: 10000, polling: 250 });
+    // (software rendering can take several seconds a frame here)
+    await page.waitForFunction(() => JSON.parse(window.wsSettings).view === 6000, { timeout: 90000, polling: 250 });
     note(`settings: land view distance ${before} km -> 6000 km applied`);
   } catch (e) {
     ok = false;

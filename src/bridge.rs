@@ -219,6 +219,10 @@ pub fn bridge_meshes(t: &Terrain) -> BridgeMeshes {
         }
     }
 
+    // dressed stone: the terrain shader draws cobbles and courses of
+    // blocks close up where the detail channel's x is 2
+    structure.uvs = vec![[2.0, 0.0]; structure.positions.len()];
+
     // the city from afar
     let lots = &t.city;
     let blocks = city::blocks(lots);

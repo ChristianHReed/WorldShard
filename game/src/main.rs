@@ -1491,6 +1491,7 @@ fn sky_and_light(
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
     mats: Res<Mats>,
     sky_mats: Res<SkyMats>,
+    q: Res<Quality>,
 ) {
     let s = sun_state(pl.hours);
     clear.0 = rgb(s.sky_col);
@@ -1563,7 +1564,9 @@ fn sky_and_light(
             peaks[2 * k + 1] = Vec4::new(sp.body_m as f32, sp.body_r as f32, sp.body_p as f32, sp.reach() as f32);
         }
         u.peaks = peaks;
-        u.detail = Vec4::new(pl.x.rem_euclid(4096.0) as f32, (pl.play_sec % 4096.0) as f32, pl.z.rem_euclid(4096.0) as f32, 1.0);
+        // (no close-up ground detail on lite quality: it costs too much there)
+        let detail = if q.name == "lite" { 0.0 } else { 1.0 };
+        u.detail = Vec4::new(pl.x.rem_euclid(4096.0) as f32, (pl.play_sec % 4096.0) as f32, pl.z.rem_euclid(4096.0) as f32, detail);
     }
 
     // sky and Cloudwall: gradient, sun, clouds that drift and vary by day
