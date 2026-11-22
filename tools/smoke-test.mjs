@@ -15,6 +15,9 @@ const browser = await puppeteer.launch({
   headless: true,
   args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist", "--no-sandbox", "--window-size=1280,720"],
   defaultViewport: { width: 1280, height: 720 },
+  // software rendering on a slow runner can keep the page busy for minutes;
+  // let the longer waits below run their full time
+  protocolTimeout: 900000,
 });
 let ok = true;
 try {
