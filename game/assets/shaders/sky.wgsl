@@ -130,18 +130,19 @@ fn cloud_layer(dir: vec3<f32>, layer: f32, scale: f32, puffy: bool) -> vec4<f32>
     var d = 0.0;
     var lit = 1.0;
     if (puffy) {
-        let n = fbm(uv, 5);
-        let thresh = mix(0.72, 0.36, cover);
-        d = smoothstep(thresh, thresh + 0.2, n);
+        // fbm sits around 0.48 +- 0.1; stretch it to use the whole range
+        let n = clamp((fbm(uv, 5) - 0.48) * 1.9 + 0.5, 0.0, 1.0);
+        let thresh = mix(0.68, 0.3, cover);
+        d = smoothstep(thresh, thresh + 0.22, n);
         // brighter on the side toward the sun
         let ls = normalize(sky.sun.xz + vec2<f32>(1e-4, 0.0));
-        let n2 = fbm(uv + ls * 0.07, 5);
-        lit = clamp(0.62 + (n - n2) * 7.0, 0.2, 1.25);
+        let n2 = clamp((fbm(uv + ls * 0.07, 5) - 0.48) * 1.9 + 0.5, 0.0, 1.0);
+        lit = clamp(0.62 + (n - n2) * 4.0, 0.2, 1.25);
     } else {
         // long thin streaks
         let r = vec2<f32>(uv.x * 0.8 + uv.y * 0.6, -uv.x * 0.6 + uv.y * 0.8);
-        let n = fbm(vec2<f32>(r.x * 0.35, r.y * 3.0), 4);
-        d = smoothstep(0.52, 0.8, n) * 0.4 * (0.4 + cover);
+        let n = clamp((fbm(vec2<f32>(r.x * 0.35, r.y * 3.0), 4) - 0.48) * 1.9 + 0.5, 0.0, 1.0);
+        d = smoothstep(0.5, 0.85, n) * 0.4 * (0.4 + cover);
     }
     let fade = exp(-dist / 110000.0) * smoothstep(0.01, 0.09, dir.y) * (1.0 - smoothstep(layer - 1200.0, layer - 150.0, above));
     let day = sky.sun.w;

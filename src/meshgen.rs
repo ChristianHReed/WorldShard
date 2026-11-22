@@ -215,7 +215,12 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
                 p[2] += out[1] * flare;
                 m.positions.push(p);
                 m.normals.push(m.normals[k as usize]);
-                m.colors.push(m.colors[k as usize]);
+                // the colour's alpha says how far below its edge this point
+                // hangs (1 = on the surface; SKIRT_SCALE metres per unit),
+                // so the terrain shader can light the skirt like its edge
+                let mut c = m.colors[k as usize];
+                c[3] = 1.0 - skirt / SKIRT_SCALE;
+                m.colors.push(c);
             }
             // front face outward, so the side you see is lit like the ground
             // (seen from behind, its normal flips and it goes dark blue)
@@ -678,6 +683,9 @@ pub struct Placement {
     pub scale: f32,
     pub tint: Tint,
 }
+
+/// Skirt depth encoding in the terrain's vertex colour alpha (see haze.wgsl).
+pub const SKIRT_SCALE: f32 = 100_000.0;
 
 /// Side of a prop cell in metres (trees and rocks are streamed in cells).
 pub const PROP_CELL: f64 = 64.0;

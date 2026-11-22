@@ -114,16 +114,22 @@ fn fragment(
 #else
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr_input);
+    // where this point's light is worked out: the skirts that hide the
+    // seams between chunks hang below their edge (the vertex colour's alpha
+    // says how far), and are lit as if they were at the edge
+    var p = in.world_position.xyz;
+#ifdef VERTEX_COLORS
+    p.y = p.y + (1.0 - in.color.a) * 100000.0;
+#endif
     // the big peaks' shadows across the land. The light is already dimmed
     // by the shade where the player stands, so only the difference is applied.
     if (hz.sun_dir.w > 0.0) {
-        let sh = giant_shadow(in.world_position.xyz);
+        let sh = giant_shadow(p);
         let ratio = clamp((1.0 - 0.6 * sh) / (1.0 - 0.6 * hz.params.z), 0.4, 2.5);
         out.color = vec4<f32>(out.color.rgb * ratio, out.color.a);
     }
 
     let cam = view.world_position;
-    let p = in.world_position.xyz;
     let dist = distance(cam, p);
     let view_dir = (p - cam) / max(dist, 1.0);
     // haze that thins with height, glowing warmer toward the sun
