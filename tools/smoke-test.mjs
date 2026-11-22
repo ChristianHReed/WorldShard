@@ -73,7 +73,8 @@ try {
 
   // Load a few saved spots to check night lighting, lava glow and the forests.
   const scenes = [
-    ["3-everest-from-150km", { x: -232290, z: -65238, yaw: 0.785, pitch: 0.12, hours: 10 }],
+    ["3-everest-from-400km", { x: -409000, z: 112000, yaw: 0.785, pitch: 0.08, hours: 10 }],
+    ["3b-everest-from-200km", { x: -268000, z: -30000, yaw: 0.785, pitch: 0.12, hours: 16 }],
     ["4-st-helens-from-the-north", { x: 279496, z: 75240, yaw: 3.1416, pitch: 0.1, hours: 15 }],
     ["5-south-forest", { x: 0, z: 991760, yaw: 0, pitch: 0.0, hours: 15 }],
     ["6-whole-island", { fly: true, y: 1400000, x: 0, z: 2600000, yaw: 0, pitch: -0.5, hours: 12 }],

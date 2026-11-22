@@ -158,7 +158,12 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
             if s.h > 0.0 {
                 // high up, rock shows through the snow on gentler slopes too
                 let high = sm(3800.0, 4800.0, s.h) as f32;
-                let steep_low = 1.0 - sm(0.62, 0.86, nrm[1] as f64) as f32;
+                // the rocky North shows bare rock on gentler slopes too
+                let steep_low = if s.region == 0 && s.h > 400.0 {
+                    1.0 - sm(0.72, 0.93, nrm[1] as f64) as f32
+                } else {
+                    1.0 - sm(0.62, 0.86, nrm[1] as f64) as f32
+                };
                 let steep_high = 1.0 - sm(0.80, 0.95, nrm[1] as f64) as f32;
                 let steep = steep_low + (steep_high - steep_low) * high;
                 let rock = mix3([0.50, 0.47, 0.43], [0.46, 0.46, 0.52], high);
@@ -228,7 +233,8 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
                 }
                 wm.quad(p, [0.0, 1.0, 0.0], c);
             }
-            if corners.iter().any(|&(a, b)| s_at(a, b).glow > 0.2) {
+            // glowing lava only on detailed chunks (from afar it is in the ground colour)
+            if cell <= 64.0 && corners.iter().any(|&(a, b)| s_at(a, b).glow > 0.2) {
                 let lift = (0.4 + cell * 0.02) as f32;
                 let mut p = [[0f32; 3]; 4];
                 let mut c = [[0f32; 4]; 4];
