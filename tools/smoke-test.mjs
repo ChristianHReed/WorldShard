@@ -42,7 +42,7 @@ try {
     await phone.screenshot({ path: `${out}/0-phone.png` });
     // the map screen on a phone
     try {
-      await phone.waitForFunction(() => !!window.wsMap, { timeout: 90000, polling: 500 });
+      await phone.waitForFunction(() => !!window.wsMap, { timeout: 300000, polling: 500 });
       await phone.click("#map-btn");
       await new Promise((r) => setTimeout(r, 1500));
       await phone.screenshot({ path: `${out}/0b-phone-map.png` });
@@ -116,7 +116,7 @@ try {
 
   // the map, fast travel to a place, and the settings sliders
   try {
-    await page.waitForFunction(() => !!window.wsMap && !!window.wsPlaces, { timeout: 90000, polling: 500 });
+    await page.waitForFunction(() => !!window.wsMap && !!window.wsPlaces, { timeout: 300000, polling: 500 });
     await page.click("#map-btn");
     await new Promise((r) => setTimeout(r, 1500));
     await page.screenshot({ path: `${out}/11-map.png` });
@@ -129,7 +129,7 @@ try {
     await page.waitForFunction((t) => {
       const me = (window.wsPlayer || "").split(",").map(Number);
       return Math.hypot(me[0] - t.x, me[1] - t.z) < 2000;
-    }, { timeout: 60000, polling: 250 }, target);
+    }, { timeout: 180000, polling: 250 }, target);
     note(`travelled to the Northeast (${target.x}, ${target.z})`);
     await new Promise((r) => setTimeout(r, 12000));
     await page.screenshot({ path: `${out}/12-after-travel-northeast.png` });

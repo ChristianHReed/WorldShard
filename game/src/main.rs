@@ -1757,10 +1757,15 @@ fn web_bridge(
         let peaks: Vec<String> = t.shadow_peaks().iter().map(|p| format!("[{:.0},{:.0},{:.0}]", p.x, p.z, t.height(p.x, p.z))).collect();
         page_set_text("wsPlaces", &format!("{{\"places\":[{}],\"peaks\":[{}]}}", list.join(","), peaks.join(",")));
     }
-    // the map, a few rows per frame so the game doesn't stutter
+    // the map, a little each frame so the game doesn't stutter (more per
+    // frame when frames are slow anyway)
     if !b.map_sent {
+        let budget = (time.delta_secs() as f64 * 150.0).clamp(8.0, 400.0);
+        let start = now_ms();
         let m = b.map.get_or_insert_with(|| MapImage::new(320, 1_750_000.0));
-        m.build_rows(t, 8);
+        while !m.done() && now_ms() - start < budget {
+            m.build_rows(t, 2);
+        }
         if m.done() {
             page_set_text("wsMapInfo", &format!("{{\"size\":{},\"half\":{:.0}}}", m.size, m.half));
             page_set_bytes("wsMap", &m.rgba);
