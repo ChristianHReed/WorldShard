@@ -90,7 +90,7 @@ jobs:
           (cd dist && python3 -m http.server 8080 >/dev/null 2>&1 &)
           mkdir -p /tmp/smoke-tool && cd /tmp/smoke-tool && npm init -y >/dev/null && npm install --silent puppeteer-core@24
           cp "$GITHUB_WORKSPACE/tools/smoke-test.mjs" /tmp/smoke-tool/
-          timeout 900 node /tmp/smoke-tool/smoke-test.mjs http://localhost:8080/ "$GITHUB_WORKSPACE/smoke"
+          timeout 1500 node /tmp/smoke-tool/smoke-test.mjs http://localhost:8080/ "$GITHUB_WORKSPACE/smoke"
 
       - name: Publish build logs (ci-logs branch)
         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)

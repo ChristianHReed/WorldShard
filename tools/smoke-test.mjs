@@ -73,10 +73,12 @@ try {
 
   // Load a few saved spots to check night lighting, lava glow and the forests.
   const scenes = [
-    ["3-everest-from-the-south", { fly: true, y: 6800, x: -126224, z: -135240, yaw: 0, pitch: 0.1, hours: 10 }],
-    ["4-lava-at-night", { fly: true, y: 2500, x: 980351, z: -337562, yaw: 1.2393, pitch: -0.35, hours: 21.5 }],
+    ["3-everest-from-150km", { x: -232290, z: -65238, yaw: 0.785, pitch: 0.12, hours: 10 }],
+    ["4-st-helens-from-the-north", { x: 279496, z: 75240, yaw: 3.1416, pitch: 0.1, hours: 15 }],
     ["5-south-forest", { x: 0, z: 991760, yaw: 0, pitch: 0.0, hours: 15 }],
     ["6-whole-island", { fly: true, y: 1400000, x: 0, z: 2600000, yaw: 0, pitch: -0.5, hours: 12 }],
+    ["7-northeast-desert", { x: 976000, z: -563500, yaw: 1.047, pitch: 0.02, hours: 11 }],
+    ["8-north-highlands", { x: 0, z: -1127000, yaw: 3.27, pitch: 0.04, hours: 9 }],
   ];
   for (const [name, p] of scenes) {
     const data = JSON.stringify({ game: "WorldShard", v: 2, day: 2, visited: [], playSec: 0, savedAt: 0, ...p });

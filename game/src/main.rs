@@ -12,7 +12,8 @@ use std::collections::{HashMap, HashSet};
 use bevy::asset::{AssetId, AssetMetaCheck, RenderAssetUsages};
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::input::mouse::MouseMotion;
-use bevy::pbr::{DistanceFog, FogFalloff};
+use bevy::pbr::{DistanceFog, ExtendedMaterial, FogFalloff, MaterialExtension};
+use bevy::render::render_resource::{AsBindGroup, ShaderRef};
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::primitives::Aabb;
@@ -90,9 +91,34 @@ struct GameWorld(Terrain);
 #[derive(Resource)]
 struct Kinds(PropKinds);
 
+/// Haze that is thick near the ground and thins with height: distant
+/// lowlands fade into the sky while far summits stay visible.
+const HAZE_DENSITY: f32 = 4.0e-6;
+const HAZE_SCALE_HEIGHT: f32 = 8000.0;
+
+/// Terrain material: standard lighting plus the height haze (haze.wgsl).
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
+struct Haze {
+    #[uniform(100)]
+    color: Vec4,
+    #[uniform(101)]
+    params: Vec4,
+}
+
+impl MaterialExtension for Haze {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/haze.wgsl".into()
+    }
+    fn deferred_fragment_shader() -> ShaderRef {
+        "shaders/haze.wgsl".into()
+    }
+}
+
+type GroundMaterial = ExtendedMaterial<StandardMaterial, Haze>;
+
 #[derive(Resource)]
 struct Mats {
-    ground: Handle<StandardMaterial>,
+    ground: Handle<GroundMaterial>,
     water: Handle<StandardMaterial>,
     lava: Handle<StandardMaterial>,
     plants: Handle<StandardMaterial>,
@@ -250,6 +276,7 @@ fn main() {
             }),
             ..default()
         }))
+        .add_plugins(MaterialPlugin::<GroundMaterial>::default())
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -298,6 +325,7 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut ground_materials: ResMut<Assets<GroundMaterial>>,
     asset_server: Res<AssetServer>,
     quality: Res<Quality>,
 ) {
@@ -305,13 +333,21 @@ fn setup(
     let world = Terrain::new();
 
     let mats = Mats {
-        ground: materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            perceptual_roughness: 0.92,
-            reflectance: 0.12,
-            double_sided: true,
-            cull_mode: None,
-            ..default()
+        ground: ground_materials.add(GroundMaterial {
+            base: StandardMaterial {
+                base_color: Color::WHITE,
+                perceptual_roughness: 0.92,
+                reflectance: 0.12,
+                double_sided: true,
+                cull_mode: None,
+                // the haze is done in the terrain shader
+                fog_enabled: false,
+                ..default()
+            },
+            extension: Haze {
+                color: Vec4::new(0.5, 0.62, 0.8, 1.0),
+                params: Vec4::new(HAZE_DENSITY, HAZE_SCALE_HEIGHT, 0.0, 0.0),
+            },
         }),
         water: materials.add(StandardMaterial {
             base_color: Color::WHITE,
@@ -408,7 +444,7 @@ fn setup(
             color: Color::srgb(0.72, 0.82, 0.93),
             directional_light_color: Color::srgba(1.0, 0.92, 0.75, 0.45),
             directional_light_exponent: 24.0,
-            falloff: FogFalloff::from_visibility_colors(90_000.0, Color::srgb(0.35, 0.5, 0.66), Color::srgb(0.8, 0.86, 1.0)),
+            falloff: FogFalloff::Exponential { density: HAZE_DENSITY },
         },
         ColorGrading::with_identical_sections(
             ColorGradingGlobal { post_saturation: 1.12, ..default() },
@@ -777,9 +813,6 @@ fn stream_world(
         }
         let c = meshgen::build_chunk(t, *k);
         let mut parts = Vec::new();
-        if let Some(m) = c.terrain {
-            parts.push((m, mats.ground.clone()));
-        }
         if let Some(m) = c.water {
             parts.push((m, mats.water.clone()));
         }
@@ -787,6 +820,10 @@ fn stream_world(
             parts.push((m, mats.lava.clone()));
         }
         let e = spawn_anchored(&mut commands, &mut assets, Anchor { x: c.origin[0], y: 0.0, z: c.origin[1] }, parts);
+        if let Some(m) = c.terrain {
+            let (mesh, aabb) = to_mesh(m);
+            commands.spawn((Mesh3d(assets.add(mesh)), MeshMaterial3d(mats.ground.clone()), aabb, ChildOf(e)));
+        }
         st.chunks.insert(*k, e);
         built += 1;
     }
@@ -1226,6 +1263,8 @@ fn sky_and_light(
     mut fogs: Query<&mut DistanceFog>,
     dome: Query<&MeshMaterial3d<StandardMaterial>, With<SkyDome>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut ground_materials: ResMut<Assets<GroundMaterial>>,
+    mats: Res<Mats>,
 ) {
     let s = sun_state(pl.hours);
     clear.0 = rgb(s.sky_col);
@@ -1241,19 +1280,20 @@ fn sky_and_light(
         light.color = rgb([col[0] / m, col[1] / m, col[2] / m]);
         *tf = Transform::IDENTITY.looking_to(-Vec3::from_array(dir), Vec3::Y);
     }
-    // haze: thick near the ground, thinner high up so the island can be seen whole
-    let ground = meshgen::drawn_height(&w.0, pl.x, pl.z).max(0.0);
-    let above = (pl.y - ground).max(0.0) as f32;
-    let vis = 90_000.0 + above * 5.0;
+    // haze: the terrain shader works it out along each line of sight; water,
+    // plants and clouds use the haze density at the camera's height
+    let _ = &w;
     let day = s.day;
+    let haze = rgb(s.fog_col);
+    let cam_density = HAZE_DENSITY * (-(pl.y.max(0.0) as f32) / HAZE_SCALE_HEIGHT).exp();
     for mut fog in &mut fogs {
-        fog.color = rgb(s.fog_col);
-        fog.falloff = FogFalloff::from_visibility_colors(
-            vis,
-            rgb([0.35 * day + 0.03, 0.5 * day + 0.04, 0.66 * day + 0.08]),
-            rgb([s.fog_col[0] * 1.05, s.fog_col[1] * 1.05, s.fog_col[2] * 1.08]),
-        );
+        fog.color = haze;
+        fog.falloff = FogFalloff::Exponential { density: cam_density };
         fog.directional_light_color = Color::srgba(1.0, 0.9, 0.7, 0.45 * day);
+    }
+    if let Some(g) = ground_materials.get_mut(&mats.ground) {
+        let lin = haze.to_linear();
+        g.extension.color = Vec4::new(lin.red, lin.green, lin.blue, 1.0);
     }
     if let Ok(h) = dome.single() {
         if let Some(mat) = materials.get_mut(&h.0) {

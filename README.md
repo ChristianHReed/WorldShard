@@ -13,7 +13,8 @@ spread out from their base. Content and items are player-driven.
 
 - **Island:** the land area of Australia (about 7.7 million km²), so about 3,100 km across.
 - **Rim Sea:** three island widths of water from the shore to the Cloudwall.
-- **Peaks:** real heights. Mount Everest is 8,849 m and Mount St. Helens 2,549 m.
+- **Peaks:** five times their real heights, so they tower over the island: Mount Everest 44,245 m, Mount St. Helens 12,745 m (with its crater open to the north), in a range of lesser mountains.
+- **Regions' landforms:** North rugged rocky highlands; Northeast volcanic plateau with mesas and dune seas; Southeast rolling hills; South steep hills and ravines; Southwest open plains; Northwest a low marshy basin. The region borders rise as ridgelines.
 - **Clock:** a game day is a real day, so crossing a region on foot takes 3–5 game days.
 - **Fly-through mode (testing):** press F or tap **Fly**. E/Q or **Up**/**Down** change height. R or the speed button cycles 30 m/s, 300 m/s, 3 km/s and 30 km/s.
 

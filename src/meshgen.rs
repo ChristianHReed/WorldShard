@@ -114,7 +114,7 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
         out.water = Some(w);
         return out;
     }
-    let n = CHUNK_N;
+    let n = crate::lod::chunk_n(&key);
     let cell = size / n as f64;
     let (x0, z0) = key.corner();
     let g = n + 3; // heights with a one-cell border, for normals
@@ -178,8 +178,10 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
             m.indices.extend_from_slice(&[a, c, b, b, c, d]);
         }
     }
-    // skirts hide the cracks between chunks of different detail
-    let skirt = (cell * 2.0 + 4.0) as f32;
+    // skirts hide the cracks between chunks of different detail (deeper
+    // on steep mountain chunks, where neighbours differ more)
+    let (hmin, hmax) = hb.iter().fold((f64::MAX, f64::MIN), |(a, b), &h| (a.min(h), b.max(h)));
+    let skirt = (cell * 2.0 + 4.0 + (hmax - hmin) * 0.12) as f32;
     let edges: [Vec<(usize, usize)>; 4] = [
         (0..v).map(|i| (i, 0)).collect(),
         (0..v).map(|i| (n, i)).collect(),
