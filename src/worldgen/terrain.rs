@@ -141,6 +141,104 @@ fn build_lava(isl: &Island) -> Lava {
     lava
 }
 
+/// The giants' range (the designer's choice: peaks just under each giant).
+/// Each entry: which giant it stands around (0 Everest, 1 St. Helens),
+/// bearing from that giant in degrees (0 = east, 90 = south), distance
+/// in km, and the summit height in km. None stand between the two giants,
+/// so each giant keeps a clear view of the other.
+const RANGE_PEAKS: [(usize, f64, f64, f64); 10] = [
+    (0, 95.0, 330.0, 176.0),
+    (0, 145.0, 300.0, 192.0),
+    (0, 195.0, 360.0, 160.0),
+    (0, 245.0, 310.0, 199.0),
+    (0, 295.0, 380.0, 168.0),
+    (0, 345.0, 320.0, 154.0),
+    (1, 330.0, 125.0, 51.0),
+    (1, 5.0, 140.0, 54.0),
+    (1, 60.0, 115.0, 47.0),
+    (1, 120.0, 135.0, 41.0),
+];
+/// Ridges joining the range peaks (indexes into RANGE_PEAKS): a chain around
+/// each giant, and a long, lower one from Everest's chain to St. Helens'.
+const RANGE_RIDGES: [(usize, usize); 9] = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (6, 7), (7, 8), (8, 9), (0, 9)];
+
+/// One peak of the giants' range: a steep spire on a broad body.
+#[derive(Clone, Copy, Debug)]
+pub struct RangePeak {
+    pub x: f64,
+    pub z: f64,
+    /// target summit height, metres
+    pub target: f64,
+    pub spire_m: f64,
+    pub spire_r: f64,
+    pub body_m: f64,
+    pub body_r: f64,
+}
+
+/// A ridge line between two range peaks: high at the ends, dipping to a
+/// saddle in the middle.
+#[derive(Clone, Copy, Debug)]
+pub struct Ridge {
+    pub a: (f64, f64),
+    pub b: (f64, f64),
+    pub ha: f64,
+    pub hb: f64,
+    pub saddle: f64,
+}
+
+impl Ridge {
+    fn height_at(&self, x: f64, z: f64) -> f64 {
+        let (dx, dz) = (self.b.0 - self.a.0, self.b.1 - self.a.1);
+        let t = (((x - self.a.0) * dx + (z - self.a.1) * dz) / (dx * dx + dz * dz)).clamp(0.0, 1.0);
+        let (cx, cz) = (self.a.0 + dx * t, self.a.1 + dz * t);
+        let d = (x - cx).hypot(z - cz);
+        let along = self.ha + (self.hb - self.ha) * t;
+        let hr = self.saddle + (along - self.saddle) * (2.0 * t - 1.0).powi(2);
+        let w = (0.45 * hr).max(4_000.0);
+        if d > 4.0 * w {
+            return 0.0;
+        }
+        hr * (-(d / w).powf(1.4)).exp()
+    }
+}
+
+/// Where the range peaks stand (world metres) and their summit heights:
+/// fixed by the design, so level-of-detail code can use them without a
+/// `Terrain`.
+pub fn range_peak_spots() -> [(f64, f64, f64); 10] {
+    let giants = [to_world(EX, EY), to_world(HX, HY)];
+    RANGE_PEAKS.map(|(g, bearing, km, top_km)| {
+        let a = bearing.to_radians();
+        (giants[g].0 + a.cos() * km * 1000.0, giants[g].1 + a.sin() * km * 1000.0, top_km * 1000.0)
+    })
+}
+
+/// Samples along the light's path past each peak when finding its shadow
+/// (the terrain shader uses the same number).
+pub const SHADOW_STEPS: usize = 14;
+
+/// A big peak's simple shape: a spire on a body.
+#[derive(Clone, Copy, Debug)]
+pub struct ShadowPeak {
+    pub x: f64,
+    pub z: f64,
+    pub spire_m: f64,
+    pub spire_r: f64,
+    pub body_m: f64,
+    pub body_r: f64,
+    pub body_p: f64,
+}
+
+impl ShadowPeak {
+    pub fn top(&self, d: f64) -> f64 {
+        self.spire_m * (-d / self.spire_r).exp() + self.body_m * (-(d / self.body_r).powf(self.body_p)).exp()
+    }
+    /// Beyond this distance from its axis the peak is too low to matter.
+    pub fn reach(&self) -> f64 {
+        (3.0 * self.spire_r).max(if self.body_m > 0.0 { 1.6 * self.body_r } else { 0.0 })
+    }
+}
+
 /// A Northwest lake: centre and radius in metres, and its water level.
 #[derive(Clone, Copy, Debug)]
 pub struct Lake {
@@ -193,6 +291,11 @@ pub struct Sample {
     pub water: Option<f64>,
     /// Distance to the shore in metres (negative out at sea), roughly.
     pub shore: f64,
+    /// On a Southeast field edge (hedgerows grow there).
+    pub hedge: bool,
+    /// Slow patchiness (about −1..1, a few hundred metres across), for
+    /// grouping things: boulder fields, copses, flower drifts, mushroom rings.
+    pub patch: f32,
 }
 
 /// The seeded, full-size world.
@@ -206,6 +309,9 @@ pub struct Terrain {
     pub helens: (f64, f64),
     pub ev_spire_m: f64,
     pub hel_m: f64,
+    /// The giants' range: peaks just under each giant, joined by ridges.
+    pub peaks: Vec<RangePeak>,
+    pub ridges: Vec<Ridge>,
 }
 
 /// Map-space measurements for one spot.
@@ -229,10 +335,29 @@ impl Terrain {
             helens: to_world(HX, HY),
             ev_spire_m: 0.0,
             hel_m: 0.0,
+            peaks: Vec::new(),
+            ridges: Vec::new(),
         };
-        // size the giants so their summits hit the target heights
+        // the giants' range: place the peaks and ridges, then size each
+        // peak's spire so its summit lands near its target height
+        t.peaks = range_peak_spots()
+            .iter()
+            .map(|&(x, z, target)| RangePeak { x, z, target, spire_m: 0.0, spire_r: 0.25 * target, body_m: 0.25 * target, body_r: 0.7 * target })
+            .collect();
+        t.ridges = RANGE_RIDGES
+            .iter()
+            .map(|&(i, j)| {
+                let (a, b) = (t.peaks[i], t.peaks[j]);
+                Ridge { a: (a.x, a.z), b: (b.x, b.z), ha: 0.5 * a.target, hb: 0.5 * b.target, saddle: 0.3 * a.target.min(b.target) }
+            })
+            .collect();
+        // size the giants so their summits hit the target heights (Everest
+        // and its range lean on each other a little, so settle them together)
         let (ex, ez) = t.everest;
-        t.ev_spire_m = EVEREST_M - t.height_no_lakes(ex, ez);
+        for _ in 0..3 {
+            t.size_range_peaks(0..6);
+            t.ev_spire_m += EVEREST_M - t.height_no_lakes(ex, ez);
+        }
         let rim: Vec<(f64, f64)> = (0..48)
             .flat_map(|a| (0..20).map(move |k| (a, k)))
             .map(|(a, k)| {
@@ -252,6 +377,8 @@ impl Terrain {
             }
         }
         t.hel_m = (lo + hi) / 2.0;
+        t.size_range_peaks(6..10);
+        t.size_range_peaks(6..10);
         // Northwest lakes (same placement as the design map)
         let mut r2 = Rng::new(991);
         let mut tries = 0;
@@ -273,6 +400,15 @@ impl Terrain {
             t.lakes.push(Lake { x, z, r, level: level - 2.0 });
         }
         t
+    }
+
+    /// Set the spires of some range peaks so their summits are at their targets.
+    fn size_range_peaks(&mut self, which: std::ops::Range<usize>) {
+        for i in which {
+            let pk = self.peaks[i];
+            let h = self.height_no_lakes(pk.x, pk.z);
+            self.peaks[i].spire_m = (pk.spire_m + pk.target - h).max(0.15 * pk.target);
+        }
     }
 
     fn map_pt(&self, wx: f64, wz: f64) -> MapPt {
@@ -374,11 +510,36 @@ impl Terrain {
             let range = 2200.0 + 8000.0 * r.powf(1.6) + 1500.0 * (n.ridged(wx / 12_000.0 + 5.0, wz / 12_000.0, 4) - 0.45);
             h += mask * range * sm(6_000.0, 30_000.0, d1) * sm(12_000.0, 70_000.0, d2) * inland;
         }
-        // Mount Everest: a broad massif and a steep summit spire, ribbed with ridges
+        // Mount Everest (a broad massif and a steep summit spire) and the
+        // peaks of the giants' range around both giants, ribbed with ridges
+        let mut big = 0.0;
+        let mut summit_fade = sm(1_500.0, 12_000.0, d1);
         if d1 < 900_000.0 {
-            let ev = self.ev_spire_m * (-(d1 / EV_SPIRE_R)).exp() + EV_MASSIF_M * (-(d1 / EV_MASSIF_R).powf(EV_MASSIF_P)).exp();
-            h += ev;
-            h += (n.ridged(wx / 9_000.0 + 40.0, wz / 9_000.0, 5) - 0.45) * 0.06 * ev * sm(1_500.0, 12_000.0, d1);
+            big += self.ev_spire_m * (-(d1 / EV_SPIRE_R)).exp() + EV_MASSIF_M * (-(d1 / EV_MASSIF_R).powf(EV_MASSIF_P)).exp();
+        }
+        let mut peaks = 0.0;
+        for pk in &self.peaks {
+            let d = (wx - pk.x).hypot(wz - pk.z);
+            if d < 5.0 * pk.body_r {
+                peaks += pk.spire_m * (-(d / pk.spire_r)).exp() + pk.body_m * (-(d / pk.body_r).powf(1.6)).exp();
+                summit_fade = summit_fade.min(sm(1_000.0, 0.2 * pk.spire_r, d));
+            }
+        }
+        // ridges join the range peaks; where a peak stands higher, the peak wins
+        let mut ridge: f64 = 0.0;
+        if peaks > 0.0 || d1 < 1_200_000.0 {
+            let (wob_x, wob_z) = (n.n2(wx / 90_000.0 + 7.0, wz / 90_000.0), n.n2(wx / 90_000.0, wz / 90_000.0 - 3.0));
+            for r in &self.ridges {
+                let wob = 0.5 * r.saddle;
+                ridge = ridge.max(r.height_at(wx + wob * wob_x, wz + wob * wob_z));
+            }
+            if ridge > 0.0 {
+                ridge *= 0.82 + 0.36 * (n.ridged(wx / 14_000.0 + 2.0, wz / 14_000.0 - 5.0, 4) - 0.45);
+            }
+        }
+        big += peaks.max(ridge);
+        if big > 0.0 {
+            h += big + (n.ridged(wx / 9_000.0 + 40.0, wz / 9_000.0, 5) - 0.45) * 0.06 * big * summit_fade;
         }
         // Mount St. Helens: a volcanic cone with its crater breached to the north
         if d2 < 400_000.0 {
@@ -449,30 +610,42 @@ impl Terrain {
         let len = (l[0] * l[0] + l[1] * l[1] + l[2] * l[2]).sqrt().max(1e-9);
         let l = [l[0] / len, l[1] / len, l[2] / len];
         let lh2 = (l[0] * l[0] + l[2] * l[2]).max(1e-6);
+        let lhl = lh2.sqrt();
         let mut shade: f64 = 0.0;
-        for k in 0..2 {
-            let (c, r) = if k == 0 { (self.everest, EV_SPIRE_R) } else { (self.helens, HEL_R) };
-            let t_mid = ((c.0 - p[0]) * l[0] + (c.1 - p[2]) * l[2]) / lh2;
+        for sp in self.shadow_peaks() {
+            let t_mid = ((sp.x - p[0]) * l[0] + (sp.z - p[2]) * l[2]) / lh2;
             if t_mid <= 0.0 {
                 continue;
             }
-            let (t0, t1) = ((t_mid - 3.0 * r).max(3000.0), t_mid + 2.0 * r);
+            // how far the light's path passes beside the peak
+            let (ax, az) = (p[0] + l[0] * t_mid - sp.x, p[2] + l[2] * t_mid - sp.z);
+            if ax.hypot(az) > sp.reach() {
+                continue;
+            }
+            let r = sp.reach() / lhl;
+            let (t0, t1) = ((t_mid - r).max(3000.0), t_mid + r);
             let mut worst = f64::MIN;
-            for i in 0..20 {
-                let t = t0 + (t1 - t0) * (i as f64 + 0.5) / 20.0;
+            for i in 0..SHADOW_STEPS {
+                let t = t0 + (t1 - t0) * (i as f64 + 0.5) / SHADOW_STEPS as f64;
                 let q = [p[0] + l[0] * t, p[1] + l[1] * t, p[2] + l[2] * t];
-                let d = (q[0] - c.0).hypot(q[2] - c.1);
-                let top = if k == 0 {
-                    self.ev_spire_m * (-d / EV_SPIRE_R).exp() + EV_MASSIF_M * (-(d / EV_MASSIF_R).powf(EV_MASSIF_P)).exp()
-                } else {
-                    self.hel_m * (-d / HEL_R).exp()
-                };
-                worst = worst.max(top - q[1]);
+                worst = worst.max(sp.top((q[0] - sp.x).hypot(q[2] - sp.z)) - q[1]);
             }
             let soft = 400.0 + 0.004 * t_mid;
             shade = shade.max(sm(-soft, soft, worst));
         }
         shade
+    }
+
+    /// Simple shapes of every big peak (the giants and their range), for
+    /// working out the long shadows they cast. The terrain shader gets the
+    /// same list.
+    pub fn shadow_peaks(&self) -> Vec<ShadowPeak> {
+        let mut v = vec![
+            ShadowPeak { x: self.everest.0, z: self.everest.1, spire_m: self.ev_spire_m, spire_r: EV_SPIRE_R, body_m: EV_MASSIF_M, body_r: EV_MASSIF_R, body_p: EV_MASSIF_P },
+            ShadowPeak { x: self.helens.0, z: self.helens.1, spire_m: self.hel_m, spire_r: HEL_R, body_m: 0.0, body_r: 1.0, body_p: 1.0 },
+        ];
+        v.extend(self.peaks.iter().map(|pk| ShadowPeak { x: pk.x, z: pk.z, spire_m: pk.spire_m, spire_r: pk.spire_r, body_m: pk.body_m, body_r: pk.body_r, body_p: 1.6 }));
+        v
     }
 
     pub fn height(&self, wx: f64, wz: f64) -> f64 {
@@ -519,6 +692,7 @@ impl Terrain {
                 }
             }
             s.region = best as u8;
+            s.patch = n.fbm(wx / 220.0 + 41.0, wz / 220.0 - 17.0, 2) as f32;
             // colour variation at map scale and at walking scale
             let patch = 1.0
                 + 0.07 * n.fbm(x / 45.0 + 3.0, y / 45.0, 3)
@@ -535,12 +709,37 @@ impl Terrain {
                     cb += (c[2] - cb) * t;
                 }};
             }
-            // the North's highlands are bare grey rock (rock mines)
+            // the North's highlands are bare grey rock (rock mines), in
+            // layered bands, with lichen on the lower slopes
             mix!([128.0, 125.0, 122.0], wr[0] * sm(700.0, 1600.0, h) * 0.75);
+            if wr[0] > 0.05 && h > 600.0 {
+                let band = (h / 140.0 + 3.0 * n.n2(wx / 4_000.0, wz / 4_000.0 + 6.0)).sin();
+                mix!(if band > 0.0 { [150.0, 146.0, 140.0] } else { [98.0, 96.0, 96.0] }, wr[0] * 0.22 * band.abs());
+                mix!([120.0, 128.0, 92.0], wr[0] * 0.3 * sm(0.25, 0.5, s.patch as f64) * (1.0 - sm(2_200.0, 3_200.0, h)));
+            }
+            // the Northeast's mesas are red sandstone in stripes
+            if wr[1] > 0.05 && h > 850.0 {
+                mix!([186.0, 108.0, 68.0], wr[1] * 0.55 * sm(900.0, 1_150.0, h));
+                let strata = (h / 32.0 + 2.0 * n.n2(wx / 3_000.0 + 9.0, wz / 3_000.0)).sin();
+                mix!(if strata > 0.0 { [214.0, 150.0, 100.0] } else { [140.0, 78.0, 52.0] }, wr[1] * 0.3 * strata.abs() * sm(900.0, 1_150.0, h));
+            }
+            // the Southwest: golden dry patches among the green
+            mix!([196.0, 182.0, 104.0], wr[4] * 0.35 * sm(-0.1, 0.25, n.fbm(wx / 1_800.0 + 5.0, wz / 1_800.0, 2)));
+            // the Northwest: dark peat and mud
+            mix!([70.0, 66.0, 48.0], wr[5] * 0.3 * sm(0.1, 0.35, s.patch as f64) * (1.0 - sm(900.0, 1_500.0, h)));
             // high ground: tan, then grey rock, then snow (by height)
             mix!([176.0, 160.0, 118.0], sm(2200.0, 3600.0, h) * 0.85);
             mix!([150.0, 146.0, 140.0], sm(3400.0, 4700.0, h));
-            mix!([236.0, 241.0, 250.0], sm(4900.0, 5700.0, h + 300.0 * n.n2(wx / 3000.0, wz / 3000.0)));
+            // on the giants and their range: darker rock higher up, snow in
+            // broad fields broken by bare rock ribs, whiter toward the tops
+            let mut snow = sm(4900.0, 5700.0, h + 300.0 * n.n2(wx / 3000.0, wz / 3000.0));
+            if h > 6_000.0 {
+                mix!([112.0, 108.0, 108.0], 0.55 * sm(8_000.0, 24_000.0, h));
+                let fields = sm(-0.2, 0.15, n.fbm(wx / 22_000.0 + 31.0, wz / 22_000.0, 3) + (h - 6_000.0) / 45_000.0);
+                let ribs = sm(0.6, 0.8, n.ridged(wx / 6_000.0 + 17.0, wz / 6_000.0, 3)) * (1.0 - sm(40_000.0, 90_000.0, h));
+                snow *= fields * (1.0 - 0.85 * ribs);
+            }
+            mix!([236.0, 241.0, 250.0], snow);
             // St. Helens' ash and crater
             let d2 = (x - HX).hypot(y - HY);
             mix!([132.0, 96.0, 72.0], 0.8 * (-(d2 / 46.0).powf(2.2)).exp());
@@ -566,11 +765,14 @@ impl Terrain {
                 mix!(FIELD_COLS[((hv * 6.0).floor() as usize) % 6], fk * 0.95);
                 if fu < 0.025 || fv < 0.035 {
                     mix!([72.0, 90.0, 48.0], fk * 0.8);
+                    s.hedge = fk > 0.5;
                 }
                 s.field = fk > 0.5;
             }
             if fm > 0.0 {
                 mix!([f0, f1, f2], fm * 0.85);
+                // the South's forest floor: patches of fallen leaves
+                mix!([78.0, 62.0, 40.0], wr[3] * fm * 0.3 * sm(0.0, 0.35, s.patch as f64));
             }
             // beaches
             let sand = (1.0 - sm(25.0, 220.0, shore)) * (1.0 - sm(3.0, 9.0, h)) * (1.0 - cw);
@@ -624,6 +826,15 @@ impl Terrain {
         s
     }
 
+    /// How much each region (index into `REGIONS`) owns a spot; sums to 1.
+    pub fn region_mix(&self, wx: f64, wz: f64) -> [f64; 6] {
+        let p = self.map_pt(wx, wz);
+        let mut wr = [0.0; 6];
+        self.island.region_weights(p.deg, p.x, p.y, &mut wr);
+        sharpen(&mut wr, 2);
+        wr
+    }
+
     /// Region name and description for a spot, as shown on the banner.
     pub fn place_name(&self, wx: f64, wz: f64) -> (&'static str, &'static str) {
         let (mx, my) = to_map(wx, wz);
@@ -631,7 +842,7 @@ impl Terrain {
             return ("Rim Sea", "The bowl of water around the island");
         }
         let h = self.height(wx, wz);
-        if (mx - EX).hypot(my - EY) < 70.0 && h > 40_000.0 {
+        if (mx - EX).hypot(my - EY) < 40.0 && h > 40_000.0 {
             return ("Mount Everest", "The highest peak on the shard");
         }
         if (mx - HX).hypot(my - HY) < 30.0 && h > 15_000.0 {
@@ -672,10 +883,10 @@ mod tests {
         let t = Terrain::new();
         let (ex, ez) = t.everest;
         // low evening sun in the west: east of Everest is in its shadow,
-        // west of it is lit, and the summit is always lit
+        // far west of it (beyond its range) is lit, and the summit is always lit
         let sun = [-1.0, 0.15, 0.0];
         let east = [ex + 300_000.0, t.height(ex + 300_000.0, ez) + 2.0, ez];
-        let west = [ex - 300_000.0, t.height(ex - 300_000.0, ez) + 2.0, ez];
+        let west = [ex - 900_000.0, t.height(ex - 900_000.0, ez) + 2.0, ez];
         let top = [ex, EVEREST_M + 10.0, ez];
         assert!(t.giant_shadow(east, sun) > 0.9);
         assert!(t.giant_shadow(west, sun) < 0.1);
@@ -690,10 +901,10 @@ mod tests {
         let (ex, ez) = to_world(EX, EY);
         let ev = t.height(ex, ez);
         assert!((ev - EVEREST_M).abs() < 15.0, "Everest {ev}");
-        // Everest is the highest point anywhere
+        // Everest is the highest point anywhere (its range included)
         let mut top: f64 = 0.0;
-        for j in -60..=60 {
-            for i in -60..=60 {
+        for j in -90..=90 {
+            for i in -90..=90 {
                 top = top.max(t.height(ex + i as f64 * 8000.0, ez + j as f64 * 8000.0));
             }
         }
@@ -711,6 +922,25 @@ mod tests {
             }
         }
         assert!((hel - ST_HELENS_M).abs() < 300.0, "St. Helens {hel}");
+    }
+
+    #[test]
+    fn range_peaks_just_under_the_giants() {
+        let t = Terrain::new();
+        for (k, pk) in t.peaks.iter().enumerate() {
+            // the highest point near each range peak
+            let mut top: f64 = 0.0;
+            for j in -6..=6 {
+                for i in -6..=6 {
+                    top = top.max(t.height(pk.x + i as f64 * 2_000.0, pk.z + j as f64 * 2_000.0));
+                }
+            }
+            if k < 6 {
+                assert!((150_000.0..=EVEREST_M - 15_000.0).contains(&top), "Everest's range peak {k}: {top}");
+            } else {
+                assert!((40_000.0..ST_HELENS_M - 5_000.0).contains(&top), "St. Helens' range peak {k}: {top}");
+            }
+        }
     }
 
     #[test]

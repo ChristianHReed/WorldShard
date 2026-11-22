@@ -693,29 +693,47 @@ fn choose_prop(s: &Sample, q: f64, pick: f64, size: f64) -> Option<(u16, f64, Ti
         return (q < 0.02).then(|| (v(ROCK, 3), 0.8 + size * 2.0, Tint::Normal));
     }
     match s.region {
-        // North: rock mines
+        // North: rock mines. Boulder fields, scattered rocks, and pines
+        // only in the sheltered low valleys
         0 => {
-            if q < 0.035 {
+            if s.patch > 0.25 && q < 0.07 {
+                Some((v(ROCK, 3), 1.2 + size * 2.6, Tint::Normal))
+            } else if q < 0.025 {
                 Some((v(ROCK, 3), 0.4 + size * 1.6, Tint::Normal))
-            } else if q < 0.045 {
-                Some((v(PINE, 5), 1.3 + size * 0.5, Tint::Normal))
+            } else if s.h < 1_900.0 && q < 0.04 {
+                Some((v(PINE, 5), 1.2 + size * 0.6, Tint::Normal))
             } else {
                 None
             }
         }
-        // Northeast: lava flows and desert
+        // Northeast: lava flows and desert. Sandstone rocks in groups,
+        // dead trees, and a few dry bushes
         1 => {
-            if q < 0.02 {
+            if s.patch > 0.35 && q < 0.04 {
+                Some((v(ROCK, 3), 0.6 + size * 2.2, Tint::Desert))
+            } else if q < 0.012 {
                 Some((v(ROCK, 3), 0.35 + size * 1.4, Tint::Desert))
-            } else if q < 0.023 {
-                Some((v(DEAD, 3), 0.6 + size * 0.3, Tint::Dry))
+            } else if q < 0.016 {
+                Some((v(DEAD, 3), 0.6 + size * 0.4, Tint::Dry))
+            } else if s.h < 1_000.0 && q < 0.022 {
+                Some((BUSH, 0.5 + size * 0.4, Tint::Dry))
             } else {
                 None
             }
         }
         // Southeast: mid forest with fields
         2 => {
-            if s.field {
+            if s.hedge {
+                // hedgerows along the field edges, with the odd tree
+                if q < 0.05 {
+                    Some((v(COMMON_TREE, 5), 1.1 + size * 0.5, Tint::Normal))
+                } else if q < 0.26 {
+                    let m = if pick < 0.3 { BUSH_FLOWERS } else { BUSH };
+                    Some((m, 1.1 + size * 0.6, Tint::Normal))
+                } else {
+                    None
+                }
+            } else if s.field {
                 (q < 0.003).then(|| (v(COMMON_TREE, 5), 1.4 + size * 0.4, Tint::Normal))
             } else if fm > 0.35 && q < 0.26 * fm {
                 let m = if pick < 0.75 { v(COMMON_TREE, 5) } else { v(PINE, 5) };
@@ -729,15 +747,16 @@ fn choose_prop(s: &Sample, q: f64, pick: f64, size: f64) -> Option<(u16, f64, Ti
         }
         // South: dark forest
         3 => {
-            if q < 0.22 * fm.max(0.35) {
-                let m = if pick < 0.6 {
+            // old, tall, close-packed trees, many gnarled
+            if q < 0.24 * fm.max(0.4) {
+                let m = if pick < 0.55 {
                     v(PINE, 5)
-                } else if pick < 0.93 {
+                } else if pick < 0.85 {
                     v(COMMON_TREE, 5)
                 } else {
                     v(TWISTED, 2)
                 };
-                Some((m, 1.4 + size * 0.6, Tint::Dark))
+                Some((m, 1.6 + size * 0.9, Tint::Dark))
             } else if q < 0.26 {
                 Some((BUSH, 0.7 + size * 0.5, Tint::Dark))
             } else {
@@ -746,7 +765,8 @@ fn choose_prop(s: &Sample, q: f64, pick: f64, size: f64) -> Option<(u16, f64, Ti
         }
         // Southwest: grasslands
         4 => {
-            if q < 0.004 {
+            // open grass with lone trees and the odd copse
+            if q < if s.patch > 0.45 { 0.03 } else { 0.003 } {
                 Some((v(COMMON_TREE, 5), 1.4 + size * 0.5, Tint::Dry))
             } else if q < 0.016 {
                 let m = if pick < 0.5 { BUSH_FLOWERS } else { BUSH };
@@ -805,7 +825,15 @@ pub fn prop_placements(t: &Terrain, ci: i64, cj: i64) -> Vec<Placement> {
                 continue; // nothing anywhere is denser than this
             }
             let s = t.sample(jx, jz);
-            if s.water.is_some() || s.h < 2.0 || s.wet > 0.3 || s.glow > 0.0 || s.shore < 30.0 {
+            if s.water.is_some() || s.h < 2.0 || s.glow > 0.0 || s.shore < 30.0 {
+                continue;
+            }
+            if s.wet > 0.3 {
+                // Northwest pools: only dead trees stand in the water
+                if s.region == 5 && q < 0.012 {
+                    let m = model::DEAD + ((pick * 997.0) as u16 % 3);
+                    out.push(Placement { model: m, pos: [(jx - ox) as f32, (s.h - 0.6) as f32, (jz - oz) as f32], rot, scale: (0.6 + size * 0.4) as f32, tint: Tint::Swamp });
+                }
                 continue;
             }
             if (jx - spx).hypot(jz - spz) < 10.0 || mines.iter().any(|&(a, b)| (a - jx).hypot(b - jz) < 22.0) {
@@ -919,9 +947,13 @@ pub fn detail_placements(t: &Terrain, ci: i64, cj: i64) -> Vec<Placement> {
             let wet = s.wet > 0.15;
             let choice: Option<(u16, f64, Tint)> = match s.region {
                 4 => {
-                    if q < 0.07 {
+                    // wildflowers grow in drifts
+                    let drift = s.patch > 0.15;
+                    if drift && q < 0.06 {
+                        Some((v(FLOWER, 4), 0.3 + size * 0.15, Tint::Normal))
+                    } else if q < 0.07 {
                         Some((v(GRASS + 2, 2), 0.35 + size * 0.2, Tint::Dry))
-                    } else if q < 0.085 {
+                    } else if q < 0.074 {
                         Some((v(FLOWER, 4), 0.3 + size * 0.15, Tint::Normal))
                     } else if q < 0.095 {
                         Some((v(CLOVER, 2), 0.3 + size * 0.15, Tint::Dry))
@@ -943,10 +975,11 @@ pub fn detail_placements(t: &Terrain, ci: i64, cj: i64) -> Vec<Placement> {
                     }
                 }
                 3 => {
-                    if q < 0.04 {
-                        Some((FERN, 0.18 + size * 0.1, Tint::Dark))
-                    } else if q < 0.05 {
-                        Some((v(MUSHROOM, 2), 0.5 + size * 0.5, Tint::Normal))
+                    if q < 0.05 {
+                        Some((FERN, 0.18 + size * 0.12, Tint::Dark))
+                    } else if q < if s.patch > 0.4 { 0.08 } else { 0.056 } {
+                        // mushrooms come in clusters
+                        Some((v(MUSHROOM, 2), 0.5 + size * 0.6, Tint::Normal))
                     } else if q < 0.065 {
                         Some((PLANT_BIG, 0.25 + size * 0.15, Tint::Dark))
                     } else if q < 0.09 {
@@ -958,6 +991,9 @@ pub fn detail_placements(t: &Terrain, ci: i64, cj: i64) -> Vec<Placement> {
                 5 => {
                     if wet && q < 0.06 {
                         Some((LILY, 0.8 + size * 0.6, Tint::Swamp))
+                    } else if s.wet > 0.02 && q < 0.12 {
+                        // reeds around the pools
+                        Some((GRASS + 3, 0.6 + size * 0.35, Tint::Swamp))
                     } else if q < 0.04 {
                         Some((FERN, 0.16 + size * 0.1, Tint::Swamp))
                     } else if q < 0.08 {
@@ -973,6 +1009,16 @@ pub fn detail_placements(t: &Terrain, ci: i64, cj: i64) -> Vec<Placement> {
                         Some((v(PEBBLE, 5), 1.0 + size * 2.0, Tint::Normal))
                     } else if q < 0.055 {
                         Some((GRASS, 0.3 + size * 0.15, Tint::Normal))
+                    } else {
+                        None
+                    }
+                }
+                // Northeast: pebbles and a few dry tufts
+                1 => {
+                    if q < 0.015 {
+                        Some((v(PEBBLE, 5), 1.0 + size * 2.0, Tint::Normal))
+                    } else if q < 0.024 {
+                        Some((GRASS + 2, 0.3 + size * 0.2, Tint::Dry))
                     } else {
                         None
                     }
@@ -1107,26 +1153,33 @@ pub fn grass_cell(t: &Terrain, ci: i64, cj: i64) -> Option<MeshData> {
 // The Cloudwall and the sky
 // ---------------------------------------------------------------------
 
-/// The Cloudwall: a towering ring of cloud at the edge of the Rim Sea.
-/// Positions are relative to the world centre.
+/// Height of the Cloudwall's main body (its towers rise higher). Tall
+/// enough to stand a few degrees above the horizon from anywhere on the
+/// island, about 9,400 km away.
+pub const CLOUDWALL_TOP: f64 = 700_000.0;
+
+/// The Cloudwall: a towering ring of cloud at the edge of the Rim Sea,
+/// billowing in and out, its top rising into great towers here and there.
+/// The cloud shader gives it light and texture.
 pub fn cloudwall_mesh() -> MeshData {
     let mut r = Rng::new(5150);
     let noise = Noise::new(&mut r);
     const SEG: usize = 1440;
-    let rows: [(f32, f32); 6] = [(-600.0, 0.0), (2500.0, 0.25), (7000.0, 0.5), (12000.0, 0.7), (17000.0, 0.85), (21000.0, 1.0)];
+    let rows: [f64; 9] = [-5_000.0, 20_000.0, 70_000.0, 150_000.0, 250_000.0, 370_000.0, 500_000.0, 620_000.0, CLOUDWALL_TOP];
     let mut m = MeshData::default();
     for s in 0..=SEG {
         let a = s as f64 / SEG as f64 * std::f64::consts::TAU;
         let (ca, sa) = (a.cos(), a.sin());
-        for (k, &(y, t)) in rows.iter().enumerate() {
-            let lump = noise.fbm(ca * 40.0 + k as f64 * 0.3, sa * 40.0, 4);
-            let top_lump = noise.fbm(ca * 90.0 + 5.0, sa * 90.0, 3);
-            let yy = if k == rows.len() - 1 { y + 9000.0 * top_lump as f32 } else { y + 1500.0 * lump as f32 * t };
-            let rr = CLOUD_R + 45_000.0 * lump * t as f64 - 20_000.0 * t as f64;
-            m.positions.push([(ca * rr) as f32, yy, (sa * rr) as f32]);
-            m.normals.push(norm3([-(ca as f32), 0.5 * t, -(sa as f32)]));
-            let shade = 0.74 + 0.26 * t + 0.08 * lump as f32;
-            m.colors.push(lin3([shade, shade, shade * 1.03]));
+        let tower = noise.fbm(ca * 18.0 + 3.0, sa * 18.0, 4);
+        let top_extra = 320_000.0 * (tower + 0.15).max(0.0) + 90_000.0 * noise.fbm(ca * 70.0 + 9.0, sa * 70.0, 3);
+        for (k, &y) in rows.iter().enumerate() {
+            let t = k as f64 / (rows.len() - 1) as f64;
+            let lump = noise.fbm(ca * 40.0 + k as f64 * 0.37, sa * 40.0, 4);
+            let yy = y + top_extra * t * t;
+            let rr = CLOUD_R + 160_000.0 * lump * (0.3 + t) - 120_000.0 * t;
+            m.positions.push([(ca * rr) as f32, yy as f32, (sa * rr) as f32]);
+            m.normals.push(norm3([-(ca as f32), 0.4 * t as f32, -(sa as f32)]));
+            m.colors.push([1.0, 1.0, 1.0, 1.0]);
         }
     }
     let nr = rows.len() as u32;

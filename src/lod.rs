@@ -4,7 +4,7 @@
 //! draw wherever you stand or fly.
 
 use crate::worldgen::island::{EX, EY, HX, HY};
-use crate::worldgen::terrain::{to_world, CLOUD_R, LAND_R};
+use crate::worldgen::terrain::{range_peak_spots, to_world, CLOUD_R, LAND_R};
 
 /// The root square covers the whole Rim Sea (±16,777 km).
 pub const ROOT_SIZE: f64 = 33_554_432.0;
@@ -85,18 +85,30 @@ impl NodeKey {
 /// How far the land is drawn: beyond this it is lost in the haze anyway.
 /// Grows when flying high so the whole island can be seen.
 pub fn view_distance(above: f64) -> f64 {
-    // far enough to see the central peaks from anywhere on the island
-    (2_600_000.0f64).max(above.max(0.0) * 6.0)
+    view_distance_with(above, DEFAULT_VIEW)
 }
 
-/// Chunks over the two giant peaks stay detailed from any distance, so
-/// their outlines stay sharp on the horizon.
+/// Land is drawn this far by default: across the whole island, so the
+/// giants and their range show from any shore.
+pub const DEFAULT_VIEW: f64 = 3_600_000.0;
+
+/// How far land is drawn, given the player's chosen distance.
+pub fn view_distance_with(above: f64, chosen: f64) -> f64 {
+    chosen.max(above.max(0.0) * 6.0)
+}
+
+/// Chunks over the giant peaks and their range stay detailed from any
+/// distance, so their outlines stay sharp on the horizon.
 fn over_a_peak(k: &NodeKey) -> bool {
     if k.size() <= 80_000.0 {
         return false;
     }
-    let peaks = [(to_world(EX, EY), 120_000.0), (to_world(HX, HY), 60_000.0)];
-    peaks.iter().any(|&((px, pz), r)| k.distance_to(px, pz) < r)
+    let giants = [(to_world(EX, EY), 120_000.0), (to_world(HX, HY), 60_000.0)];
+    if giants.iter().any(|&((px, pz), r)| k.distance_to(px, pz) < r) {
+        return true;
+    }
+    // the tall range peaks around Everest, a little less finely
+    k.size() > 140_000.0 && range_peak_spots().iter().any(|&(px, pz, top)| top > 100_000.0 && k.distance_to(px, pz) < 0.3 * top)
 }
 
 /// The chunks to draw for a camera at `cam` (x, y, z) standing `above` metres
@@ -108,7 +120,12 @@ pub fn select(cam: [f64; 3], above: f64) -> Vec<NodeKey> {
 /// Like `select`, with a different split distance: smaller `k` means
 /// fewer, coarser chunks (for phones).
 pub fn select_k(cam: [f64; 3], above: f64, k_split: f64) -> Vec<NodeKey> {
-    let far = view_distance(above);
+    select_kv(cam, above, k_split, DEFAULT_VIEW)
+}
+
+/// Like `select_k`, drawing land out to `view` metres (or further when high up).
+pub fn select_kv(cam: [f64; 3], above: f64, k_split: f64, view: f64) -> Vec<NodeKey> {
+    let far = view_distance_with(above, view);
     let mut out = Vec::new();
     let mut stack = vec![NodeKey::ROOT];
     let up = above.max(0.0);
@@ -152,7 +169,7 @@ mod tests {
     fn selection_tiles_the_ground_once() {
         let cam = [-905_738.0, 385.0, 522_928.0];
         let keys = select(cam, 1.7);
-        assert!(keys.len() < 400, "{} chunks", keys.len());
+        assert!(keys.len() < 440, "{} chunks", keys.len());
         assert_eq!(keys[0].level, MAX_LEVEL);
         for &(x, z) in &[(cam[0], cam[2]), (cam[0] + 300.0, cam[2] - 1000.0), (cam[0] - 150_000.0, cam[2] + 90_000.0)] {
             assert_eq!(covers_once(&keys, x, z), 1, "at {x},{z}");

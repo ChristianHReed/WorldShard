@@ -23,6 +23,32 @@
     #saves { top: calc(max(10px, env(safe-area-inset-top)) + 56px); flex-direction: column; align-items: flex-end; gap: 5px; }
     #saves button, #saves a { padding: 5px 8px; font-size: 12px; }
   }
+  .panel { position: fixed; inset: 0; z-index: 7; background: rgba(8,12,24,.9); display: flex; flex-direction: column;
+    padding: max(10px, env(safe-area-inset-top)) 12px 12px; box-sizing: border-box; }
+  .panel[hidden] { display: none; }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .panel-head span { font-size: 20px; letter-spacing: .12em; }
+  .panel button { font: 14px Georgia, serif; color: #f2ead6; background: rgba(255,255,255,.08); border: 1px solid rgba(242,234,214,.4);
+    border-radius: 6px; padding: 7px 12px; cursor: pointer; }
+  .map-body { flex: 1; display: flex; gap: 14px; min-height: 0; }
+  .map-wrap { position: relative; flex: none; }
+  #map-canvas { display: block; border-radius: 8px; touch-action: none; cursor: crosshair; background: #102040; }
+  #map-wait { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: .8; }
+  .map-side { flex: 1; overflow-y: auto; min-width: 0; }
+  #map-pick { margin-bottom: 10px; padding: 8px; border: 1px solid rgba(242,234,214,.3); border-radius: 6px; }
+  #map-pick button { margin-top: 6px; }
+  .place { display: block; width: 100%; text-align: left; margin-bottom: 6px; }
+  .place small { display: block; opacity: .7; font-size: 12px; }
+  #settings-panel .rows { max-width: 520px; width: 100%; margin: 0 auto; overflow-y: auto; }
+  .row { margin: 12px 0; }
+  .row label { display: flex; justify-content: space-between; font-size: 15px; margin-bottom: 4px; }
+  .row input[type=range] { width: 100%; accent-color: #d8b878; }
+  .hint { font-size: 13px; opacity: .7; margin: 4px 0 14px; }
+  .save-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  @media (max-width: 640px) {
+    #saves .wide { display: none; }
+    .map-body { flex-direction: column; }
+  }
   #toast { position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%); background: rgba(12,16,30,.8); padding: 8px 14px;
     border-radius: 6px; font-size: 14px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 6; }
 </style>
@@ -31,10 +57,40 @@
 <canvas id="bevy" tabindex="0"></canvas>
 <div id="loading"><h1>WORLDSHARD</h1><p id="loading-msg">Building the world…</p></div>
 <div id="saves">
-  <button id="save-file" title="Download your save so you can keep it in Google Drive">Save file</button>
-  <button id="open-file" title="Load a save file you kept">Open save</button>
-  <button id="quality" title="Lite uses less memory and battery (for older phones)">Quality</button>
-  <a id="proto-link" href="prototype/" title="The earlier JavaScript prototype">Prototype</a>
+  <button id="map-btn" title="Open the map and travel (M)">Map</button>
+  <button id="settings-btn" title="View distance, detail and shadows">Settings</button>
+  <button id="save-file" class="wide" title="Download your save so you can keep it in Google Drive">Save file</button>
+  <button id="open-file" class="wide" title="Load a save file you kept">Open save</button>
+  <button id="quality" class="wide" title="Lite uses less memory and battery (for older phones)">Quality</button>
+  <a id="proto-link" class="wide" href="prototype/" title="The earlier JavaScript prototype">Prototype</a>
+</div>
+<div id="map-panel" class="panel" hidden>
+  <div class="panel-head"><span>MAP</span><button id="map-close">Close</button></div>
+  <div class="map-body">
+    <div class="map-wrap"><canvas id="map-canvas" width="640" height="640"></canvas><div id="map-wait">Drawing the map…</div></div>
+    <div class="map-side">
+      <div id="map-pick" hidden><div id="map-pick-text"></div><button id="map-go">Travel here</button></div>
+      <div class="hint">Tap the map to pick any spot, or choose a place:</div>
+      <div id="map-places"></div>
+    </div>
+  </div>
+</div>
+<div id="settings-panel" class="panel" hidden>
+  <div class="panel-head"><span>SETTINGS</span><button id="settings-close">Close</button></div>
+  <div class="rows">
+    <div class="row"><label for="s-view">Land view distance <b id="v-view"></b></label><input id="s-view" type="range" min="300" max="11000" step="100"></div>
+    <div class="row"><label for="s-detail">Land detail <b id="v-detail"></b></label><input id="s-detail" type="range" min="0.4" max="1.6" step="0.05"></div>
+    <div class="row"><label for="s-trees">Trees and rocks <b id="v-trees"></b></label><input id="s-trees" type="range" min="100" max="1500" step="20"></div>
+    <div class="row"><label for="s-plants">Grass and small plants <b id="v-plants"></b></label><input id="s-plants" type="range" min="0" max="120" step="4"></div>
+    <div class="row"><label for="s-shadows">Shadows <b id="v-shadows"></b></label><input id="s-shadows" type="range" min="0" max="800" step="20"></div>
+    <div class="hint">Higher settings look better but use more memory and battery. If a phone struggles, lower Land detail and Trees first.</div>
+    <button id="s-reset">Reset to this device's defaults</button>
+    <div class="save-row">
+      <button id="save-file-2">Save file</button>
+      <button id="open-file-2">Open save</button>
+      <button id="quality-2">Quality</button>
+    </div>
+  </div>
 </div>
 <input id="file" type="file" accept=".json,application/json" hidden>
 <div id="toast"></div>
@@ -186,6 +242,163 @@
       toast("That file is not a WorldShard save.");
     }
   };
+
+  // --- settings sliders: stored for the game, which applies them live ---
+  const SKEY = "worldshard-settings";
+  const TKEY = "worldshard-travel";
+  try { localStorage.removeItem(TKEY); } catch {}
+  const sliders = {
+    view: { el: "s-view", out: "v-view", fmt: (v) => `${Number(v).toLocaleString()} km` },
+    detail: { el: "s-detail", out: "v-detail", fmt: (v) => `${Number(v).toFixed(2)}×` },
+    trees: { el: "s-trees", out: "v-trees", fmt: (v) => `${v} m` },
+    plants: { el: "s-plants", out: "v-plants", fmt: (v) => (Number(v) === 0 ? "off" : `${v} m`) },
+    shadows: { el: "s-shadows", out: "v-shadows", fmt: (v) => (Number(v) === 0 ? "off" : `${v} m`) },
+  };
+  const readJson = (name) => { try { return JSON.parse(window[name] || "null"); } catch { return null; } };
+  function showSettings() {
+    const cur = readJson("wsSettings");
+    if (!cur) return;
+    for (const [k, d] of Object.entries(sliders)) {
+      const el = document.getElementById(d.el);
+      el.value = cur[k];
+      document.getElementById(d.out).textContent = d.fmt(el.value);
+    }
+  }
+  let sTimer = 0;
+  for (const [k, d] of Object.entries(sliders)) {
+    document.getElementById(d.el).addEventListener("input", (e) => {
+      document.getElementById(d.out).textContent = d.fmt(e.target.value);
+      clearTimeout(sTimer);
+      sTimer = setTimeout(() => {
+        const parts = Object.entries(sliders).map(([kk, dd]) => `${kk}=${document.getElementById(dd.el).value}`);
+        try { localStorage.setItem(SKEY, parts.join(";")); } catch {}
+      }, 150);
+    });
+  }
+  const settingsPanel = document.getElementById("settings-panel");
+  document.getElementById("settings-btn").onclick = () => { showSettings(); settingsPanel.hidden = false; };
+  document.getElementById("settings-close").onclick = () => { settingsPanel.hidden = true; };
+  document.getElementById("s-reset").onclick = () => {
+    try { localStorage.removeItem(SKEY); } catch {}
+    setTimeout(showSettings, 500);
+  };
+  document.getElementById("save-file-2").onclick = () => document.getElementById("save-file").click();
+  document.getElementById("open-file-2").onclick = () => document.getElementById("open-file").click();
+  const q2 = document.getElementById("quality-2");
+  q2.textContent = "Quality: " + (getQ() === "lite" ? "Lite" : "Auto");
+  q2.onclick = () => qBtn.click();
+
+  // --- the map: the island, the big peaks, the places, and you ---
+  const mapPanel = document.getElementById("map-panel");
+  const cv = document.getElementById("map-canvas");
+  const cx = cv.getContext("2d");
+  let base = null, info = null, pick = null, mapTimer = 0;
+  function sizeMap() {
+    const phone = innerWidth <= 640;
+    const side = Math.floor(phone ? Math.min(innerWidth - 24, innerHeight * 0.55) : Math.min(innerHeight - 90, innerWidth * 0.62));
+    cv.style.width = cv.style.height = side + "px";
+    const px = Math.round(side * Math.min(devicePixelRatio || 1, 2));
+    if (cv.width !== px) { cv.width = cv.height = px; }
+  }
+  function loadBase() {
+    if (base || !window.wsMap) return;
+    info = readJson("wsMapInfo");
+    const n = info.size;
+    const off = document.createElement("canvas");
+    off.width = off.height = n;
+    off.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(window.wsMap), n, n), 0, 0);
+    base = off;
+    document.getElementById("map-wait").remove();
+  }
+  const toPx = (x, z) => [((x + info.half) / (2 * info.half)) * cv.width, ((z + info.half) / (2 * info.half)) * cv.height];
+  const toWorld = (px, py) => [(px / cv.width) * 2 * info.half - info.half, (py / cv.height) * 2 * info.half - info.half];
+  function drawMap() {
+    loadBase();
+    if (!base) return;
+    const W = cv.width, k = W / 640;
+    cx.imageSmoothingEnabled = true;
+    cx.drawImage(base, 0, 0, W, W);
+    const data = readJson("wsPlaces");
+    if (data) {
+      // the big peaks
+      for (const [x, z, h] of data.peaks) {
+        const [px, py] = toPx(x, z);
+        const s = (h > 150000 ? 9 : 6) * k * (h > 200000 ? 1.4 : 1);
+        cx.beginPath(); cx.moveTo(px, py - s); cx.lineTo(px + s * 0.9, py + s * 0.6); cx.lineTo(px - s * 0.9, py + s * 0.6); cx.closePath();
+        cx.fillStyle = "#f4f1ea"; cx.strokeStyle = "#3a3a40"; cx.lineWidth = 1.5 * k; cx.fill(); cx.stroke();
+      }
+      // the places
+      cx.font = `${Math.round(13 * k)}px Georgia, serif`; cx.textAlign = "center";
+      for (const p of data.places) {
+        if (p.name === "Start") continue;
+        const [px, py] = toPx(p.x, p.z);
+        cx.fillStyle = "#d8b878"; cx.beginPath(); cx.arc(px, py, 4 * k, 0, 7); cx.fill();
+        cx.lineWidth = 3 * k; cx.strokeStyle = "rgba(10,14,28,.75)"; cx.strokeText(p.name, px, py - 9 * k);
+        cx.fillStyle = "#f8f2e2"; cx.fillText(p.name, px, py - 9 * k);
+      }
+    }
+    // a picked spot
+    if (pick) {
+      const [px, py] = toPx(pick[0], pick[1]);
+      cx.strokeStyle = "#ffd27a"; cx.lineWidth = 2.5 * k;
+      cx.beginPath(); cx.arc(px, py, 9 * k, 0, 7); cx.stroke();
+    }
+    // you: an arrow pointing the way you face
+    const me = (window.wsPlayer || "").split(",").map(Number);
+    if (me.length >= 3 && isFinite(me[0])) {
+      const [px, py] = toPx(me[0], me[1]);
+      const dx = Math.sin(me[2]), dy = -Math.cos(me[2]), s = 11 * k;
+      cx.beginPath();
+      cx.moveTo(px + dx * s, py + dy * s);
+      cx.lineTo(px - dx * s * 0.6 - dy * s * 0.6, py - dy * s * 0.6 + dx * s * 0.6);
+      cx.lineTo(px - dx * s * 0.2, py - dy * s * 0.2);
+      cx.lineTo(px - dx * s * 0.6 + dy * s * 0.6, py - dy * s * 0.6 - dx * s * 0.6);
+      cx.closePath();
+      cx.fillStyle = "#e8483a"; cx.strokeStyle = "#fff"; cx.lineWidth = 2 * k; cx.fill(); cx.stroke();
+    }
+  }
+  function listPlaces() {
+    const data = readJson("wsPlaces");
+    const box = document.getElementById("map-places");
+    if (!data || box.childElementCount) return;
+    for (const p of data.places) {
+      const b = document.createElement("button");
+      b.className = "place";
+      b.innerHTML = `${p.name}<small>${p.sub}</small>`;
+      b.onclick = () => travel(p.x, p.z, p.name);
+      box.appendChild(b);
+    }
+  }
+  function travel(x, z, label) {
+    try { localStorage.setItem(TKEY, `${Date.now()};${Math.round(x)};${Math.round(z)}`); } catch { toast("This browser will not allow travel here."); return; }
+    closeMap();
+    toast(`Travelling to ${label}…`);
+  }
+  function openMap() {
+    sizeMap(); listPlaces(); drawMap();
+    mapPanel.hidden = false;
+    clearInterval(mapTimer);
+    mapTimer = setInterval(() => { listPlaces(); drawMap(); }, 300);
+  }
+  function closeMap() { mapPanel.hidden = true; clearInterval(mapTimer); pick = null; document.getElementById("map-pick").hidden = true; }
+  document.getElementById("map-btn").onclick = openMap;
+  document.getElementById("map-close").onclick = closeMap;
+  cv.addEventListener("pointerdown", (e) => {
+    if (!info) return;
+    const r = cv.getBoundingClientRect();
+    const [x, z] = toWorld(((e.clientX - r.left) / r.width) * cv.width, ((e.clientY - r.top) / r.height) * cv.height);
+    pick = [x, z];
+    const ew = x >= 0 ? "E" : "W", ns = z >= 0 ? "S" : "N";
+    document.getElementById("map-pick-text").textContent = `${Math.abs(Math.round(x / 1000)).toLocaleString()} km ${ew}, ${Math.abs(Math.round(z / 1000)).toLocaleString()} km ${ns} of the centre`;
+    document.getElementById("map-pick").hidden = false;
+    drawMap();
+  });
+  document.getElementById("map-go").onclick = () => { if (pick) travel(pick[0], pick[1], "the picked spot"); };
+  addEventListener("resize", () => { if (!mapPanel.hidden) { sizeMap(); drawMap(); } });
+  addEventListener("keydown", (e) => {
+    if (e.key === "m" || e.key === "M") { mapPanel.hidden ? openMap() : closeMap(); }
+    if (e.key === "Escape") { closeMap(); settingsPanel.hidden = true; }
+  });
 
   // keep keyboard focus on the game after using the buttons
   document.getElementById("bevy").addEventListener("pointerdown", (e) => e.currentTarget.focus());

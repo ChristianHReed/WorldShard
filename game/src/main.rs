@@ -23,10 +23,14 @@ use bevy::window::WindowResolution;
 
 use worldshard::lod::{self, NodeKey};
 use worldshard::meshgen::{self, model, MeshData, Placement, PropKinds, Tint, DETAIL_CELL, GRASS_CELL, MODELS, PROP_CELL};
+use worldshard::places::{places, MapImage};
 use worldshard::save::{SaveData, STORAGE_KEY};
 use worldshard::sky::{clock_text, sun_state};
-use worldshard::worldgen::terrain::{EV_MASSIF_M, EV_MASSIF_P, EV_MASSIF_R, EV_SPIRE_R, HEL_R, WALL_R};
+use worldshard::worldgen::terrain::WALL_R;
 use worldshard::worldgen::Terrain;
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::JsValue;
 
 // Pulled in only to switch on browser randomness for Bevy's dependencies.
 #[cfg(target_arch = "wasm32")]
@@ -51,12 +55,18 @@ struct Quality {
     shadow_distance: f32,
     cascades: usize,
     shadow_map: usize,
+    /// Land is drawn this far (metres).
+    view: f64,
     name: &'static str,
 }
 
+/// The quality this device starts with; the settings sliders adjust from it.
+#[derive(Resource, Clone, Copy)]
+struct DeviceQuality(Quality);
+
 impl Quality {
     fn detect() -> Quality {
-        let full = Quality { scale: None, split_k: lod::SPLIT_K, prop_radius: 520.0, near_radius: 100.0, detail_radius: 44.0, grass_radius: 56.0, msaa: true, shadow_distance: 400.0, cascades: 1, shadow_map: 2048, name: "full" };
+        let full = Quality { scale: None, split_k: lod::SPLIT_K, prop_radius: 520.0, near_radius: 100.0, detail_radius: 44.0, grass_radius: 56.0, msaa: true, shadow_distance: 400.0, cascades: 1, shadow_map: 2048, view: lod::DEFAULT_VIEW, name: "full" };
         #[cfg(target_arch = "wasm32")]
         {
             let Some(w) = web_sys::window() else { return full };
@@ -71,10 +81,10 @@ impl Quality {
                 .map_or(false, |v| v == "lite");
             let phone = iw.min(ih) < 700.0;
             if lite {
-                return Quality { scale: Some(dpr.min(0.75)), split_k: 0.6, prop_radius: 200.0, near_radius: 50.0, detail_radius: 0.0, grass_radius: 0.0, msaa: false, shadow_distance: 0.0, cascades: 1, shadow_map: 512, name: "lite" };
+                return Quality { scale: Some(dpr.min(0.75)), split_k: 0.6, prop_radius: 200.0, near_radius: 50.0, detail_radius: 0.0, grass_radius: 0.0, msaa: false, shadow_distance: 0.0, cascades: 1, shadow_map: 512, view: 2_600_000.0, name: "lite" };
             }
             if phone {
-                return Quality { scale: Some(dpr.min(1.0)), split_k: 0.8, prop_radius: 320.0, near_radius: 70.0, detail_radius: 30.0, grass_radius: 40.0, msaa: true, shadow_distance: 160.0, cascades: 1, shadow_map: 1024, name: "phone" };
+                return Quality { scale: Some(dpr.min(1.0)), split_k: 0.8, prop_radius: 320.0, near_radius: 70.0, detail_radius: 30.0, grass_radius: 40.0, msaa: true, shadow_distance: 160.0, cascades: 1, shadow_map: 1024, view: lod::DEFAULT_VIEW, name: "phone" };
             }
             return Quality { scale: Some(dpr.min(1.5)), ..full };
         }
@@ -115,13 +125,59 @@ struct HazeUniform {
     params: Vec4,
     /// toward the sun (xyz), shadow strength (w)
     sun_dir: Vec4,
-    /// Everest relative to the camera (x, z), spire height and radius
-    everest: Vec4,
-    /// Everest's body: height, radius, shape exponent
-    everest_base: Vec4,
-    /// St. Helens relative to the camera (x, z), cone height and radius
-    helens: Vec4,
+    /// sunlight colour (rgb), how much the haze glows toward the sun (w)
+    sun_col: Vec4,
+    /// the region's ground mist: density, thickness, ground height
+    mist: Vec4,
+    mist_col: Vec4,
+    /// the big peaks, two entries each (see haze.wgsl)
+    peaks: [Vec4; 24],
 }
+
+/// The sky dome and the Cloudwall: their own shader (sky.wgsl).
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
+struct SkyExt {
+    #[uniform(100)]
+    u: SkyUniform,
+}
+
+#[derive(ShaderType, Reflect, Debug, Clone, Default)]
+struct SkyUniform {
+    sun: Vec4,
+    sun_col: Vec4,
+    zenith: Vec4,
+    /// w: 0 = sky, 1 = Cloudwall
+    horizon: Vec4,
+    cam: Vec4,
+    haze: Vec4,
+    misc: Vec4,
+}
+
+impl MaterialExtension for SkyExt {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/sky.wgsl".into()
+    }
+}
+
+type SkyMaterial = ExtendedMaterial<StandardMaterial, SkyExt>;
+
+#[derive(Resource)]
+struct SkyMats {
+    dome: Handle<SkyMaterial>,
+    wall: Handle<SkyMaterial>,
+}
+
+/// Each region's ground mist (first pass): density per metre, thickness in
+/// metres, colour. Indexed like `REGIONS`: North, Northeast, Southeast,
+/// South, Southwest, Northwest.
+const MIST: [(f32, f32, [f32; 3]); 6] = [
+    (0.0, 300.0, [0.80, 0.82, 0.85]),
+    (3.0e-5, 700.0, [0.86, 0.74, 0.58]),
+    (1.2e-5, 400.0, [0.78, 0.84, 0.86]),
+    (8.0e-5, 400.0, [0.56, 0.66, 0.60]),
+    (0.0, 300.0, [0.85, 0.85, 0.80]),
+    (1.5e-4, 260.0, [0.72, 0.78, 0.76]),
+];
 
 impl MaterialExtension for Haze {
     fn fragment_shader() -> ShaderRef {
@@ -250,6 +306,34 @@ fn remove_loading_cover() {
         el.remove();
     }
 }
+/// Read a value the web page stored (settings, travel requests).
+#[cfg(target_arch = "wasm32")]
+fn page_get(key: &str) -> Option<String> {
+    web_sys::window()?.local_storage().ok()??.get_item(key).ok()?
+}
+/// Hand the web page a value (as `window[name]`): text, or bytes.
+#[cfg(target_arch = "wasm32")]
+fn page_set_text(name: &str, value: &str) {
+    if let Some(w) = web_sys::window() {
+        let _ = js_sys::Reflect::set(&w, &JsValue::from_str(name), &JsValue::from_str(value));
+    }
+}
+#[cfg(target_arch = "wasm32")]
+fn page_set_bytes(name: &str, bytes: &[u8]) {
+    if let Some(w) = web_sys::window() {
+        let arr = js_sys::Uint8ClampedArray::from(bytes);
+        let _ = js_sys::Reflect::set(&w, &JsValue::from_str(name), &arr);
+    }
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn page_get(_key: &str) -> Option<String> {
+    None
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn page_set_text(_name: &str, _value: &str) {}
+#[cfg(not(target_arch = "wasm32"))]
+fn page_set_bytes(_name: &str, _bytes: &[u8]) {}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn storage_get() -> Option<String> {
     std::fs::read_to_string(format!("{STORAGE_KEY}.json")).ok()
@@ -277,6 +361,7 @@ fn main() {
     }
     App::new()
         .insert_resource(quality)
+        .insert_resource(DeviceQuality(quality))
         .insert_resource(ClearColor(Color::srgb(0.55, 0.72, 0.92)))
         .insert_resource(Banner::default())
         .insert_resource(TouchState::default())
@@ -295,11 +380,13 @@ fn main() {
             ..default()
         }))
         .add_plugins(MaterialPlugin::<GroundMaterial>::default())
+        .add_plugins(MaterialPlugin::<SkyMaterial>::default())
         .add_systems(Startup, setup)
         .add_systems(
             Update,
             (move_player, stream_world, stream_plants, place_relative, sky_and_light, update_hud, autosave, hide_loader).chain(),
         )
+        .add_systems(Update, (apply_settings, web_bridge).before(move_player))
         .add_systems(Update, add_mipmaps)
         .add_systems(Update, log_memory)
         .run();
@@ -339,11 +426,13 @@ fn spawn_anchored(
     parent
 }
 
+#[allow(clippy::too_many_arguments)]
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut ground_materials: ResMut<Assets<GroundMaterial>>,
+    mut sky_materials: ResMut<Assets<SkyMaterial>>,
     asset_server: Res<AssetServer>,
     quality: Res<Quality>,
 ) {
@@ -366,9 +455,10 @@ fn setup(
                 color: Vec4::new(0.5, 0.62, 0.8, 1.0),
                 params: Vec4::new(HAZE_DENSITY, HAZE_SCALE_HEIGHT, 0.0, 0.0),
                 sun_dir: Vec4::new(0.5, 0.7, 0.3, 0.0),
-                everest: Vec4::ZERO,
-                everest_base: Vec4::new(EV_MASSIF_M as f32, EV_MASSIF_R as f32, EV_MASSIF_P as f32, 0.0),
-                helens: Vec4::ZERO,
+                sun_col: Vec4::new(1.0, 0.9, 0.75, 0.0),
+                mist: Vec4::ZERO,
+                mist_col: Vec4::ONE,
+                peaks: [Vec4::ZERO; 24],
             } },
         }),
         water: materials.add(StandardMaterial {
@@ -388,30 +478,23 @@ fn setup(
         }),
     };
 
-    // ---- the Cloudwall, at the edge of the Rim Sea ----
-    let cloud_mat = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 1.0,
-        reflectance: 0.0,
-        double_sided: true,
-        cull_mode: None,
-        fog_enabled: false,
-        ..default()
-    });
-    spawn_anchored(&mut commands, &mut meshes, Anchor { x: 0.0, y: 0.0, z: 0.0 }, vec![(meshgen::cloudwall_mesh(), cloud_mat)]);
-
-    // ---- sky dome: a soft gradient, brighter at the horizon ----
-    let sky_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.55, 0.72, 0.92),
-        unlit: true,
-        fog_enabled: false,
-        double_sided: true,
-        cull_mode: None,
-        ..default()
-    });
+    // ---- the sky and the Cloudwall: one shader (sky.wgsl), two modes ----
+    let sky_base = StandardMaterial { base_color: Color::WHITE, unlit: true, fog_enabled: false, double_sided: true, cull_mode: None, ..default() };
+    let sky_mats = SkyMats {
+        dome: sky_materials.add(SkyMaterial { base: sky_base.clone(), extension: SkyExt { u: SkyUniform::default() } }),
+        wall: sky_materials.add(SkyMaterial {
+            base: sky_base,
+            extension: SkyExt { u: SkyUniform { horizon: Vec4::new(0.0, 0.0, 0.0, 1.0), ..default() } },
+        }),
+    };
+    // the Cloudwall, at the edge of the Rim Sea
+    let (wall_mesh, wall_aabb) = to_mesh(meshgen::cloudwall_mesh());
+    let wall = commands.spawn((Anchor { x: 0.0, y: 0.0, z: 0.0 }, Transform::default(), Visibility::default())).id();
+    commands.spawn((Mesh3d(meshes.add(wall_mesh)), MeshMaterial3d(sky_mats.wall.clone()), wall_aabb, NotShadowCaster, ChildOf(wall)));
+    // the sky dome; it surrounds everything, so it must not cast a shadow
     let (sky_mesh, sky_aabb) = to_mesh(meshgen::sky_dome(15_000_000.0));
-    // the sky surrounds everything, so it must not cast a shadow
-    commands.spawn((Mesh3d(meshes.add(sky_mesh)), MeshMaterial3d(sky_mat), sky_aabb, Transform::default(), SkyDome, NotShadowCaster));
+    commands.spawn((Mesh3d(meshes.add(sky_mesh)), MeshMaterial3d(sky_mats.dome.clone()), sky_aabb, Transform::default(), SkyDome, NotShadowCaster));
+    commands.insert_resource(sky_mats);
 
     // ---- sunlight (WebGL2 allows one directional light: sun by day, moon by night) ----
     let shadows = quality.shadow_distance > 0.0;
@@ -838,7 +921,7 @@ fn stream_world(
     let above = pl.y - ground;
 
     // terrain: build missing chunks nearest first, a few per frame
-    let want = lod::select_k([pl.x, pl.y, pl.z], above, q.split_k);
+    let want = lod::select_kv([pl.x, pl.y, pl.z], above, q.split_k, q.view);
     let budget = if first { usize::MAX } else { 3 };
     let mut built = 0;
     for k in &want {
@@ -1302,10 +1385,10 @@ fn sky_and_light(
     mut ambient: ResMut<AmbientLight>,
     mut sky_light: Query<(&mut DirectionalLight, &mut Transform), With<Sun>>,
     mut fogs: Query<&mut DistanceFog>,
-    dome: Query<&MeshMaterial3d<StandardMaterial>, With<SkyDome>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     mut ground_materials: ResMut<Assets<GroundMaterial>>,
+    mut sky_materials: ResMut<Assets<SkyMaterial>>,
     mats: Res<Mats>,
+    sky_mats: Res<SkyMats>,
 ) {
     let s = sun_state(pl.hours);
     clear.0 = rgb(s.sky_col);
@@ -1330,24 +1413,75 @@ fn sky_and_light(
     // plants and clouds use the haze density at the camera's height
     let day = s.day;
     let haze = rgb(s.fog_col);
+    let lin = |c: Color| {
+        let l = c.to_linear();
+        Vec4::new(l.red, l.green, l.blue, 1.0)
+    };
+    let haze_lin = lin(haze);
+    let sun_lin = lin(rgb(s.sun_col));
+    let t = &w.0;
+    let ground = meshgen::drawn_height(t, pl.x, pl.z).max(0.0);
+    let above = (pl.y - ground).max(0.0);
+
+    // the region's ground mist, thickest in the early morning
+    let wr = t.region_mix(pl.x, pl.z);
+    let (mut md, mut mh, mut mc) = (0.0f32, 0.0f32, [0.0f32; 3]);
+    for (k, &wk) in wr.iter().enumerate() {
+        let wk = wk as f32;
+        md += wk * MIST[k].0;
+        mh += wk * MIST[k].1;
+        for c in 0..3 {
+            mc[c] += wk * MIST[k].2[c];
+        }
+    }
+    let morning = 1.0 + 1.5 * (-((pl.hours as f32 - 7.0) / 2.0).powi(2)).exp();
+    md *= morning;
+    let mist_lin = lin(rgb(mc)) * (0.15 + 0.85 * day);
+    let mist_here = md * (-(above as f32) / mh.max(1.0)).exp();
+
     let cam_density = HAZE_DENSITY * (-(pl.y.max(0.0) as f32) / HAZE_SCALE_HEIGHT).exp();
+    let mist_share = mist_here / (cam_density + mist_here).max(1e-9);
     for mut fog in &mut fogs {
-        fog.color = haze;
-        fog.falloff = FogFalloff::Exponential { density: cam_density };
+        let fc = haze_lin.truncate() * (1.0 - mist_share) + mist_lin.truncate() * mist_share;
+        fog.color = Color::linear_rgb(fc.x, fc.y, fc.z);
+        fog.falloff = FogFalloff::Exponential { density: cam_density + mist_here };
         fog.directional_light_color = Color::srgba(1.0, 0.9, 0.7, 0.45 * day);
     }
     if let Some(g) = ground_materials.get_mut(&mats.ground) {
-        let lin = haze.to_linear();
-        g.extension.u.color = Vec4::new(lin.red, lin.green, lin.blue, 1.0);
-        g.extension.u.sun_dir = Vec4::new(light_dir[0], light_dir[1], light_dir[2], strength);
-        g.extension.u.params.z = shade_here;
-        let t = &w.0;
-        g.extension.u.everest = Vec4::new((t.everest.0 - pl.x) as f32, (t.everest.1 - pl.z) as f32, t.ev_spire_m as f32, EV_SPIRE_R as f32);
-        g.extension.u.helens = Vec4::new((t.helens.0 - pl.x) as f32, (t.helens.1 - pl.z) as f32, t.hel_m as f32, HEL_R as f32);
+        let u = &mut g.extension.u;
+        u.color = haze_lin;
+        u.sun_dir = Vec4::new(light_dir[0], light_dir[1], light_dir[2], strength);
+        u.params.z = shade_here;
+        u.sun_col = Vec4::new(sun_lin.x, sun_lin.y, sun_lin.z, 0.55 * day);
+        u.mist = Vec4::new(md, mh, ground as f32, 0.0);
+        u.mist_col = mist_lin;
+        let mut peaks = [Vec4::ZERO; 24];
+        for (k, sp) in t.shadow_peaks().iter().take(12).enumerate() {
+            peaks[2 * k] = Vec4::new((sp.x - pl.x) as f32, (sp.z - pl.z) as f32, sp.spire_m as f32, sp.spire_r as f32);
+            peaks[2 * k + 1] = Vec4::new(sp.body_m as f32, sp.body_r as f32, sp.body_p as f32, sp.reach() as f32);
+        }
+        u.peaks = peaks;
     }
-    if let Ok(h) = dome.single() {
-        if let Some(mat) = materials.get_mut(&h.0) {
-            mat.base_color = rgb(s.sky_col);
+
+    // sky and Cloudwall: gradient, sun, clouds that drift and vary by day
+    // and by region (dry Northeast skies, cloudier wet Northwest)
+    let sky_lin = lin(rgb(s.sky_col));
+    let zenith = sky_lin * 0.72;
+    let horizon = (sky_lin * 1.12) * 0.65 + haze_lin * 0.35;
+    let cover_region = (wr[5] * 0.18 + wr[3] * 0.1 + wr[2] * 0.05 - wr[1] * 0.25 - wr[4] * 0.05) as f32;
+    let cover = (0.45 + 0.22 * ((pl.day as f32) * 1.7 + pl.hours as f32 / 9.0).sin() + cover_region).clamp(0.05, 0.95);
+    let secs = (pl.hours * 3600.0) as f32;
+    for (handle, mode) in [(&sky_mats.dome, 0.0f32), (&sky_mats.wall, 1.0f32)] {
+        if let Some(m) = sky_materials.get_mut(handle) {
+            m.extension.u = SkyUniform {
+                sun: Vec4::new(s.sun_dir[0], s.sun_dir[1], s.sun_dir[2], day),
+                sun_col: Vec4::new(sun_lin.x, sun_lin.y, sun_lin.z, secs),
+                zenith,
+                horizon: Vec4::new(horizon.x, horizon.y, horizon.z, mode),
+                cam: Vec4::new((pl.x / 1000.0) as f32, above as f32, (pl.z / 1000.0) as f32, pl.y as f32),
+                haze: Vec4::new(haze_lin.x, haze_lin.y, haze_lin.z, HAZE_DENSITY),
+                misc: Vec4::new(HAZE_SCALE_HEIGHT, cover, 0.0, 0.0),
+            };
         }
     }
 }
@@ -1494,4 +1628,173 @@ fn hide_loader(st: Res<Streamer>, mut frames: Local<u32>) {
             remove_loading_cover();
         }
     }
+}
+
+// ---------------------------------------------------------------------
+// Settings sliders, the map and fast travel (with the web page)
+// ---------------------------------------------------------------------
+
+/// The settings sliders on the page store "view=3600;detail=1;trees=520;
+/// plants=56;shadows=400" (km, multiple, metres, metres, metres).
+const SETTINGS_KEY: &str = "worldshard-settings";
+/// A fast-travel request from the map: "id;x;z" (world metres).
+const TRAVEL_KEY: &str = "worldshard-travel";
+
+#[derive(Default)]
+struct SettingsPoll {
+    wait: f32,
+    started: bool,
+    last: String,
+}
+
+fn quality_json(q: &Quality, dev: &Quality) -> String {
+    format!(
+        "{{\"view\":{:.0},\"detail\":{:.2},\"trees\":{:.0},\"plants\":{:.0},\"shadows\":{:.0},\"name\":\"{}\"}}",
+        q.view / 1000.0,
+        q.split_k / dev.split_k,
+        q.prop_radius,
+        q.grass_radius,
+        q.shadow_distance,
+        q.name
+    )
+}
+
+/// Apply the page's settings sliders on top of this device's quality.
+fn apply_settings(
+    time: Res<Time>,
+    mut poll: Local<SettingsPoll>,
+    dev: Res<DeviceQuality>,
+    mut q: ResMut<Quality>,
+    mut sun: Query<(Entity, &mut DirectionalLight), With<Sun>>,
+    mut commands: Commands,
+) {
+    poll.wait -= time.delta_secs();
+    if poll.wait > 0.0 {
+        return;
+    }
+    poll.wait = 0.3;
+    let raw = page_get(SETTINGS_KEY).unwrap_or_default();
+    if poll.started && raw == poll.last {
+        return;
+    }
+    poll.started = true;
+    poll.last = raw.clone();
+    let d = dev.0;
+    let mut nq = d;
+    for part in raw.split(';') {
+        let Some((k, v)) = part.split_once('=') else { continue };
+        let Ok(v) = v.trim().parse::<f64>() else { continue };
+        match k.trim() {
+            "view" => nq.view = (v * 1000.0).clamp(300_000.0, 11_000_000.0),
+            "detail" => nq.split_k = (d.split_k * v).clamp(0.3, 2.0),
+            "trees" => {
+                nq.prop_radius = v.clamp(60.0, 2_000.0);
+                nq.near_radius = (v * 0.2).clamp(30.0, 200.0);
+            }
+            "plants" => {
+                nq.grass_radius = v.clamp(0.0, 150.0);
+                nq.detail_radius = (v * 0.8).clamp(0.0, 120.0);
+            }
+            "shadows" => nq.shadow_distance = v.clamp(0.0, 1_000.0) as f32,
+            _ => {}
+        }
+    }
+    *q = nq;
+    if let Ok((e, mut light)) = sun.single_mut() {
+        light.shadows_enabled = nq.shadow_distance > 0.0;
+        if nq.shadow_distance > 0.0 {
+            commands.entity(e).insert(
+                CascadeShadowConfigBuilder {
+                    num_cascades: 1,
+                    minimum_distance: 0.3,
+                    first_cascade_far_bound: nq.shadow_distance * 0.12,
+                    maximum_distance: nq.shadow_distance,
+                    overlap_proportion: 0.2,
+                }
+                .build(),
+            );
+        }
+    }
+    page_set_text("wsSettings", &quality_json(&nq, &d));
+    page_set_text("wsDefaults", &quality_json(&d, &d));
+}
+
+#[derive(Default)]
+struct BridgeState {
+    wait: f32,
+    map: Option<MapImage>,
+    map_sent: bool,
+    places_sent: bool,
+    last_travel: String,
+}
+
+fn json_text(t: &str) -> String {
+    t.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// The map screen and fast travel: give the page the island map, the places
+/// and where the player is; carry out travel requests from it.
+#[allow(clippy::too_many_arguments)]
+fn web_bridge(
+    time: Res<Time>,
+    mut b: Local<BridgeState>,
+    w: Res<GameWorld>,
+    mut pl: ResMut<Player>,
+    mut streamer: ResMut<Streamer>,
+    mut plants: ResMut<Plants>,
+    mut save: ResMut<SaveState>,
+) {
+    let t = &w.0;
+    if !streamer.ready {
+        return;
+    }
+    if !b.places_sent {
+        b.places_sent = true;
+        let list: Vec<String> = places(t)
+            .iter()
+            .map(|p| format!("{{\"name\":\"{}\",\"sub\":\"{}\",\"x\":{:.0},\"z\":{:.0}}}", json_text(&p.name), json_text(&p.sub), p.x, p.z))
+            .collect();
+        let peaks: Vec<String> = t.shadow_peaks().iter().map(|p| format!("[{:.0},{:.0},{:.0}]", p.x, p.z, t.height(p.x, p.z))).collect();
+        page_set_text("wsPlaces", &format!("{{\"places\":[{}],\"peaks\":[{}]}}", list.join(","), peaks.join(",")));
+    }
+    // the map, a few rows per frame so the game doesn't stutter
+    if !b.map_sent {
+        let m = b.map.get_or_insert_with(|| MapImage::new(320, 1_750_000.0));
+        m.build_rows(t, 8);
+        if m.done() {
+            page_set_text("wsMapInfo", &format!("{{\"size\":{},\"half\":{:.0}}}", m.size, m.half));
+            page_set_bytes("wsMap", &m.rgba);
+            b.map = None;
+            b.map_sent = true;
+        }
+    }
+    b.wait -= time.delta_secs();
+    if b.wait > 0.0 {
+        return;
+    }
+    b.wait = 0.2;
+    page_set_text("wsPlayer", &format!("{:.0},{:.0},{:.3},{}", pl.x, pl.z, pl.yaw, pl.fly as u8));
+    let Some(req) = page_get(TRAVEL_KEY) else { return };
+    if req.is_empty() || req == b.last_travel {
+        return;
+    }
+    b.last_travel = req.clone();
+    let parts: Vec<f64> = req.split(';').filter_map(|v| v.trim().parse::<f64>().ok()).collect();
+    if parts.len() < 3 || !parts[1].is_finite() || !parts[2].is_finite() {
+        return;
+    }
+    let (x, z) = (parts[1], parts[2]);
+    if x.hypot(z) > WALL_R {
+        return;
+    }
+    // go there: land on the ground (or keep flying just above it) and
+    // build the world around the new spot at once
+    pl.x = x;
+    pl.z = z;
+    let ground = meshgen::drawn_height(t, x, z).max(0.0);
+    pl.y = if pl.fly { ground + 150.0 } else { ground + EYE };
+    pl.vy = 0.0;
+    streamer.ready = false;
+    plants.ready = false;
+    save.dirty = true;
 }
