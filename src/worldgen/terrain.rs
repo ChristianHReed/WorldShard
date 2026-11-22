@@ -24,18 +24,22 @@ pub const WALL_R: f64 = CLOUD_R - 40_000.0;
 /// Nothing but open sea beyond this distance from the centre.
 pub const LAND_R: f64 = 480.0 * METRES_PER_PX;
 
-/// The two central peaks: five times their real heights (8,849 m and
-/// 2,549 m), so they tower over an island the size of Australia.
-pub const EVEREST_M: f64 = 5.0 * 8849.0;
-pub const ST_HELENS_M: f64 = 5.0 * 2549.0;
+/// The two central peaks: 25 times their real heights (8,849 m and
+/// 2,549 m), so they tower over an island the size of Australia and can be
+/// seen from anywhere on it.
+pub const PEAK_SCALE: f64 = 25.0;
+pub const EVEREST_M: f64 = PEAK_SCALE * 8849.0;
+pub const ST_HELENS_M: f64 = PEAK_SCALE * 2549.0;
 
 // Shapes of the giants, metres. The spire and St. Helens' cone are scaled
 // when the world is built so the summits land exactly on the heights above.
-const EV_SPIRE_R: f64 = 55_000.0;
-const EV_MASSIF_M: f64 = 6_000.0;
-const EV_MASSIF_R: f64 = 90_000.0;
-const HEL_R: f64 = 22_000.0;
-const HEL_CRATER_R: f64 = 4_500.0;
+pub const EV_SPIRE_R: f64 = 60_000.0;
+pub const EV_MASSIF_M: f64 = 85_000.0;
+pub const EV_MASSIF_R: f64 = 220_000.0;
+/// Shape of Everest's body: higher = steeper edge, less long apron.
+pub const EV_MASSIF_P: f64 = 1.6;
+pub const HEL_R: f64 = 55_000.0;
+const HEL_CRATER_R: f64 = 11_000.0;
 /// The range of lesser mountains around the giants.
 const RANGE_R: f64 = 260_000.0;
 const CLIFF_M: f64 = 600.0;
@@ -156,6 +160,21 @@ const FIELD_COLS: [[f64; 3]; 6] = [
     [210.0, 214.0, 140.0],
 ];
 
+/// Makes region weights change over a shorter distance (power `p`), so
+/// each region's landform and colour stay distinct up to its border.
+fn sharpen(w: &mut [f64; 6], p: i32) {
+    let mut sum = 0.0;
+    for v in w.iter_mut() {
+        *v = v.powi(p);
+        sum += *v;
+    }
+    if sum > 0.0 {
+        for v in w.iter_mut() {
+            *v /= sum;
+        }
+    }
+}
+
 /// Everything known about one spot of ground.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Sample {
@@ -185,8 +204,8 @@ pub struct Terrain {
     /// St. Helens' cone (set so the summits are exactly EVEREST_M / ST_HELENS_M).
     pub everest: (f64, f64),
     pub helens: (f64, f64),
-    ev_spire_m: f64,
-    hel_m: f64,
+    pub ev_spire_m: f64,
+    pub hel_m: f64,
 }
 
 /// Map-space measurements for one spot.
@@ -218,11 +237,11 @@ impl Terrain {
             .flat_map(|a| (0..20).map(move |k| (a, k)))
             .map(|(a, k)| {
                 let ang = a as f64 / 48.0 * std::f64::consts::TAU;
-                let d = 3_000.0 + k as f64 * 3_000.0;
+                let d = 5_000.0 + k as f64 * 4_000.0;
                 (t.helens.0 + ang.cos() * d, t.helens.1 + ang.sin() * d)
             })
             .collect();
-        let (mut lo, mut hi) = (0.0, 30_000.0);
+        let (mut lo, mut hi) = (0.0, 200_000.0);
         for _ in 0..24 {
             t.hel_m = (lo + hi) / 2.0;
             let top = rim.iter().map(|&(x, z)| t.height_no_lakes(x, z)).fold(f64::MIN, f64::max);
@@ -275,40 +294,44 @@ impl Terrain {
     fn region_relief(&self, k: usize, x: f64, z: f64) -> f64 {
         let n = &self.island.noise;
         match k {
-            // North, rock mines: rugged, rocky highlands cut by deep valleys
+            // North, rock mines: high, rugged, knife-edged rock mountains
+            // with deep narrow canyons
             0 => {
                 let r = n.ridged(x / 16_000.0 + 11.0, z / 16_000.0, 5);
                 let crags = n.ridged(x / 3_000.0, z / 3_000.0 + 7.0, 4);
-                900.0 + 2800.0 * r.powf(2.2) + 550.0 * (crags - 0.45) * (0.4 + r)
+                let canyon = (1.0 - n.n2(x / 9_000.0 - 3.0, z / 9_000.0 + 1.0).abs()).powi(10);
+                1200.0 + 3800.0 * r.powf(2.2) + 700.0 * (crags - 0.45) * (0.4 + r) - 900.0 * canyon
             }
-            // Northeast, lava flows and desert: a volcanic plateau with
-            // flat-topped mesas and fields of dunes in the low ground
+            // Northeast, lava flows and desert: a high plateau of stepped
+            // mesas and buttes, seas of tall dunes, and volcanic cones
             1 => {
                 let m = n.fbm(x / 14_000.0 - 4.0, z / 14_000.0, 4);
-                // stepped mesas with cliff sides
-                let mesas = sm(0.02, 0.05, m) * 260.0 + sm(0.16, 0.19, m) * 200.0 + sm(0.3, 0.32, m) * 160.0;
-                // dune seas in the low ground
-                let sand = sm(-0.04, -0.16, m);
+                let mesas = sm(0.0, 0.025, m) * 380.0 + sm(0.14, 0.16, m) * 300.0 + sm(0.28, 0.295, m) * 220.0;
+                let sand = sm(-0.04, -0.14, m);
                 let u = x * 0.8 + z * 0.6;
-                let wave = (u / 1300.0 + 2.5 * n.n2(x / 5_000.0, z / 5_000.0)) * std::f64::consts::PI;
-                let dunes = (1.0 - wave.sin().abs()).powf(1.5) * (70.0 + 40.0 * n.n2(x / 9_000.0, z / 9_000.0)) * sand;
-                450.0 + 150.0 * n.fbm(x / 40_000.0, z / 40_000.0 + 3.0, 3) + mesas + dunes
+                let wave = (u / 1500.0 + 2.5 * n.n2(x / 5_000.0, z / 5_000.0)) * std::f64::consts::PI;
+                let dunes = (1.0 - wave.sin().abs()).powf(1.5) * (130.0 + 60.0 * n.n2(x / 9_000.0, z / 9_000.0)) * sand;
+                let c = n.fbm(x / 6_000.0 + 13.0, z / 6_000.0 - 2.0, 2);
+                let cones = sm(0.32, 0.52, c).powi(2) * 750.0;
+                700.0 + 200.0 * n.fbm(x / 40_000.0, z / 40_000.0 + 3.0, 3) + mesas + dunes + cones
             }
-            // Southeast, mid forest with fields: rolling hills, broad valleys
-            2 => 220.0 + 190.0 * n.fbm(x / 8_000.0 + 5.0, z / 8_000.0, 4) + 60.0 * n.fbm(x / 2_000.0, z / 2_000.0 - 9.0, 3),
-            // South, dark forest: steep wooded hills and ravines
+            // Southeast, mid forest with fields: soft rolling green hills
+            2 => 180.0 + 160.0 * n.fbm(x / 8_000.0 + 5.0, z / 8_000.0, 4) + 50.0 * n.fbm(x / 2_000.0, z / 2_000.0 - 9.0, 3),
+            // South, dark forest: steep, tall wooded hills and deep ravines
             3 => {
-                let r = n.ridged(x / 11_000.0 - 7.0, z / 11_000.0 + 3.0, 4);
+                let r = n.ridged(x / 9_000.0 - 7.0, z / 9_000.0 + 3.0, 4);
                 let ravine = (1.0 - n.n2(x / 4_000.0 + 2.0, z / 4_000.0).abs()).powi(6);
-                350.0 + 850.0 * r.powf(1.5) - 160.0 * ravine
+                500.0 + 1400.0 * r.powf(1.4) - 300.0 * ravine
             }
-            // Southwest, grasslands: open plains, gentle swells, rocky outcrops
+            // Southwest, grasslands: flat open plains with lone, steep-sided
+            // rock domes rising out of them
             4 => {
-                let tor = sm(0.55, 0.68, n.fbm(x / 3_500.0 + 2.0, z / 3_500.0, 3)) * 70.0;
-                130.0 + 40.0 * n.fbm(x / 7_000.0 - 1.0, z / 7_000.0, 3) + tor
+                let b = n.fbm(x / 12_000.0 + 2.0, z / 12_000.0, 3);
+                let dome = sm(0.42, 0.47, b) * (260.0 + 120.0 * n.n2(x / 3_000.0, z / 3_000.0));
+                110.0 + 12.0 * n.fbm(x / 9_000.0 - 1.0, z / 9_000.0, 3) + dome
             }
-            // Northwest, lakes and swampy forest: a low, flat basin
-            _ => 45.0 + 14.0 * n.fbm(x / 3_000.0 + 8.0, z / 3_000.0, 3),
+            // Northwest, lakes and swampy forest: flat, low wetland
+            _ => 25.0 + 6.0 * n.fbm(x / 3_000.0 + 8.0, z / 3_000.0, 3),
         }
     }
 
@@ -321,6 +344,7 @@ impl Terrain {
         let inland = sm(0.0, 45_000.0, shore);
         let mut wr = [0.0; 6];
         self.island.region_weights(p.deg, p.x, p.y, &mut wr);
+        sharpen(&mut wr, 4);
         let mut h = 1.2;
         for (k, &w) in wr.iter().enumerate() {
             if w > 0.0 {
@@ -348,9 +372,9 @@ impl Terrain {
         }
         // Mount Everest: a broad massif and a steep summit spire, ribbed with ridges
         if d1 < 900_000.0 {
-            let ev = self.ev_spire_m * (-(d1 / EV_SPIRE_R)).exp() + EV_MASSIF_M * (-(d1 / EV_MASSIF_R).powf(1.3)).exp();
+            let ev = self.ev_spire_m * (-(d1 / EV_SPIRE_R)).exp() + EV_MASSIF_M * (-(d1 / EV_MASSIF_R).powf(EV_MASSIF_P)).exp();
             h += ev;
-            h += (n.ridged(wx / 7_000.0 + 40.0, wz / 7_000.0, 5) - 0.45) * 0.09 * ev * sm(1_500.0, 8_000.0, d1);
+            h += (n.ridged(wx / 9_000.0 + 40.0, wz / 9_000.0, 5) - 0.45) * 0.06 * ev * sm(1_500.0, 12_000.0, d1);
         }
         // Mount St. Helens: a volcanic cone with its crater breached to the north
         if d2 < 400_000.0 {
@@ -359,7 +383,7 @@ impl Terrain {
             let ang = (wz - self.helens.1).atan2(wx - self.helens.0).to_degrees();
             let north = (-(angd(ang + 90.0) / 35.0).powi(2)).exp();
             let breach = north * (-(d2 / (2.4 * HEL_CRATER_R)).powi(2)).exp();
-            h += self.hel_m * (cone - 0.55 * crater - 0.3 * breach).max(0.0);
+            h += self.hel_m * (cone - 0.4 * crater - 0.25 * breach).max(0.0);
         }
         // white cliffs along the east coast
         h += cliff_w(p.deg) * CLIFF_M * sm(0.0, 500.0, shore) * sm(230.0, 300.0, p.r);
@@ -433,6 +457,7 @@ impl Terrain {
             let (x, y) = (p.x, p.y);
             let mut wr = [0.0; 6];
             self.island.region_weights(p.deg, x, y, &mut wr);
+            sharpen(&mut wr, 2);
             let (mut fd, mut f0, mut f1, mut f2) = (0.0, 0.0, 0.0, 0.0);
             cr = 0.0;
             cg = 0.0;
@@ -568,10 +593,10 @@ impl Terrain {
             return ("Rim Sea", "The bowl of water around the island");
         }
         let h = self.height(wx, wz);
-        if (mx - EX).hypot(my - EY) < 40.0 && h > 15_000.0 {
+        if (mx - EX).hypot(my - EY) < 70.0 && h > 40_000.0 {
             return ("Mount Everest", "The highest peak on the shard");
         }
-        if (mx - HX).hypot(my - HY) < 20.0 && h > 6_000.0 {
+        if (mx - HX).hypot(my - HY) < 30.0 && h > 15_000.0 {
             return ("Mount St. Helens", "The volcano beside Everest");
         }
         let g = &REGIONS[region_index((my - CY).atan2(mx - CX) / D2R)];
@@ -614,7 +639,7 @@ mod tests {
         let mut top: f64 = 0.0;
         for j in -60..=60 {
             for i in -60..=60 {
-                top = top.max(t.height(ex + i as f64 * 5000.0, ez + j as f64 * 5000.0));
+                top = top.max(t.height(ex + i as f64 * 8000.0, ez + j as f64 * 8000.0));
             }
         }
         assert!(top <= EVEREST_M + 1.0, "higher than Everest: {top}");

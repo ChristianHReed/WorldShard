@@ -92,10 +92,10 @@ pub fn view_distance(above: f64) -> f64 {
 /// Chunks over the two giant peaks stay detailed from any distance, so
 /// their outlines stay sharp on the horizon.
 fn over_a_peak(k: &NodeKey) -> bool {
-    if k.size() <= 40_000.0 {
+    if k.size() <= 80_000.0 {
         return false;
     }
-    let peaks = [(to_world(EX, EY), 40_000.0), (to_world(HX, HY), 25_000.0)];
+    let peaks = [(to_world(EX, EY), 120_000.0), (to_world(HX, HY), 60_000.0)];
     peaks.iter().any(|&((px, pz), r)| k.distance_to(px, pz) < r)
 }
 

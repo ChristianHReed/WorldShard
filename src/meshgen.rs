@@ -154,6 +154,12 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
             let (hu, hd) = (hb[j * g + i + 1], hb[(j + 2) * g + i + 1]);
             let nrm = norm3([(hl - hr) as f32, (2.0 * cell) as f32, (hu - hd) as f32]);
             let mut c = if s.h > 0.0 && s.glow < 0.05 { ground_grade(s.col) } else { s.col };
+            // hollows and valleys darker, crests a little lighter (soft shading)
+            if s.h > 0.0 {
+                let lap = ((hl + hr + hu + hd) / 4.0 - s.h) / (cell * 0.5);
+                let occl = lap.clamp(-1.0, 1.0) as f32;
+                c = scale3(c, 1.0 - 0.32 * occl.max(0.0) + 0.06 * (-occl).max(0.0));
+            }
             // steep slopes show rock; flat high ground keeps its grass or snow
             if s.h > 0.0 {
                 // high up, rock shows through the snow on gentler slopes too
