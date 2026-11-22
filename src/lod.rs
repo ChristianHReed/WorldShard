@@ -3,7 +3,8 @@
 //! same number of grid cells, so the whole world costs about the same to
 //! draw wherever you stand or fly.
 
-use crate::worldgen::terrain::{CLOUD_R, LAND_R};
+use crate::worldgen::island::{EX, EY, HX, HY};
+use crate::worldgen::terrain::{to_world, CLOUD_R, LAND_R};
 
 /// The root square covers the whole Rim Sea (±16,777 km).
 pub const ROOT_SIZE: f64 = 33_554_432.0;
@@ -11,6 +12,15 @@ pub const ROOT_SIZE: f64 = 33_554_432.0;
 pub const MAX_LEVEL: u8 = 17;
 /// Grid cells per chunk side.
 pub const CHUNK_N: usize = 32;
+
+/// Grid cells per side for a chunk: big, distant chunks use fewer.
+pub fn chunk_n(k: &NodeKey) -> usize {
+    if k.size() >= 65_536.0 {
+        CHUNK_N / 2
+    } else {
+        CHUNK_N
+    }
+}
 /// A chunk splits when the camera is closer than this many chunk sizes.
 pub const SPLIT_K: f64 = 1.0;
 
@@ -75,7 +85,18 @@ impl NodeKey {
 /// How far the land is drawn: beyond this it is lost in the haze anyway.
 /// Grows when flying high so the whole island can be seen.
 pub fn view_distance(above: f64) -> f64 {
-    (300_000.0f64).max(above.max(0.0) * 6.0)
+    // far enough to see the central peaks from anywhere on the island
+    (2_600_000.0f64).max(above.max(0.0) * 6.0)
+}
+
+/// Chunks over the two giant peaks stay detailed from any distance, so
+/// their outlines stay sharp on the horizon.
+fn over_a_peak(k: &NodeKey) -> bool {
+    if k.size() <= 80_000.0 {
+        return false;
+    }
+    let peaks = [(to_world(EX, EY), 120_000.0), (to_world(HX, HY), 60_000.0)];
+    peaks.iter().any(|&((px, pz), r)| k.distance_to(px, pz) < r)
 }
 
 /// The chunks to draw for a camera at `cam` (x, y, z) standing `above` metres
@@ -99,7 +120,7 @@ pub fn select_k(cam: [f64; 3], above: f64, k_split: f64) -> Vec<NodeKey> {
         if d > far {
             continue;
         }
-        if k.level < MAX_LEVEL && !k.ocean_only() && d < k_split * k.size() {
+        if k.level < MAX_LEVEL && !k.ocean_only() && (d < k_split * k.size() || over_a_peak(&k)) {
             stack.extend_from_slice(&k.children());
         } else {
             out.push(k);

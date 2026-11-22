@@ -73,14 +73,21 @@ try {
 
   // Load a few saved spots to check night lighting, lava glow and the forests.
   const scenes = [
-    ["3-everest-from-the-south", { fly: true, y: 6800, x: -126224, z: -135240, yaw: 0, pitch: 0.1, hours: 10 }],
-    ["4-lava-at-night", { fly: true, y: 2500, x: 980351, z: -337562, yaw: 1.2393, pitch: -0.35, hours: 21.5 }],
-    ["5-south-forest", { x: 0, z: 991760, yaw: 0, pitch: 0.0, hours: 15 }],
+    ["3-everest-from-650km", { x: -621000, z: 324000, yaw: 0.785, pitch: 0.1, hours: 10 }],
+    ["3b-everest-from-300km-flying", { fly: true, y: 40000, x: -338000, z: 41000, yaw: 0.785, pitch: 0.12, hours: 15.5 }],
+    ["4-st-helens-from-the-north", { x: 279496, z: -64760, yaw: 3.1416, pitch: 0.12, hours: 15 }],
+    ["5-south-forest", { x: 0, z: 991680, yaw: 0, pitch: 0.0, hours: 15 }],
     ["6-whole-island", { fly: true, y: 1400000, x: 0, z: 2600000, yaw: 0, pitch: -0.5, hours: 12 }],
+    ["7-northeast-desert", { x: 976000, z: -563500, yaw: 1.047, pitch: 0.02, hours: 11 }],
+    ["8-north-highlands", { x: 0, z: -1127000, yaw: 3.27, pitch: 0.04, hours: 9 }],
+    ["9-southwest-plains", { x: -1100000, z: 300000, yaw: 1.3, pitch: 0.03, hours: 17 }],
+    ["10-everest-evening-shadow", { x: 393776, z: -171304, yaw: 4.712, pitch: 0.1, hours: 17.5 }],
   ];
   for (const [name, p] of scenes) {
     const data = JSON.stringify({ game: "WorldShard", v: 2, day: 2, visited: [], playSec: 0, savedAt: 0, ...p });
-    await page.evaluate((d) => localStorage.setItem("worldshard-save-v1", d), data);
+    // a scene change is not a crash: clear the start-up flag so the page
+    // doesn't drop to lite quality
+    await page.evaluate((d) => { localStorage.setItem("worldshard-save-v1", d); sessionStorage.removeItem("worldshard-booting"); }, data);
     await page.reload({ waitUntil: "load" });
     try {
       await page.waitForFunction(() => !document.getElementById("loading"), { timeout: 120000, polling: 500 });

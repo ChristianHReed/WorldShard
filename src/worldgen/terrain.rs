@@ -7,7 +7,7 @@
 //! World space: metres, +x east, +z south, y up, island centre at (0, 0).
 
 use super::island::*;
-use super::noise::{lerp, sm, Rng};
+use super::noise::{angd, lerp, sm, Rng};
 
 /// Metres per design-map pixel. Chosen so the island's land area equals
 /// Australia's (7,688,287 km²): the map island covers 378,277 px².
@@ -24,19 +24,25 @@ pub const WALL_R: f64 = CLOUD_R - 40_000.0;
 /// Nothing but open sea beyond this distance from the centre.
 pub const LAND_R: f64 = 480.0 * METRES_PER_PX;
 
-/// Real heights of the two peaks, metres.
-pub const EVEREST_M: f64 = 8849.0;
-pub const ST_HELENS_M: f64 = 2549.0;
+/// The two central peaks: 25 times their real heights (8,849 m and
+/// 2,549 m), so they tower over an island the size of Australia and can be
+/// seen from anywhere on it.
+pub const PEAK_SCALE: f64 = 25.0;
+pub const EVEREST_M: f64 = PEAK_SCALE * 8849.0;
+pub const ST_HELENS_M: f64 = PEAK_SCALE * 2549.0;
 
-// Height recipe (see `macro_height`). Tuned so the peaks hit their real
-// heights; checked by tests.
-const BASE_M: f64 = 1700.0;
-const EV_MASSIF_M: f64 = 5600.0;
-const EV_MASSIF_R: f64 = 55.0; // px
-const EV_HORN_R: f64 = 1.3; // px (about 6 km: a steep summit pyramid)
-const EV_HORN_M: f64 = 2766.0; // summit = EVEREST_M
-const HEL_M: f64 = 1649.0; // rim = ST_HELENS_M
-const CLIFF_M: f64 = 320.0;
+// Shapes of the giants, metres. The spire and St. Helens' cone are scaled
+// when the world is built so the summits land exactly on the heights above.
+pub const EV_SPIRE_R: f64 = 60_000.0;
+pub const EV_MASSIF_M: f64 = 85_000.0;
+pub const EV_MASSIF_R: f64 = 220_000.0;
+/// Shape of Everest's body: higher = steeper edge, less long apron.
+pub const EV_MASSIF_P: f64 = 1.6;
+pub const HEL_R: f64 = 55_000.0;
+const HEL_CRATER_R: f64 = 11_000.0;
+/// The range of lesser mountains around the giants.
+const RANGE_R: f64 = 260_000.0;
+const CLIFF_M: f64 = 600.0;
 
 pub fn to_map(wx: f64, wz: f64) -> (f64, f64) {
     (CX + wx / METRES_PER_PX, CY + wz / METRES_PER_PX)
@@ -154,6 +160,21 @@ const FIELD_COLS: [[f64; 3]; 6] = [
     [210.0, 214.0, 140.0],
 ];
 
+/// Makes region weights change over a shorter distance (power `p`), so
+/// each region's landform and colour stay distinct up to its border.
+fn sharpen(w: &mut [f64; 6], p: i32) {
+    let mut sum = 0.0;
+    for v in w.iter_mut() {
+        *v = v.powi(p);
+        sum += *v;
+    }
+    if sum > 0.0 {
+        for v in w.iter_mut() {
+            *v /= sum;
+        }
+    }
+}
+
 /// Everything known about one spot of ground.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Sample {
@@ -179,6 +200,12 @@ pub struct Terrain {
     pub island: Island,
     pub lava: Lava,
     pub lakes: Vec<Lake>,
+    /// The summits in world metres, and the heights of Everest's spire and
+    /// St. Helens' cone (set so the summits are exactly EVEREST_M / ST_HELENS_M).
+    pub everest: (f64, f64),
+    pub helens: (f64, f64),
+    pub ev_spire_m: f64,
+    pub hel_m: f64,
 }
 
 /// Map-space measurements for one spot.
@@ -194,7 +221,37 @@ impl Terrain {
     pub fn new() -> Terrain {
         let island = Island::new();
         let lava = build_lava(&island);
-        let mut t = Terrain { island, lava, lakes: Vec::new() };
+        let mut t = Terrain {
+            island,
+            lava,
+            lakes: Vec::new(),
+            everest: to_world(EX, EY),
+            helens: to_world(HX, HY),
+            ev_spire_m: 0.0,
+            hel_m: 0.0,
+        };
+        // size the giants so their summits hit the target heights
+        let (ex, ez) = t.everest;
+        t.ev_spire_m = EVEREST_M - t.height_no_lakes(ex, ez);
+        let rim: Vec<(f64, f64)> = (0..48)
+            .flat_map(|a| (0..20).map(move |k| (a, k)))
+            .map(|(a, k)| {
+                let ang = a as f64 / 48.0 * std::f64::consts::TAU;
+                let d = 5_000.0 + k as f64 * 4_000.0;
+                (t.helens.0 + ang.cos() * d, t.helens.1 + ang.sin() * d)
+            })
+            .collect();
+        let (mut lo, mut hi) = (0.0, 200_000.0);
+        for _ in 0..24 {
+            t.hel_m = (lo + hi) / 2.0;
+            let top = rim.iter().map(|&(x, z)| t.height_no_lakes(x, z)).fold(f64::MIN, f64::max);
+            if top < ST_HELENS_M {
+                lo = t.hel_m;
+            } else {
+                hi = t.hel_m;
+            }
+        }
+        t.hel_m = (lo + hi) / 2.0;
         // Northwest lakes (same placement as the design map)
         let mut r2 = Rng::new(991);
         let mut tries = 0;
@@ -232,43 +289,118 @@ impl Terrain {
         p.l * coast_r(p.deg) * METRES_PER_PX
     }
 
-    /// Height from the map's shapes alone (no ground detail), metres.
-    fn macro_height(&self, p: &MapPt) -> f64 {
-        let d1 = (p.x - EX).hypot(p.y - EY);
-        let d2 = (p.x - HX).hypot(p.y - HY);
-        let rest = self.island.elevation_rest(p.x, p.y, p.r, p.deg, p.l).max(0.0);
-        let mut h = 1.2 + BASE_M * rest.powf(1.3);
-        h += EV_MASSIF_M * (-(d1 / EV_MASSIF_R).powf(1.2)).exp() + EV_HORN_M * (-(d1 / EV_HORN_R)).exp();
-        let hel = (-(d2 / 58.0).powf(1.35)).exp() - 0.528 * (-(d2 / 15.0).powf(2.6)).exp();
-        h += HEL_M * hel.max(0.0);
-        let shore = Self::shore_dist(p);
-        h += cliff_w(p.deg) * CLIFF_M * sm(0.0, 600.0, shore) * sm(230.0, 300.0, p.r);
-        h
+    /// The landform of each region, in metres above the sea (before the
+    /// coast, the region-border ridgelines and the central mountains).
+    fn region_relief(&self, k: usize, x: f64, z: f64) -> f64 {
+        let n = &self.island.noise;
+        match k {
+            // North, rock mines: high, rugged, knife-edged rock mountains
+            // with deep narrow canyons
+            0 => {
+                let r = n.ridged(x / 16_000.0 + 11.0, z / 16_000.0, 5);
+                let crags = n.ridged(x / 3_000.0, z / 3_000.0 + 7.0, 4);
+                let canyon = (1.0 - n.n2(x / 9_000.0 - 3.0, z / 9_000.0 + 1.0).abs()).powi(10);
+                1200.0 + 3800.0 * r.powf(2.2) + 700.0 * (crags - 0.45) * (0.4 + r) - 900.0 * canyon
+            }
+            // Northeast, lava flows and desert: a high plateau of stepped
+            // mesas and buttes, seas of tall dunes, and volcanic cones
+            1 => {
+                let m = n.fbm(x / 14_000.0 - 4.0, z / 14_000.0, 4);
+                let mesas = sm(0.03, 0.04, m) * 380.0 + sm(0.17, 0.178, m) * 300.0 + sm(0.3, 0.306, m) * 220.0;
+                let sand = sm(0.02, -0.08, m);
+                let u = x * 0.8 + z * 0.6;
+                let wave = (u / 1500.0 + 2.5 * n.n2(x / 5_000.0, z / 5_000.0)) * std::f64::consts::PI;
+                let dunes = (1.0 - wave.sin().abs()).powf(1.5) * (130.0 + 60.0 * n.n2(x / 9_000.0, z / 9_000.0)) * sand;
+                // smaller dunes riding on the big ones, crests across the wind
+                let u2 = x * 0.75 - z * 0.66;
+                let wave2 = (u2 / 320.0 + 1.6 * n.n2(x / 1_400.0 + 3.0, z / 1_400.0)) * std::f64::consts::PI;
+                let ripples = (1.0 - wave2.sin().abs()).powi(2) * 28.0 * sm(0.03, -0.02, m);
+                let c = n.fbm(x / 6_000.0 + 13.0, z / 6_000.0 - 2.0, 2);
+                let cones = sm(0.32, 0.52, c).powi(2) * 750.0;
+                700.0 + 200.0 * n.fbm(x / 40_000.0, z / 40_000.0 + 3.0, 3) + mesas + dunes + ripples + cones
+            }
+            // Southeast, mid forest with fields: soft rolling green hills
+            2 => 180.0 + 160.0 * n.fbm(x / 8_000.0 + 5.0, z / 8_000.0, 4) + 50.0 * n.fbm(x / 2_000.0, z / 2_000.0 - 9.0, 3),
+            // South, dark forest: steep, tall wooded hills and deep ravines
+            3 => {
+                let r = n.ridged(x / 9_000.0 - 7.0, z / 9_000.0 + 3.0, 4);
+                let ravine = (1.0 - n.n2(x / 4_000.0 + 2.0, z / 4_000.0).abs()).powi(6);
+                500.0 + 1400.0 * r.powf(1.4) - 300.0 * ravine
+            }
+            // Southwest, grasslands: flat open plains with lone, steep-sided
+            // rock domes rising out of them
+            4 => {
+                let b = n.fbm(x / 12_000.0 + 2.0, z / 12_000.0, 3);
+                let dome = sm(0.42, 0.47, b) * (260.0 + 120.0 * n.n2(x / 3_000.0, z / 3_000.0));
+                110.0 + 12.0 * n.fbm(x / 9_000.0 - 1.0, z / 9_000.0, 3) + dome
+            }
+            // Northwest, lakes and swampy forest: flat, low wetland
+            _ => 25.0 + 6.0 * n.fbm(x / 3_000.0 + 8.0, z / 3_000.0, 3),
+        }
     }
 
-    /// Ground-level detail the map is too coarse to show: rolling hills,
-    /// rugged high ground, the rocky North, and small bumps underfoot.
-    fn detail(&self, p: &MapPt, wx: f64, wz: f64, hm: f64) -> f64 {
+    /// Ground height on land, metres (before lakes).
+    fn land_height(&self, p: &MapPt, wx: f64, wz: f64) -> f64 {
         let n = &self.island.noise;
-        let shore = sm(0.0, 3000.0, Self::shore_dist(p));
-        if shore <= 0.0 {
-            return 0.0;
-        }
-        let d1 = (p.x - EX).hypot(p.y - EY);
-        let d2 = (p.x - HX).hypot(p.y - HY);
-        let mut d = 55.0 * n.fbm(wx / 9000.0 + 31.7, wz / 9000.0 - 12.3, 4);
-        let rug = sm(1500.0, 4500.0, hm) * sm(0.8, 4.0, d1) * sm(10.0, 28.0, d2);
-        if rug > 0.0 {
-            d += (n.ridged(wx / 14000.0 - 51.1, wz / 14000.0 + 7.7, 5) - 0.45) * 1400.0 * rug;
-        }
+        let shore = Self::shore_dist(p);
+        let (d1, d2) = ((wx - self.everest.0).hypot(wz - self.everest.1), (wx - self.helens.0).hypot(wz - self.helens.1));
+        // each region's landform, rising from low coasts
+        let inland = sm(0.0, 45_000.0, shore);
         let mut wr = [0.0; 6];
         self.island.region_weights(p.deg, p.x, p.y, &mut wr);
-        if wr[0] > 0.0 {
-            d += wr[0] * (n.ridged(wx / 4000.0 + 77.0, wz / 4000.0, 4) - 0.45) * 260.0;
+        sharpen(&mut wr, 4);
+        let mut h = 1.2;
+        for (k, &w) in wr.iter().enumerate() {
+            if w > 0.0 {
+                h += w * inland * self.region_relief(k, wx, wz);
+            }
         }
-        d += 5.0 * n.fbm(wx / 700.0 - 3.3, wz / 700.0 + 9.1, 3) + 0.8 * n.fbm(wx / 110.0 + 1.9, wz / 110.0, 2);
-        // Everest's summit stays at exactly its real height
-        d * shore * sm(0.3, 2.5, d1)
+        // the region borders are ridgelines
+        if p.r > 110.0 {
+            let mut br: f64 = 0.0;
+            for k in 0..6 {
+                let pd = (angd(p.deg - self.island.border_angle(k, p.r)) * D2R * p.r).abs();
+                br = br.max((-(pd / 22.0).powi(2)).exp());
+            }
+            if br > 0.01 {
+                let ridge = 0.55 + 0.45 * n.ridged(wx / 9_000.0 + 3.1, wz / 9_000.0, 4);
+                h += br * 1300.0 * ridge * sm(110.0, 190.0, p.r) * inland;
+            }
+        }
+        // a range of lesser mountains around the giants
+        let mask = ((-(d1 / RANGE_R).powf(1.6)).exp() + 0.35 * (-(d2 / 110_000.0).powf(1.6)).exp()).min(1.0);
+        if mask > 0.002 {
+            let r = n.ridged(wx / 45_000.0 - 21.0, wz / 45_000.0 + 8.0, 5);
+            let range = 2200.0 + 8000.0 * r.powf(1.6) + 1500.0 * (n.ridged(wx / 12_000.0 + 5.0, wz / 12_000.0, 4) - 0.45);
+            h += mask * range * sm(6_000.0, 30_000.0, d1) * sm(12_000.0, 70_000.0, d2) * inland;
+        }
+        // Mount Everest: a broad massif and a steep summit spire, ribbed with ridges
+        if d1 < 900_000.0 {
+            let ev = self.ev_spire_m * (-(d1 / EV_SPIRE_R)).exp() + EV_MASSIF_M * (-(d1 / EV_MASSIF_R).powf(EV_MASSIF_P)).exp();
+            h += ev;
+            h += (n.ridged(wx / 9_000.0 + 40.0, wz / 9_000.0, 5) - 0.45) * 0.06 * ev * sm(1_500.0, 12_000.0, d1);
+        }
+        // Mount St. Helens: a volcanic cone with its crater breached to the north
+        if d2 < 400_000.0 {
+            let cone = (-(d2 / HEL_R)).exp();
+            let crater = (-(d2 / HEL_CRATER_R).powf(2.6)).exp();
+            let ang = (wz - self.helens.1).atan2(wx - self.helens.0).to_degrees();
+            let north = (-(angd(ang + 90.0) / 35.0).powi(2)).exp();
+            let breach = north * (-(d2 / (2.4 * HEL_CRATER_R)).powi(2)).exp();
+            h += self.hel_m * (cone - 0.4 * crater - 0.25 * breach).max(0.0);
+        }
+        // white cliffs along the east coast
+        h += cliff_w(p.deg) * CLIFF_M * sm(0.0, 500.0, shore) * sm(230.0, 300.0, p.r);
+        // lava flows run in shallow channels
+        let crust = self.lava.crust_at(p.x, p.y);
+        if crust > 0.0 {
+            h -= 18.0 * sm(0.0, 0.3, crust);
+        }
+        // small bumps underfoot (none at the summits)
+        h += (5.0 * n.fbm(wx / 700.0 - 3.3, wz / 700.0 + 9.1, 3) + 0.8 * n.fbm(wx / 110.0 + 1.9, wz / 110.0, 2))
+            * sm(0.0, 3000.0, shore)
+            * sm(300.0, 3000.0, d1);
+        h
     }
 
     fn sea_floor(shore: f64) -> f64 {
@@ -285,8 +417,7 @@ impl Terrain {
         if p.l <= 0.0 {
             return Self::sea_floor(Self::shore_dist(&p));
         }
-        let hm = self.macro_height(&p);
-        hm + self.detail(&p, wx, wz, hm)
+        self.land_height(&p, wx, wz)
     }
 
     /// The lake a spot is in (or near), with its scaled distance (1 = shore).
@@ -310,6 +441,40 @@ impl Terrain {
     }
 
     /// Ground height in metres.
+    /// How much the two giant peaks shade the point (x, y, z) from a light
+    /// in direction `l` (toward the light): 0 = lit, 1 = fully shaded. The
+    /// same sum as the terrain shader (haze.wgsl), so the player's own light
+    /// matches the shadows drawn on the land.
+    pub fn giant_shadow(&self, p: [f64; 3], l: [f64; 3]) -> f64 {
+        let len = (l[0] * l[0] + l[1] * l[1] + l[2] * l[2]).sqrt().max(1e-9);
+        let l = [l[0] / len, l[1] / len, l[2] / len];
+        let lh2 = (l[0] * l[0] + l[2] * l[2]).max(1e-6);
+        let mut shade: f64 = 0.0;
+        for k in 0..2 {
+            let (c, r) = if k == 0 { (self.everest, EV_SPIRE_R) } else { (self.helens, HEL_R) };
+            let t_mid = ((c.0 - p[0]) * l[0] + (c.1 - p[2]) * l[2]) / lh2;
+            if t_mid <= 0.0 {
+                continue;
+            }
+            let (t0, t1) = ((t_mid - 3.0 * r).max(3000.0), t_mid + 2.0 * r);
+            let mut worst = f64::MIN;
+            for i in 0..20 {
+                let t = t0 + (t1 - t0) * (i as f64 + 0.5) / 20.0;
+                let q = [p[0] + l[0] * t, p[1] + l[1] * t, p[2] + l[2] * t];
+                let d = (q[0] - c.0).hypot(q[2] - c.1);
+                let top = if k == 0 {
+                    self.ev_spire_m * (-d / EV_SPIRE_R).exp() + EV_MASSIF_M * (-(d / EV_MASSIF_R).powf(EV_MASSIF_P)).exp()
+                } else {
+                    self.hel_m * (-d / HEL_R).exp()
+                };
+                worst = worst.max(top - q[1]);
+            }
+            let soft = 400.0 + 0.004 * t_mid;
+            shade = shade.max(sm(-soft, soft, worst));
+        }
+        shade
+    }
+
     pub fn height(&self, wx: f64, wz: f64) -> f64 {
         let h = self.height_no_lakes(wx, wz);
         match self.lake_at(wx, wz) {
@@ -326,11 +491,11 @@ impl Terrain {
         let mut s = Sample { shore, ..Default::default() };
         let (mut cr, mut cg, mut cb);
         if p.l > 0.0 {
-            let hm = self.macro_height(&p);
-            let mut h = hm + self.detail(&p, wx, wz, hm);
+            let mut h = self.land_height(&p, wx, wz);
             let (x, y) = (p.x, p.y);
             let mut wr = [0.0; 6];
             self.island.region_weights(p.deg, x, y, &mut wr);
+            sharpen(&mut wr, 2);
             let (mut fd, mut f0, mut f1, mut f2) = (0.0, 0.0, 0.0, 0.0);
             cr = 0.0;
             cg = 0.0;
@@ -370,7 +535,9 @@ impl Terrain {
                     cb += (c[2] - cb) * t;
                 }};
             }
-            // high ground: tan, then grey rock, then snow (by real height)
+            // the North's highlands are bare grey rock (rock mines)
+            mix!([128.0, 125.0, 122.0], wr[0] * sm(700.0, 1600.0, h) * 0.75);
+            // high ground: tan, then grey rock, then snow (by height)
             mix!([176.0, 160.0, 118.0], sm(2200.0, 3600.0, h) * 0.85);
             mix!([150.0, 146.0, 140.0], sm(3400.0, 4700.0, h));
             mix!([236.0, 241.0, 250.0], sm(4900.0, 5700.0, h + 300.0 * n.n2(wx / 3000.0, wz / 3000.0)));
@@ -464,10 +631,10 @@ impl Terrain {
             return ("Rim Sea", "The bowl of water around the island");
         }
         let h = self.height(wx, wz);
-        if (mx - EX).hypot(my - EY) < 40.0 && h > 4500.0 {
+        if (mx - EX).hypot(my - EY) < 70.0 && h > 40_000.0 {
             return ("Mount Everest", "The highest peak on the shard");
         }
-        if (mx - HX).hypot(my - HY) < 30.0 && h > 1500.0 {
+        if (mx - HX).hypot(my - HY) < 30.0 && h > 15_000.0 {
             return ("Mount St. Helens", "The volcano beside Everest");
         }
         let g = &REGIONS[region_index((my - CY).atan2(mx - CX) / D2R)];
@@ -501,11 +668,36 @@ mod tests {
     }
 
     #[test]
-    fn peaks_have_real_heights() {
+    fn everest_shades_the_land_behind_it() {
+        let t = Terrain::new();
+        let (ex, ez) = t.everest;
+        // low evening sun in the west: east of Everest is in its shadow,
+        // west of it is lit, and the summit is always lit
+        let sun = [-1.0, 0.15, 0.0];
+        let east = [ex + 300_000.0, t.height(ex + 300_000.0, ez) + 2.0, ez];
+        let west = [ex - 300_000.0, t.height(ex - 300_000.0, ez) + 2.0, ez];
+        let top = [ex, EVEREST_M + 10.0, ez];
+        assert!(t.giant_shadow(east, sun) > 0.9);
+        assert!(t.giant_shadow(west, sun) < 0.1);
+        assert!(t.giant_shadow(top, sun) < 0.1);
+        // high noon: no long shadows
+        assert!(t.giant_shadow(east, [0.0, 1.0, 0.1]) < 0.1);
+    }
+
+    #[test]
+    fn peaks_have_their_heights() {
         let t = Terrain::new();
         let (ex, ez) = to_world(EX, EY);
         let ev = t.height(ex, ez);
         assert!((ev - EVEREST_M).abs() < 15.0, "Everest {ev}");
+        // Everest is the highest point anywhere
+        let mut top: f64 = 0.0;
+        for j in -60..=60 {
+            for i in -60..=60 {
+                top = top.max(t.height(ex + i as f64 * 8000.0, ez + j as f64 * 8000.0));
+            }
+        }
+        assert!(top <= EVEREST_M + 1.0, "higher than Everest: {top}");
         // nothing on the island is higher than Everest; St. Helens' rim is its real height
         let (hx, hz) = to_world(HX, HY);
         // St. Helens: highest point of the volcano (within 20 map px of its centre)
@@ -518,7 +710,7 @@ mod tests {
                 }
             }
         }
-        assert!((hel - ST_HELENS_M).abs() < 60.0, "St. Helens {hel}");
+        assert!((hel - ST_HELENS_M).abs() < 300.0, "St. Helens {hel}");
     }
 
     #[test]

@@ -12,7 +12,8 @@ use std::collections::{HashMap, HashSet};
 use bevy::asset::{AssetId, AssetMetaCheck, RenderAssetUsages};
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::input::mouse::MouseMotion;
-use bevy::pbr::{DistanceFog, FogFalloff};
+use bevy::pbr::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, DistanceFog, ExtendedMaterial, FogFalloff, MaterialExtension, NotShadowCaster};
+use bevy::render::render_resource::{AsBindGroup, ShaderRef, ShaderType};
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::primitives::Aabb;
@@ -24,7 +25,7 @@ use worldshard::lod::{self, NodeKey};
 use worldshard::meshgen::{self, model, MeshData, Placement, PropKinds, Tint, DETAIL_CELL, GRASS_CELL, MODELS, PROP_CELL};
 use worldshard::save::{SaveData, STORAGE_KEY};
 use worldshard::sky::{clock_text, sun_state};
-use worldshard::worldgen::terrain::WALL_R;
+use worldshard::worldgen::terrain::{EV_MASSIF_M, EV_MASSIF_P, EV_MASSIF_R, EV_SPIRE_R, HEL_R, WALL_R};
 use worldshard::worldgen::Terrain;
 
 // Pulled in only to switch on browser randomness for Bevy's dependencies.
@@ -46,12 +47,16 @@ struct Quality {
     detail_radius: f64,
     grass_radius: f64,
     msaa: bool,
+    /// Sun shadows reach this far from the camera (0: off), in this many steps.
+    shadow_distance: f32,
+    cascades: usize,
+    shadow_map: usize,
     name: &'static str,
 }
 
 impl Quality {
     fn detect() -> Quality {
-        let full = Quality { scale: None, split_k: lod::SPLIT_K, prop_radius: 520.0, near_radius: 100.0, detail_radius: 44.0, grass_radius: 56.0, msaa: true, name: "full" };
+        let full = Quality { scale: None, split_k: lod::SPLIT_K, prop_radius: 520.0, near_radius: 100.0, detail_radius: 44.0, grass_radius: 56.0, msaa: true, shadow_distance: 400.0, cascades: 1, shadow_map: 2048, name: "full" };
         #[cfg(target_arch = "wasm32")]
         {
             let Some(w) = web_sys::window() else { return full };
@@ -66,10 +71,10 @@ impl Quality {
                 .map_or(false, |v| v == "lite");
             let phone = iw.min(ih) < 700.0;
             if lite {
-                return Quality { scale: Some(dpr.min(0.75)), split_k: 0.6, prop_radius: 200.0, near_radius: 50.0, detail_radius: 0.0, grass_radius: 0.0, msaa: false, name: "lite" };
+                return Quality { scale: Some(dpr.min(0.75)), split_k: 0.6, prop_radius: 200.0, near_radius: 50.0, detail_radius: 0.0, grass_radius: 0.0, msaa: false, shadow_distance: 0.0, cascades: 1, shadow_map: 512, name: "lite" };
             }
             if phone {
-                return Quality { scale: Some(dpr.min(1.0)), split_k: 0.8, prop_radius: 320.0, near_radius: 70.0, detail_radius: 30.0, grass_radius: 40.0, msaa: true, name: "phone" };
+                return Quality { scale: Some(dpr.min(1.0)), split_k: 0.8, prop_radius: 320.0, near_radius: 70.0, detail_radius: 30.0, grass_radius: 40.0, msaa: true, shadow_distance: 160.0, cascades: 1, shadow_map: 1024, name: "phone" };
             }
             return Quality { scale: Some(dpr.min(1.5)), ..full };
         }
@@ -90,9 +95,48 @@ struct GameWorld(Terrain);
 #[derive(Resource)]
 struct Kinds(PropKinds);
 
+/// Haze that is thick near the ground and thins with height: distant
+/// lowlands fade into the sky while far summits stay visible.
+const HAZE_DENSITY: f32 = 2.8e-6;
+const HAZE_SCALE_HEIGHT: f32 = 8000.0;
+
+/// Terrain material: standard lighting plus the height haze (haze.wgsl).
+/// All in one uniform block: WebGL2 allows only 14 per shader and Bevy's
+/// standard lighting already uses most of them.
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
+struct Haze {
+    #[uniform(100)]
+    u: HazeUniform,
+}
+
+#[derive(ShaderType, Reflect, Debug, Clone)]
+struct HazeUniform {
+    color: Vec4,
+    params: Vec4,
+    /// toward the sun (xyz), shadow strength (w)
+    sun_dir: Vec4,
+    /// Everest relative to the camera (x, z), spire height and radius
+    everest: Vec4,
+    /// Everest's body: height, radius, shape exponent
+    everest_base: Vec4,
+    /// St. Helens relative to the camera (x, z), cone height and radius
+    helens: Vec4,
+}
+
+impl MaterialExtension for Haze {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/haze.wgsl".into()
+    }
+    fn deferred_fragment_shader() -> ShaderRef {
+        "shaders/haze.wgsl".into()
+    }
+}
+
+type GroundMaterial = ExtendedMaterial<StandardMaterial, Haze>;
+
 #[derive(Resource)]
 struct Mats {
-    ground: Handle<StandardMaterial>,
+    ground: Handle<GroundMaterial>,
     water: Handle<StandardMaterial>,
     lava: Handle<StandardMaterial>,
     plants: Handle<StandardMaterial>,
@@ -250,6 +294,7 @@ fn main() {
             }),
             ..default()
         }))
+        .add_plugins(MaterialPlugin::<GroundMaterial>::default())
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -289,7 +334,7 @@ fn spawn_anchored(
             continue;
         }
         let (mesh, aabb) = to_mesh(data);
-        commands.spawn((Mesh3d(assets.add(mesh)), MeshMaterial3d(mat), aabb, ChildOf(parent)));
+        commands.spawn((Mesh3d(assets.add(mesh)), MeshMaterial3d(mat), aabb, NotShadowCaster, ChildOf(parent)));
     }
     parent
 }
@@ -298,6 +343,7 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut ground_materials: ResMut<Assets<GroundMaterial>>,
     asset_server: Res<AssetServer>,
     quality: Res<Quality>,
 ) {
@@ -305,13 +351,25 @@ fn setup(
     let world = Terrain::new();
 
     let mats = Mats {
-        ground: materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            perceptual_roughness: 0.92,
-            reflectance: 0.12,
-            double_sided: true,
-            cull_mode: None,
-            ..default()
+        ground: ground_materials.add(GroundMaterial {
+            base: StandardMaterial {
+                base_color: Color::WHITE,
+                perceptual_roughness: 0.92,
+                reflectance: 0.12,
+                double_sided: true,
+                cull_mode: None,
+                // the haze is done in the terrain shader
+                fog_enabled: false,
+                ..default()
+            },
+            extension: Haze { u: HazeUniform {
+                color: Vec4::new(0.5, 0.62, 0.8, 1.0),
+                params: Vec4::new(HAZE_DENSITY, HAZE_SCALE_HEIGHT, 0.0, 0.0),
+                sun_dir: Vec4::new(0.5, 0.7, 0.3, 0.0),
+                everest: Vec4::ZERO,
+                everest_base: Vec4::new(EV_MASSIF_M as f32, EV_MASSIF_R as f32, EV_MASSIF_P as f32, 0.0),
+                helens: Vec4::ZERO,
+            } },
         }),
         water: materials.add(StandardMaterial {
             base_color: Color::WHITE,
@@ -352,10 +410,25 @@ fn setup(
         ..default()
     });
     let (sky_mesh, sky_aabb) = to_mesh(meshgen::sky_dome(15_000_000.0));
-    commands.spawn((Mesh3d(meshes.add(sky_mesh)), MeshMaterial3d(sky_mat), sky_aabb, Transform::default(), SkyDome));
+    // the sky surrounds everything, so it must not cast a shadow
+    commands.spawn((Mesh3d(meshes.add(sky_mesh)), MeshMaterial3d(sky_mat), sky_aabb, Transform::default(), SkyDome, NotShadowCaster));
 
     // ---- sunlight (WebGL2 allows one directional light: sun by day, moon by night) ----
-    commands.spawn((DirectionalLight { illuminance: 7000.0, shadows_enabled: false, ..default() }, Transform::default(), Sun));
+    let shadows = quality.shadow_distance > 0.0;
+    let mut sun = commands.spawn((DirectionalLight { illuminance: 6000.0, shadows_enabled: shadows, ..default() }, Transform::default(), Sun));
+    if shadows {
+        sun.insert(
+            CascadeShadowConfigBuilder {
+                num_cascades: quality.cascades,
+                minimum_distance: 0.3,
+                first_cascade_far_bound: quality.shadow_distance * 0.12,
+                maximum_distance: quality.shadow_distance,
+                overlap_proportion: 0.2,
+            }
+            .build(),
+        );
+    }
+    commands.insert_resource(DirectionalLightShadowMap { size: quality.shadow_map });
     commands.insert_resource(AmbientLight { color: Color::WHITE, brightness: 1200.0, ..default() });
 
     // ---- the player: resume the save, or start in the Southwest grasslands ----
@@ -402,13 +475,13 @@ fn setup(
     commands.spawn((
         Camera3d::default(),
         if quality.msaa { Msaa::Sample4 } else { Msaa::Off },
-        Projection::Perspective(PerspectiveProjection { fov: 65f32.to_radians(), near: 0.3, far: 30_000_000.0, ..default() }),
+        Projection::Perspective(PerspectiveProjection { fov: 55f32.to_radians(), near: 0.3, far: 30_000_000.0, ..default() }),
         Transform::from_xyz(0.0, player.y as f32, 0.0),
         DistanceFog {
             color: Color::srgb(0.72, 0.82, 0.93),
             directional_light_color: Color::srgba(1.0, 0.92, 0.75, 0.45),
             directional_light_exponent: 24.0,
-            falloff: FogFalloff::from_visibility_colors(90_000.0, Color::srgb(0.35, 0.5, 0.66), Color::srgb(0.8, 0.86, 1.0)),
+            falloff: FogFalloff::Exponential { density: HAZE_DENSITY },
         },
         ColorGrading::with_identical_sections(
             ColorGradingGlobal { post_saturation: 1.12, ..default() },
@@ -777,9 +850,6 @@ fn stream_world(
         }
         let c = meshgen::build_chunk(t, *k);
         let mut parts = Vec::new();
-        if let Some(m) = c.terrain {
-            parts.push((m, mats.ground.clone()));
-        }
         if let Some(m) = c.water {
             parts.push((m, mats.water.clone()));
         }
@@ -787,6 +857,10 @@ fn stream_world(
             parts.push((m, mats.lava.clone()));
         }
         let e = spawn_anchored(&mut commands, &mut assets, Anchor { x: c.origin[0], y: 0.0, z: c.origin[1] }, parts);
+        if let Some(m) = c.terrain {
+            let (mesh, aabb) = to_mesh(m);
+            commands.spawn((Mesh3d(assets.add(mesh)), MeshMaterial3d(mats.ground.clone()), aabb, ChildOf(e)));
+        }
         st.chunks.insert(*k, e);
         built += 1;
     }
@@ -963,6 +1037,7 @@ fn spawn_models(
     kinds: &PropKinds,
     anchor: Anchor,
     placements: &[Placement],
+    cast_shadows: bool,
 ) -> Entity {
     let parent = commands.spawn((anchor, Transform::default(), Visibility::default())).id();
     for p in placements {
@@ -973,7 +1048,10 @@ fn spawn_models(
         let tf = Transform { translation: Vec3::from_array(p.pos), rotation: Quat::from_rotation_y(p.rot), scale: Vec3::splat(p.scale) };
         for (k, &part) in info.parts.iter().enumerate() {
             let mat = plant_material(cache, materials, ma, part, p.tint);
-            commands.spawn((Mesh3d(ma.parts[p.model as usize][k].clone()), MeshMaterial3d(mat), tf, ChildOf(parent)));
+            let mut e = commands.spawn((Mesh3d(ma.parts[p.model as usize][k].clone()), MeshMaterial3d(mat), tf, ChildOf(parent)));
+            if !cast_shadows {
+                e.insert(NotShadowCaster);
+            }
         }
     }
     // mine entrances have no model yet: use the stand-in shapes
@@ -1025,7 +1103,7 @@ fn stream_plants(
         }
         let pl_list = pt.placements.entry(c).or_insert_with(|| meshgen::prop_placements(t, c.0, c.1));
         let (x, z) = ((c.0 as f64 + 0.5) * PROP_CELL, (c.1 as f64 + 0.5) * PROP_CELL);
-        let e = spawn_models(&mut commands, &mut meshes, &mut materials, &mut pt.materials, &ma, &mats.plants, &kinds.0, Anchor { x, y: 0.0, z }, pl_list);
+        let e = spawn_models(&mut commands, &mut meshes, &mut materials, &mut pt.materials, &ma, &mats.plants, &kinds.0, Anchor { x, y: 0.0, z }, pl_list, true);
         pt.near.insert(c, e);
         budget -= 1;
     }
@@ -1078,7 +1156,7 @@ fn stream_plants(
         let list = meshgen::detail_placements(t, c.0, c.1);
         let e = (!list.is_empty()).then(|| {
             let (x, z) = ((c.0 as f64 + 0.5) * DETAIL_CELL, (c.1 as f64 + 0.5) * DETAIL_CELL);
-            spawn_models(&mut commands, &mut meshes, &mut materials, &mut pt.materials, &ma, &mats.plants, &kinds.0, Anchor { x, y: 0.0, z }, &list)
+            spawn_models(&mut commands, &mut meshes, &mut materials, &mut pt.materials, &ma, &mats.plants, &kinds.0, Anchor { x, y: 0.0, z }, &list, false)
         });
         pt.detail.insert(c, e);
         budget -= 1;
@@ -1226,34 +1304,46 @@ fn sky_and_light(
     mut fogs: Query<&mut DistanceFog>,
     dome: Query<&MeshMaterial3d<StandardMaterial>, With<SkyDome>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut ground_materials: ResMut<Assets<GroundMaterial>>,
+    mats: Res<Mats>,
 ) {
     let s = sun_state(pl.hours);
     clear.0 = rgb(s.sky_col);
-    ambient.brightness = 550.0 + 1050.0 * s.day;
+    ambient.brightness = 420.0 + 820.0 * s.day;
     let amax = s.sky_amb[2].max(0.01);
     ambient.color = rgb([s.sky_amb[0] / amax, s.sky_amb[1] / amax, 1.0]);
+    // the light comes from the sun by day and the moon by night; the giants'
+    // shadows follow it
+    let sun = 6000.0 * s.sun_col[0].max(s.sun_col[1]).max(s.sun_col[2]);
+    let moon = 9000.0 * s.moon_col[2];
+    let (col, dir, lux, strength) = if sun >= moon { (s.sun_col, s.sun_dir, sun, s.day) } else { ([0.6, 0.7, 1.0], s.moon_dir, moon, 0.5 * (1.0 - s.day)) };
+    let light_dir = [dir[0], dir[1].max(0.02), dir[2]];
+    // standing in a giant's shadow dims the light on everything around you
+    let shade_here = (w.0.giant_shadow([pl.x, pl.y + 2.0, pl.z], [light_dir[0] as f64, light_dir[1] as f64, light_dir[2] as f64]) as f32) * strength;
     if let Ok((mut light, mut tf)) = sky_light.single_mut() {
-        let sun = 6000.0 * s.sun_col[0].max(s.sun_col[1]).max(s.sun_col[2]);
-        let moon = 9000.0 * s.moon_col[2];
-        let (col, dir, lux) = if sun >= moon { (s.sun_col, s.sun_dir, sun) } else { ([0.6, 0.7, 1.0], s.moon_dir, moon) };
         let m = col[0].max(col[1]).max(col[2]).max(0.001);
-        light.illuminance = lux;
+        light.illuminance = lux * (1.0 - 0.85 * shade_here);
         light.color = rgb([col[0] / m, col[1] / m, col[2] / m]);
         *tf = Transform::IDENTITY.looking_to(-Vec3::from_array(dir), Vec3::Y);
     }
-    // haze: thick near the ground, thinner high up so the island can be seen whole
-    let ground = meshgen::drawn_height(&w.0, pl.x, pl.z).max(0.0);
-    let above = (pl.y - ground).max(0.0) as f32;
-    let vis = 90_000.0 + above * 5.0;
+    // haze: the terrain shader works it out along each line of sight; water,
+    // plants and clouds use the haze density at the camera's height
     let day = s.day;
+    let haze = rgb(s.fog_col);
+    let cam_density = HAZE_DENSITY * (-(pl.y.max(0.0) as f32) / HAZE_SCALE_HEIGHT).exp();
     for mut fog in &mut fogs {
-        fog.color = rgb(s.fog_col);
-        fog.falloff = FogFalloff::from_visibility_colors(
-            vis,
-            rgb([0.35 * day + 0.03, 0.5 * day + 0.04, 0.66 * day + 0.08]),
-            rgb([s.fog_col[0] * 1.05, s.fog_col[1] * 1.05, s.fog_col[2] * 1.08]),
-        );
+        fog.color = haze;
+        fog.falloff = FogFalloff::Exponential { density: cam_density };
         fog.directional_light_color = Color::srgba(1.0, 0.9, 0.7, 0.45 * day);
+    }
+    if let Some(g) = ground_materials.get_mut(&mats.ground) {
+        let lin = haze.to_linear();
+        g.extension.u.color = Vec4::new(lin.red, lin.green, lin.blue, 1.0);
+        g.extension.u.sun_dir = Vec4::new(light_dir[0], light_dir[1], light_dir[2], strength);
+        g.extension.u.params.z = shade_here;
+        let t = &w.0;
+        g.extension.u.everest = Vec4::new((t.everest.0 - pl.x) as f32, (t.everest.1 - pl.z) as f32, t.ev_spire_m as f32, EV_SPIRE_R as f32);
+        g.extension.u.helens = Vec4::new((t.helens.0 - pl.x) as f32, (t.helens.1 - pl.z) as f32, t.hel_m as f32, HEL_R as f32);
     }
     if let Ok(h) = dome.single() {
         if let Some(mat) = materials.get_mut(&h.0) {

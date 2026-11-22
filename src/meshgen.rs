@@ -114,7 +114,7 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
         out.water = Some(w);
         return out;
     }
-    let n = CHUNK_N;
+    let n = crate::lod::chunk_n(&key);
     let cell = size / n as f64;
     let (x0, z0) = key.corner();
     let g = n + 3; // heights with a one-cell border, for normals
@@ -154,11 +154,22 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
             let (hu, hd) = (hb[j * g + i + 1], hb[(j + 2) * g + i + 1]);
             let nrm = norm3([(hl - hr) as f32, (2.0 * cell) as f32, (hu - hd) as f32]);
             let mut c = if s.h > 0.0 && s.glow < 0.05 { ground_grade(s.col) } else { s.col };
+            // hollows and valleys darker, crests a little lighter (soft shading)
+            if s.h > 0.0 {
+                let lap = ((hl + hr + hu + hd) / 4.0 - s.h) / (cell * 0.5);
+                let occl = lap.clamp(-1.0, 1.0) as f32;
+                c = scale3(c, 1.0 - 0.32 * occl.max(0.0) + 0.06 * (-occl).max(0.0));
+            }
             // steep slopes show rock; flat high ground keeps its grass or snow
             if s.h > 0.0 {
                 // high up, rock shows through the snow on gentler slopes too
                 let high = sm(3800.0, 4800.0, s.h) as f32;
-                let steep_low = 1.0 - sm(0.62, 0.86, nrm[1] as f64) as f32;
+                // the rocky North shows bare rock on gentler slopes too
+                let steep_low = if s.region == 0 && s.h > 400.0 {
+                    1.0 - sm(0.72, 0.93, nrm[1] as f64) as f32
+                } else {
+                    1.0 - sm(0.62, 0.86, nrm[1] as f64) as f32
+                };
                 let steep_high = 1.0 - sm(0.80, 0.95, nrm[1] as f64) as f32;
                 let steep = steep_low + (steep_high - steep_low) * high;
                 let rock = mix3([0.50, 0.47, 0.43], [0.46, 0.46, 0.52], high);
@@ -178,15 +189,20 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
             m.indices.extend_from_slice(&[a, c, b, b, c, d]);
         }
     }
-    // skirts hide the cracks between chunks of different detail
-    let skirt = (cell * 2.0 + 4.0) as f32;
-    let edges: [Vec<(usize, usize)>; 4] = [
-        (0..v).map(|i| (i, 0)).collect(),
-        (0..v).map(|i| (n, i)).collect(),
-        (0..v).rev().map(|i| (i, n)).collect(),
-        (0..v).rev().map(|i| (0, i)).collect(),
+    // skirts hide the cracks between chunks of different detail (deeper
+    // on steep mountain chunks, where neighbours differ more)
+    let (hmin, hmax) = hb.iter().fold((f64::MAX, f64::MIN), |(a, b), &h| (a.min(h), b.max(h)));
+    let skirt = (cell * 2.0 + 4.0 + (hmax - hmin) * 0.12) as f32;
+    // they lean outward, under the neighbour, so a crack can't be seen even
+    // when the skirt is seen edge-on
+    let flare = (cell * 0.5) as f32;
+    let edges: [(Vec<(usize, usize)>, [f32; 2]); 4] = [
+        ((0..v).map(|i| (i, 0)).collect(), [0.0, -1.0]),
+        ((0..v).map(|i| (n, i)).collect(), [1.0, 0.0]),
+        ((0..v).rev().map(|i| (i, n)).collect(), [0.0, 1.0]),
+        ((0..v).rev().map(|i| (0, i)).collect(), [-1.0, 0.0]),
     ];
-    for edge in &edges {
+    for (edge, out) in &edges {
         for w in edge.windows(2) {
             let (i0, j0) = w[0];
             let (i1, j1) = w[1];
@@ -195,11 +211,15 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
             for &k in &[a, b] {
                 let mut p = m.positions[k as usize];
                 p[1] -= skirt;
+                p[0] += out[0] * flare;
+                p[2] += out[1] * flare;
                 m.positions.push(p);
                 m.normals.push(m.normals[k as usize]);
                 m.colors.push(m.colors[k as usize]);
             }
-            m.indices.extend_from_slice(&[a, base, b, b, base, base + 1]);
+            // front face outward, so the side you see is lit like the ground
+            // (seen from behind, its normal flips and it goes dark blue)
+            m.indices.extend_from_slice(&[a, b, base, b, base + 1, base]);
         }
     }
     if any_land {
@@ -226,7 +246,8 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
                 }
                 wm.quad(p, [0.0, 1.0, 0.0], c);
             }
-            if corners.iter().any(|&(a, b)| s_at(a, b).glow > 0.2) {
+            // glowing lava only on detailed chunks (from afar it is in the ground colour)
+            if cell <= 64.0 && corners.iter().any(|&(a, b)| s_at(a, b).glow > 0.2) {
                 let lift = (0.4 + cell * 0.02) as f32;
                 let mut p = [[0f32; 3]; 4];
                 let mut c = [[0f32; 4]; 4];
