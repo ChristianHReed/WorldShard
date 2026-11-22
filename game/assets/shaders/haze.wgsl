@@ -24,7 +24,8 @@
 struct HazeU {
     // rgb: haze colour (linear)
     color: vec4<f32>,
-    // x: haze density at sea level (per metre), y: scale height (metres)
+    // x: haze density at sea level (per metre), y: scale height (metres),
+    // z: how much a giant shades the player (the light is already dimmed by that)
     params: vec4<f32>,
     // xyz: direction toward the sun (or moon), w: how dark the giants' shadows are
     sun_dir: vec4<f32>,
@@ -95,10 +96,12 @@ fn fragment(
 #else
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr_input);
-    // the giants' shadows across the land
+    // the giants' shadows across the land. The light is already dimmed by
+    // the shade where the player stands, so only the difference is applied.
     if (hz.sun_dir.w > 0.0) {
         let sh = giant_shadow(in.world_position.xyz);
-        out.color = vec4<f32>(out.color.rgb * (1.0 - 0.6 * sh), out.color.a);
+        let ratio = clamp((1.0 - 0.6 * sh) / (1.0 - 0.6 * hz.params.z), 0.4, 2.5);
+        out.color = vec4<f32>(out.color.rgb * ratio, out.color.a);
     }
 
     let cam = view.world_position;

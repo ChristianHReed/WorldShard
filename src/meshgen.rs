@@ -193,13 +193,16 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
     // on steep mountain chunks, where neighbours differ more)
     let (hmin, hmax) = hb.iter().fold((f64::MAX, f64::MIN), |(a, b), &h| (a.min(h), b.max(h)));
     let skirt = (cell * 2.0 + 4.0 + (hmax - hmin) * 0.12) as f32;
-    let edges: [Vec<(usize, usize)>; 4] = [
-        (0..v).map(|i| (i, 0)).collect(),
-        (0..v).map(|i| (n, i)).collect(),
-        (0..v).rev().map(|i| (i, n)).collect(),
-        (0..v).rev().map(|i| (0, i)).collect(),
+    // they lean outward, under the neighbour, so a crack can't be seen even
+    // when the skirt is seen edge-on
+    let flare = (cell * 0.5) as f32;
+    let edges: [(Vec<(usize, usize)>, [f32; 2]); 4] = [
+        ((0..v).map(|i| (i, 0)).collect(), [0.0, -1.0]),
+        ((0..v).map(|i| (n, i)).collect(), [1.0, 0.0]),
+        ((0..v).rev().map(|i| (i, n)).collect(), [0.0, 1.0]),
+        ((0..v).rev().map(|i| (0, i)).collect(), [-1.0, 0.0]),
     ];
-    for edge in &edges {
+    for (edge, out) in &edges {
         for w in edge.windows(2) {
             let (i0, j0) = w[0];
             let (i1, j1) = w[1];
@@ -208,6 +211,8 @@ pub fn build_chunk(t: &Terrain, key: NodeKey) -> ChunkMeshes {
             for &k in &[a, b] {
                 let mut p = m.positions[k as usize];
                 p[1] -= skirt;
+                p[0] += out[0] * flare;
+                p[2] += out[1] * flare;
                 m.positions.push(p);
                 m.normals.push(m.normals[k as usize]);
                 m.colors.push(m.colors[k as usize]);

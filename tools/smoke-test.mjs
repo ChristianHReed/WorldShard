@@ -81,10 +81,13 @@ try {
     ["7-northeast-desert", { x: 976000, z: -563500, yaw: 1.047, pitch: 0.02, hours: 11 }],
     ["8-north-highlands", { x: 0, z: -1127000, yaw: 3.27, pitch: 0.04, hours: 9 }],
     ["9-southwest-plains", { x: -1100000, z: 300000, yaw: 1.3, pitch: 0.03, hours: 17 }],
+    ["10-everest-evening-shadow", { x: 393776, z: -171304, yaw: 4.712, pitch: 0.1, hours: 17.5 }],
   ];
   for (const [name, p] of scenes) {
     const data = JSON.stringify({ game: "WorldShard", v: 2, day: 2, visited: [], playSec: 0, savedAt: 0, ...p });
-    await page.evaluate((d) => localStorage.setItem("worldshard-save-v1", d), data);
+    // a scene change is not a crash: clear the start-up flag so the page
+    // doesn't drop to lite quality
+    await page.evaluate((d) => { localStorage.setItem("worldshard-save-v1", d); sessionStorage.removeItem("worldshard-booting"); }, data);
     await page.reload({ waitUntil: "load" });
     try {
       await page.waitForFunction(() => !document.getElementById("loading"), { timeout: 120000, polling: 500 });

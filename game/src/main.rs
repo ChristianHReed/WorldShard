@@ -410,7 +410,8 @@ fn setup(
         ..default()
     });
     let (sky_mesh, sky_aabb) = to_mesh(meshgen::sky_dome(15_000_000.0));
-    commands.spawn((Mesh3d(meshes.add(sky_mesh)), MeshMaterial3d(sky_mat), sky_aabb, Transform::default(), SkyDome));
+    // the sky surrounds everything, so it must not cast a shadow
+    commands.spawn((Mesh3d(meshes.add(sky_mesh)), MeshMaterial3d(sky_mat), sky_aabb, Transform::default(), SkyDome, NotShadowCaster));
 
     // ---- sunlight (WebGL2 allows one directional light: sun by day, moon by night) ----
     let shadows = quality.shadow_distance > 0.0;
@@ -1311,12 +1312,17 @@ fn sky_and_light(
     ambient.brightness = 420.0 + 820.0 * s.day;
     let amax = s.sky_amb[2].max(0.01);
     ambient.color = rgb([s.sky_amb[0] / amax, s.sky_amb[1] / amax, 1.0]);
+    // the light comes from the sun by day and the moon by night; the giants'
+    // shadows follow it
+    let sun = 6000.0 * s.sun_col[0].max(s.sun_col[1]).max(s.sun_col[2]);
+    let moon = 9000.0 * s.moon_col[2];
+    let (col, dir, lux, strength) = if sun >= moon { (s.sun_col, s.sun_dir, sun, s.day) } else { ([0.6, 0.7, 1.0], s.moon_dir, moon, 0.5 * (1.0 - s.day)) };
+    let light_dir = [dir[0], dir[1].max(0.02), dir[2]];
+    // standing in a giant's shadow dims the light on everything around you
+    let shade_here = (w.0.giant_shadow([pl.x, pl.y + 2.0, pl.z], [light_dir[0] as f64, light_dir[1] as f64, light_dir[2] as f64]) as f32) * strength;
     if let Ok((mut light, mut tf)) = sky_light.single_mut() {
-        let sun = 6000.0 * s.sun_col[0].max(s.sun_col[1]).max(s.sun_col[2]);
-        let moon = 9000.0 * s.moon_col[2];
-        let (col, dir, lux) = if sun >= moon { (s.sun_col, s.sun_dir, sun) } else { ([0.6, 0.7, 1.0], s.moon_dir, moon) };
         let m = col[0].max(col[1]).max(col[2]).max(0.001);
-        light.illuminance = lux;
+        light.illuminance = lux * (1.0 - 0.85 * shade_here);
         light.color = rgb([col[0] / m, col[1] / m, col[2] / m]);
         *tf = Transform::IDENTITY.looking_to(-Vec3::from_array(dir), Vec3::Y);
     }
@@ -1333,9 +1339,8 @@ fn sky_and_light(
     if let Some(g) = ground_materials.get_mut(&mats.ground) {
         let lin = haze.to_linear();
         g.extension.u.color = Vec4::new(lin.red, lin.green, lin.blue, 1.0);
-        // the giants' shadows: from the sun by day, faintly from the moon
-        let (dir, strength) = if s.sun_dir[1] > -0.02 { (s.sun_dir, s.day) } else { (s.moon_dir, 0.5 * (1.0 - s.day)) };
-        g.extension.u.sun_dir = Vec4::new(dir[0], dir[1].max(0.02), dir[2], strength);
+        g.extension.u.sun_dir = Vec4::new(light_dir[0], light_dir[1], light_dir[2], strength);
+        g.extension.u.params.z = shade_here;
         let t = &w.0;
         g.extension.u.everest = Vec4::new((t.everest.0 - pl.x) as f32, (t.everest.1 - pl.z) as f32, t.ev_spire_m as f32, EV_SPIRE_R as f32);
         g.extension.u.helens = Vec4::new((t.helens.0 - pl.x) as f32, (t.helens.1 - pl.z) as f32, t.hel_m as f32, HEL_R as f32);

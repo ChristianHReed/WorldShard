@@ -306,14 +306,18 @@ impl Terrain {
             // mesas and buttes, seas of tall dunes, and volcanic cones
             1 => {
                 let m = n.fbm(x / 14_000.0 - 4.0, z / 14_000.0, 4);
-                let mesas = sm(0.0, 0.025, m) * 380.0 + sm(0.14, 0.16, m) * 300.0 + sm(0.28, 0.295, m) * 220.0;
-                let sand = sm(-0.04, -0.14, m);
+                let mesas = sm(0.03, 0.04, m) * 380.0 + sm(0.17, 0.178, m) * 300.0 + sm(0.3, 0.306, m) * 220.0;
+                let sand = sm(0.02, -0.08, m);
                 let u = x * 0.8 + z * 0.6;
                 let wave = (u / 1500.0 + 2.5 * n.n2(x / 5_000.0, z / 5_000.0)) * std::f64::consts::PI;
                 let dunes = (1.0 - wave.sin().abs()).powf(1.5) * (130.0 + 60.0 * n.n2(x / 9_000.0, z / 9_000.0)) * sand;
+                // smaller dunes riding on the big ones, crests across the wind
+                let u2 = x * 0.75 - z * 0.66;
+                let wave2 = (u2 / 320.0 + 1.6 * n.n2(x / 1_400.0 + 3.0, z / 1_400.0)) * std::f64::consts::PI;
+                let ripples = (1.0 - wave2.sin().abs()).powi(2) * 28.0 * sm(0.03, -0.02, m);
                 let c = n.fbm(x / 6_000.0 + 13.0, z / 6_000.0 - 2.0, 2);
                 let cones = sm(0.32, 0.52, c).powi(2) * 750.0;
-                700.0 + 200.0 * n.fbm(x / 40_000.0, z / 40_000.0 + 3.0, 3) + mesas + dunes + cones
+                700.0 + 200.0 * n.fbm(x / 40_000.0, z / 40_000.0 + 3.0, 3) + mesas + dunes + ripples + cones
             }
             // Southeast, mid forest with fields: soft rolling green hills
             2 => 180.0 + 160.0 * n.fbm(x / 8_000.0 + 5.0, z / 8_000.0, 4) + 50.0 * n.fbm(x / 2_000.0, z / 2_000.0 - 9.0, 3),
@@ -437,6 +441,40 @@ impl Terrain {
     }
 
     /// Ground height in metres.
+    /// How much the two giant peaks shade the point (x, y, z) from a light
+    /// in direction `l` (toward the light): 0 = lit, 1 = fully shaded. The
+    /// same sum as the terrain shader (haze.wgsl), so the player's own light
+    /// matches the shadows drawn on the land.
+    pub fn giant_shadow(&self, p: [f64; 3], l: [f64; 3]) -> f64 {
+        let len = (l[0] * l[0] + l[1] * l[1] + l[2] * l[2]).sqrt().max(1e-9);
+        let l = [l[0] / len, l[1] / len, l[2] / len];
+        let lh2 = (l[0] * l[0] + l[2] * l[2]).max(1e-6);
+        let mut shade: f64 = 0.0;
+        for k in 0..2 {
+            let (c, r) = if k == 0 { (self.everest, EV_SPIRE_R) } else { (self.helens, HEL_R) };
+            let t_mid = ((c.0 - p[0]) * l[0] + (c.1 - p[2]) * l[2]) / lh2;
+            if t_mid <= 0.0 {
+                continue;
+            }
+            let (t0, t1) = ((t_mid - 3.0 * r).max(3000.0), t_mid + 2.0 * r);
+            let mut worst = f64::MIN;
+            for i in 0..20 {
+                let t = t0 + (t1 - t0) * (i as f64 + 0.5) / 20.0;
+                let q = [p[0] + l[0] * t, p[1] + l[1] * t, p[2] + l[2] * t];
+                let d = (q[0] - c.0).hypot(q[2] - c.1);
+                let top = if k == 0 {
+                    self.ev_spire_m * (-d / EV_SPIRE_R).exp() + EV_MASSIF_M * (-(d / EV_MASSIF_R).powf(EV_MASSIF_P)).exp()
+                } else {
+                    self.hel_m * (-d / HEL_R).exp()
+                };
+                worst = worst.max(top - q[1]);
+            }
+            let soft = 400.0 + 0.004 * t_mid;
+            shade = shade.max(sm(-soft, soft, worst));
+        }
+        shade
+    }
+
     pub fn height(&self, wx: f64, wz: f64) -> f64 {
         let h = self.height_no_lakes(wx, wz);
         match self.lake_at(wx, wz) {
@@ -627,6 +665,23 @@ mod tests {
         }
         let km2 = land as f64 * (METRES_PER_PX / 1000.0).powi(2);
         assert!((km2 / AUSTRALIA_KM2 - 1.0).abs() < 0.01, "island area {km2} km²");
+    }
+
+    #[test]
+    fn everest_shades_the_land_behind_it() {
+        let t = Terrain::new();
+        let (ex, ez) = t.everest;
+        // low evening sun in the west: east of Everest is in its shadow,
+        // west of it is lit, and the summit is always lit
+        let sun = [-1.0, 0.15, 0.0];
+        let east = [ex + 300_000.0, t.height(ex + 300_000.0, ez) + 2.0, ez];
+        let west = [ex - 300_000.0, t.height(ex - 300_000.0, ez) + 2.0, ez];
+        let top = [ex, EVEREST_M + 10.0, ez];
+        assert!(t.giant_shadow(east, sun) > 0.9);
+        assert!(t.giant_shadow(west, sun) < 0.1);
+        assert!(t.giant_shadow(top, sun) < 0.1);
+        // high noon: no long shadows
+        assert!(t.giant_shadow(east, [0.0, 1.0, 0.1]) < 0.1);
     }
 
     #[test]
