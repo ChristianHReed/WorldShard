@@ -1,0 +1,12 @@
+page bytes: 32569
+zip url: https://opengameart.org/sites/default/files/medieval_village_megakitstandard.zip
+-rw-r--r-- 1 runner runner 100025527 Nov 22 19:01 kit.zip
+kit.zip: Zip archive data, at least v2.0 to extract, compression method=store
+.
+./FBX
+./OBJ
+./Textures
+./Textures/Normals Godot-Unity
+./glTF
+glTF folder: ./glTF
+59M	/tmp/out
