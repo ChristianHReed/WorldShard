@@ -138,6 +138,23 @@ pub fn coast_r(deg: f64) -> f64 {
     let a = deg * D2R;
     355.0 + 18.0 * (3.0 * a + 0.7).sin() + 12.0 * (7.0 * a + 1.3).sin() + 7.0 * (13.0 * a).sin()
         - 160.0 * (-((deg - 48.0) / 13.0).powi(2)).exp()
+        + 9.0 * headland(deg)
+}
+
+/// Headlands (above 0) and bays (below 0) along the coast, about −1.2..1.2
+/// (first pass: so the coast varies and the shore is a guide to where you
+/// are). Headlands stand as cliffs and bays hold beaches.
+pub fn headland(deg: f64) -> f64 {
+    let a = deg * D2R;
+    0.6 * (17.0 * a + 0.4).sin() + 0.4 * (29.0 * a + 2.1).sin() + 0.25 * (47.0 * a + 4.0).sin()
+}
+
+/// Passes through the border ranges (first pass): where the range's crest
+/// dips almost to the land either side, 0–1, `r` map pixels out.
+pub const PASSES: [(usize, f64); 4] = [(0, 190.0), (0, 320.0), (5, 165.0), (5, 255.0)];
+
+pub fn pass_dip(k: usize, r: f64) -> f64 {
+    PASSES.iter().filter(|p| p.0 == k).map(|p| (-((r - p.1) / 7.0).powi(2)).exp()).fold(0.0, f64::max)
 }
 
 /// How much a direction belongs to the east-coast cliff band.
@@ -145,10 +162,15 @@ pub fn cliff_w(deg: f64) -> f64 {
     sm(-70.0, -56.0, deg) * (1.0 - sm(14.0, 28.0, deg))
 }
 
+/// Where the Needles' islet lies off the South coast (degrees).
+pub const NEEDLES_DEG: f64 = 79.0;
+
 /// The seeded island: noise tables plus the derived constants.
 pub struct Island {
     pub noise: Noise,
-    pub islets: [(f64, f64, f64); 4],
+    /// Small islands (map x, y and size). The last is the Needles' islet
+    /// off the South coast.
+    pub islets: [(f64, f64, f64); 5],
 }
 
 impl Island {
@@ -166,6 +188,7 @@ impl Island {
                 mk(188.0, 452.0, 10.0),
                 mk(200.0, 430.0, 15.0),
                 mk(158.0, 444.0, 9.0),
+                mk(NEEDLES_DEG, coast_r(NEEDLES_DEG) + 13.0, 3.0),
             ],
         }
     }
@@ -179,8 +202,15 @@ impl Island {
     /// run, so regions change right at those features. The change is sharp
     /// out in the regions and softer near the centre, where the borders meet.
     pub fn region_weights(&self, deg: f64, x: f64, y: f64, out: &mut [f64; 6]) {
+        self.region_weights_b(deg, x, y, 0.0, out)
+    }
+
+    /// Region weights that change more gently (over about `extra` more map
+    /// pixels each side of a border): the transition zones where one
+    /// region's plants and colours give way to the next.
+    pub fn region_weights_b(&self, deg: f64, x: f64, y: f64, extra: f64, out: &mut [f64; 6]) {
         let r = (x - CX).hypot(y - CY).max(1.0);
-        let b = 1.5 + 30.0 * (-r / 40.0).exp();
+        let b = extra + 1.5 + 30.0 * (-r / 40.0).exp();
         // for each border: how far past it (toward larger angles) the spot is
         let mut past = [0.0; 6];
         for (k, v) in past.iter_mut().enumerate() {
@@ -270,7 +300,7 @@ impl Island {
         let mut br: f64 = 0.0;
         for k in RANGE_BORDERS {
             let pd = (angd(deg - BORD[k]) * D2R * r + self.border_off(k, r)).abs();
-            br = br.max((-(pd / 26.0) * (pd / 26.0)).exp());
+            br = br.max((-(pd / 26.0) * (pd / 26.0)).exp() * (1.0 - 0.85 * pass_dip(k, r)));
         }
         e += br * 0.18 * sm(110.0, 190.0, r) * inland;
         e += 0.10 * n.fbm(x / 85.0, y / 85.0, 5) + 0.05 * (n.ridged(x / 55.0, y / 55.0, 4) - 0.45);
@@ -307,7 +337,7 @@ impl Island {
         let mut br: f64 = 0.0;
         for k in RANGE_BORDERS {
             let pd = (angd(deg - BORD[k]) * D2R * r + self.border_off(k, r)).abs();
-            br = br.max((-(pd / 26.0) * (pd / 26.0)).exp());
+            br = br.max((-(pd / 26.0) * (pd / 26.0)).exp() * (1.0 - 0.85 * pass_dip(k, r)));
         }
         e += br * 0.18 * sm(110.0, 190.0, r) * inland;
         e += 0.10 * n.fbm(x / 85.0, y / 85.0, 5) + 0.05 * (n.ridged(x / 55.0, y / 55.0, 4) - 0.45);

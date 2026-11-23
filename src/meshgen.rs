@@ -605,6 +605,11 @@ pub(crate) fn house_box(m: &mut MeshData, pos: [f32; 3], rot: f32, w: f32, l: f3
     }
 }
 
+/// On the ruined outpost's levelled ground (kept clear of plants).
+pub fn near_outpost(t: &Terrain, x: f64, z: f64) -> bool {
+    (x - t.outpost.x).hypot(z - t.outpost.z) < 140.0
+}
+
 /// On (or right beside) the bridge city's deck, where nothing grows.
 pub fn on_deck(t: &Terrain, x: f64, z: f64) -> bool {
     let b = &t.bridge;
@@ -797,6 +802,107 @@ pub mod model {
     pub const MINE: u16 = u16::MAX;
 }
 
+/// Groups of models loaded together, as the player nears where they are
+/// used: each region's plants and rocks, and the Bridge City's buildings.
+pub const LOAD_SETS: [&str; 7] = ["North", "Northeast", "Southeast", "South", "Southwest", "Northwest", "Bridge City"];
+
+/// The models in a load set (see `LOAD_SETS`). Each region's set also
+/// covers what grows in its transition zones, on St. Helens' ash, by an
+/// oasis and in a clearing.
+pub fn set_models(set: usize) -> Vec<u16> {
+    use model::*;
+    let range = |b: u16, n: u16| (b..b + n).collect::<Vec<u16>>();
+    // rocks, dead trees and pebbles can turn up anywhere (ash, high ground)
+    let common = [range(ROCK, 3), range(DEAD, 3), range(PEBBLE, 5)].concat();
+    let mut v: Vec<u16> = match set {
+        0 => [range(PINE, 5), vec![GRASS]].concat(),
+        1 => [vec![BUSH, BUSH_FLOWERS], range(COMMON_TREE, 5), range(GRASS, 4), range(FLOWER, 4)].concat(),
+        2 => [range(COMMON_TREE, 5), range(PINE, 5), vec![BUSH, BUSH_FLOWERS], range(GRASS, 2), range(FLOWER, 4), range(CLOVER, 2)].concat(),
+        3 => [range(PINE, 5), range(COMMON_TREE, 5), range(TWISTED, 2), vec![BUSH, FERN, PLANT_BIG], range(MUSHROOM, 2), range(GRASS, 2), range(FLOWER, 4)].concat(),
+        4 => [range(COMMON_TREE, 5), vec![BUSH, BUSH_FLOWERS], range(FLOWER, 4), range(GRASS, 4), range(CLOVER, 2)].concat(),
+        5 => [range(COMMON_TREE, 5), range(TWISTED, 2), range(PINE, 5), vec![BUSH, LILY, FERN], range(GRASS, 4), range(MUSHROOM, 2)].concat(),
+        _ => return range(BUILDING, crate::city::BUILDINGS.len() as u16),
+    };
+    v.extend(common);
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
+/// Which load sets someone at (x, z) needs: the regions within `reach`
+/// metres (counting their transition zones), and the Bridge City if it is
+/// that near.
+pub fn wanted_sets(t: &Terrain, x: f64, z: f64, reach: f64) -> [bool; 7] {
+    let mut out = [false; 7];
+    let mut add = |px: f64, pz: f64| {
+        let w = t.region_mix_soft(px, pz);
+        for k in 0..6 {
+            if w[k] > 0.02 {
+                out[k] = true;
+            }
+        }
+    };
+    add(x, z);
+    for ring in [reach * 0.5, reach] {
+        for k in 0..16 {
+            let a = k as f64 / 16.0 * std::f64::consts::TAU;
+            add(x + a.cos() * ring, z + a.sin() * ring);
+        }
+    }
+    let b = &t.bridge;
+    let (u, v) = b.to_deck(x, z);
+    out[6] = (u.abs() - b.half_len).max(0.0).hypot((v.abs() - b.half_w).max(0.0)) < reach;
+    out
+}
+
+/// The texture a model part is drawn with (rocks have a desert colour;
+/// window glass has none).
+pub fn part_texture(part: &str, tint: Tint) -> Option<&'static str> {
+    Some(match part {
+        "Bark_NormalTree" => "Bark_NormalTree.png",
+        "Bark_DeadTree" => "Bark_DeadTree.png",
+        "Bark_TwistedTree" => "Bark_TwistedTree.png",
+        "Leaves_NormalTree" => "Leaves_NormalTree_C.png",
+        "Leaves_Pine" => "Leaf_Pine_C.png",
+        "Leaves_TwistedTree" => "Leaves_TwistedTree_Green.png",
+        "Leaves" => "Leaves.png",
+        "Flowers" => "Flowers.png",
+        "Grass" => "Grass.png",
+        "Mushrooms" => "Mushrooms.png",
+        "PathRocks" => "PathRocks_Diffuse.png",
+        "MI_WoodTrim" => "T_WoodTrim_BaseColor.png",
+        "MI_Plaster" => "T_Plaster_BaseColor.png",
+        "MI_UnevenBrick" => "T_UnevenBrick_BaseColor.png",
+        "MI_RoundTiles" => "T_RoundTiles_BaseColor.png",
+        "MI_RockTrim" => "T_RockTrim_BaseColor.png",
+        "MI_Brick" => "T_Brick_BaseColor.png",
+        "MI_MetalOrnaments" => "T_MetalOrnaments_BaseColor.png",
+        "MI_WindowGlass" => return None,
+        _ => {
+            if tint == Tint::Desert {
+                "Rocks_Desert_Diffuse.png"
+            } else {
+                "Rocks_Diffuse.png"
+            }
+        }
+    })
+}
+
+/// Every texture a model may need (with any tint).
+pub fn model_textures(m: u16) -> Vec<&'static str> {
+    let mut v = Vec::new();
+    for part in MODELS[m as usize].parts {
+        for tint in [Tint::Normal, Tint::Desert] {
+            if let Some(f) = part_texture(part, tint) {
+                if !v.contains(&f) {
+                    v.push(f);
+                }
+            }
+        }
+    }
+    v
+}
+
 /// Colour variations of the same material, by where a plant grows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Tint {
@@ -837,7 +943,33 @@ fn choose_prop(s: &Sample, q: f64, pick: f64, size: f64) -> Option<(u16, f64, Ti
     if s.h > 4600.0 {
         return (q < 0.02).then(|| (v(ROCK, 3), 0.8 + size * 2.0, Tint::Normal));
     }
-    match s.region {
+    // bare rock: cliff faces, spires
+    if s.rock > 0.92 && s.tor < 0.5 {
+        return None;
+    }
+    // St. Helens' ash: only the odd dead tree and rocks
+    if s.ash > 0.45 {
+        return if q < 0.012 {
+            Some((v(ROCK, 3), 0.5 + size * 1.8, Tint::Normal))
+        } else if q < 0.016 {
+            Some((v(DEAD, 3), 0.6 + size * 0.4, Tint::Dry))
+        } else {
+            None
+        };
+    }
+    // an oasis: trees and flowering bushes around the water
+    if s.oasis > 0.3 {
+        return if q < 0.12 * s.oasis as f64 {
+            Some((v(COMMON_TREE, 5), 1.0 + size * 0.5, Tint::Normal))
+        } else if q < 0.2 * s.oasis as f64 {
+            Some((BUSH_FLOWERS, 0.8 + size * 0.5, Tint::Normal))
+        } else {
+            None
+        };
+    }
+    // in a transition zone, the neighbouring region's plants mix in
+    let region = if s.mix2 > 0.0 && (pick * 173.0).fract() < s.mix2 as f64 { s.region2 } else { s.region };
+    match region {
         // North: rock mines. Boulder fields, scattered rocks, and pines
         // only in the sheltered low valleys
         0 => {
@@ -851,8 +983,27 @@ fn choose_prop(s: &Sample, q: f64, pick: f64, size: f64) -> Option<(u16, f64, Ti
                 None
             }
         }
-        // Northeast: lava flows and desert. Sandstone rocks in groups,
+        // Northeast: lava flows and desert. Lava fields: grey rocks and dead
+        // trees; dune sea: almost bare; badlands: sandstone rocks in groups,
         // dead trees, and a few dry bushes
+        1 if s.ne_zone == 0 => {
+            if s.patch > 0.3 && q < 0.035 {
+                Some((v(ROCK, 3), 0.5 + size * 2.0, Tint::Normal))
+            } else if q < 0.006 {
+                Some((v(DEAD, 3), 0.5 + size * 0.4, Tint::Dry))
+            } else {
+                None
+            }
+        }
+        1 if s.ne_zone == 2 => {
+            if q < 0.0015 {
+                Some((v(DEAD, 3), 0.5 + size * 0.3, Tint::Dry))
+            } else if q < 0.003 {
+                Some((BUSH, 0.4 + size * 0.3, Tint::Dry))
+            } else {
+                None
+            }
+        }
         1 => {
             if s.patch > 0.35 && q < 0.04 {
                 Some((v(ROCK, 3), 0.6 + size * 2.2, Tint::Desert))
@@ -893,7 +1044,7 @@ fn choose_prop(s: &Sample, q: f64, pick: f64, size: f64) -> Option<(u16, f64, Ti
         // South: dark forest
         3 => {
             // old, tall, close-packed trees, many gnarled
-            if q < 0.24 * fm.max(0.4) {
+            if q < 0.24 * fm.max(0.4 * (1.0 - s.clearing as f64)) {
                 let m = if pick < 0.55 {
                     v(PINE, 5)
                 } else if pick < 0.85 {
@@ -910,8 +1061,11 @@ fn choose_prop(s: &Sample, q: f64, pick: f64, size: f64) -> Option<(u16, f64, Ti
         }
         // Southwest: grasslands
         4 => {
-            // open grass with lone trees and the odd copse
-            if q < if s.patch > 0.45 { 0.03 } else { 0.003 } {
+            // open grass with lone trees and the odd copse, and boulders
+            // on the rocky outcrops
+            if s.tor > 0.35 {
+                (q < 0.08).then(|| (v(ROCK, 3), 0.4 + size * 1.6, Tint::Normal))
+            } else if q < if s.patch > 0.45 { 0.03 } else { 0.003 } {
                 Some((v(COMMON_TREE, 5), 1.4 + size * 0.5, Tint::Dry))
             } else if q < 0.016 {
                 let m = if pick < 0.5 { BUSH_FLOWERS } else { BUSH };
@@ -969,7 +1123,7 @@ pub fn prop_placements(t: &Terrain, ci: i64, cj: i64) -> Vec<Placement> {
             if q > 0.3 {
                 continue; // nothing anywhere is denser than this
             }
-            if on_deck(t, jx, jz) {
+            if on_deck(t, jx, jz) || near_outpost(t, jx, jz) {
                 continue;
             }
             let s = t.sample(jx, jz);
@@ -1108,12 +1262,41 @@ pub fn detail_placements(t: &Terrain, ci: i64, cj: i64) -> Vec<Placement> {
             let (q, pick, size) = (r.next(), r.next(), r.next());
             let rot = r.next() as f32 * std::f32::consts::TAU;
             let (s, h) = lat.at(gx, gz);
-            if s.water.is_some() || s.glow > 0.0 || (s.h < 2.0 && !s.canyon) || s.shore < 20.0 || s.h > 4300.0 || on_deck(t, x0 + gx, z0 + gz) {
+            if s.water.is_some() || s.glow > 0.0 || (s.h < 2.0 && !s.canyon) || s.shore < 20.0 || s.h > 4300.0 || on_deck(t, x0 + gx, z0 + gz) || near_outpost(t, x0 + gx, z0 + gz) {
                 continue;
             }
             let v = |base: u16, n: u16| base + ((pick * 997.0) as u16 % n);
             let wet = s.wet > 0.15;
-            let choice: Option<(u16, f64, Tint)> = match s.region {
+            let region = if s.mix2 > 0.0 && (pick * 173.0).fract() < s.mix2 as f64 { s.region2 } else { s.region };
+            let choice: Option<(u16, f64, Tint)> = if s.rock > 0.92 && s.tor < 0.5 {
+                None
+            } else if s.ash > 0.45 {
+                (q < 0.02).then(|| (v(PEBBLE, 5), 1.0 + size * 2.0, Tint::Normal))
+            } else if s.oasis > 0.3 {
+                if q < 0.06 {
+                    Some((v(GRASS, 2), 0.35 + size * 0.2, Tint::Normal))
+                } else if s.wet > 0.02 && q < 0.12 {
+                    Some((GRASS + 3, 0.6 + size * 0.35, Tint::Swamp))
+                } else if q < 0.075 {
+                    Some((v(FLOWER, 4), 0.3 + size * 0.15, Tint::Normal))
+                } else {
+                    None
+                }
+            } else if region == 3 && s.clearing > 0.5 {
+                // a clearing: grass and flowers in the light
+                if q < 0.06 {
+                    Some((v(GRASS, 2), 0.35 + size * 0.2, Tint::Normal))
+                } else if q < 0.08 {
+                    Some((v(FLOWER, 4), 0.3 + size * 0.15, Tint::Normal))
+                } else if q < 0.09 {
+                    Some((FERN, 0.18 + size * 0.12, Tint::Normal))
+                } else {
+                    None
+                }
+            } else if region == 1 && s.ne_zone == 2 {
+                (q < 0.003).then(|| (GRASS + 2, 0.3 + size * 0.2, Tint::Dry))
+            } else {
+                match region {
                 4 => {
                     // wildflowers grow in drifts
                     let drift = s.patch > 0.15;
@@ -1191,7 +1374,8 @@ pub fn detail_placements(t: &Terrain, ci: i64, cj: i64) -> Vec<Placement> {
                         None
                     }
                 }
-                _ => (q < 0.02).then(|| (v(PEBBLE, 5), 1.0 + size * 2.0, Tint::Normal)),
+                    _ => (q < 0.02).then(|| (v(PEBBLE, 5), 1.0 + size * 2.0, Tint::Normal)),
+                }
             };
             if let Some((m, sc, tint)) = choice {
                 out.push(Placement { model: m, pos: [(x0 + gx - ox) as f32, h as f32 - 0.03, (z0 + gz - oz) as f32], rot, scale: sc as f32, tint });
@@ -1435,6 +1619,40 @@ mod tests {
         assert_eq!(MODELS.len(), model::BUILDING as usize + crate::city::BUILDINGS.len());
         for (k, b) in crate::city::BUILDINGS.iter().enumerate() {
             assert_eq!(MODELS[model::BUILDING as usize + k].name, b.name);
+        }
+    }
+
+    #[test]
+    fn load_sets_cover_what_grows() {
+        // the models placed well inside each region (and in its transition
+        // zones) are all in the sets wanted there
+        let t = Terrain::new();
+        let mut checked = 0;
+        let mut r = Rng::new(77);
+        while checked < 260 {
+            let (x, z) = ((r.next() - 0.5) * 3_000_000.0, (r.next() - 0.5) * 3_000_000.0);
+            let s = t.sample(x, z);
+            if s.water.is_some() || s.h < 3.0 {
+                continue;
+            }
+            checked += 1;
+            let want = wanted_sets(&t, x, z, 0.0);
+            let allowed: std::collections::HashSet<u16> = (0..7).filter(|&k| want[k]).flat_map(set_models).collect();
+            let (ci, cj) = ((x / PROP_CELL).floor() as i64, (z / PROP_CELL).floor() as i64);
+            let (di, dj) = ((x / DETAIL_CELL).floor() as i64, (z / DETAIL_CELL).floor() as i64);
+            for p in prop_placements(&t, ci, cj).iter().chain(detail_placements(&t, di, dj).iter()) {
+                if p.model != model::MINE {
+                    assert!(allowed.contains(&p.model), "{} at {x:.0},{z:.0} (sets {want:?})", MODELS[p.model as usize].name);
+                }
+            }
+        }
+        // the Bridge City's buildings with it
+        let (bx, bz) = t.bridge.from_deck(0.0, 0.0);
+        assert!(wanted_sets(&t, bx, bz, 1_000.0)[6]);
+        assert!(!wanted_sets(&t, 0.0, 0.0, 6_000.0)[6]);
+        // every model's textures are in the game's list
+        for m in 0..MODELS.len() as u16 {
+            assert!(!model_textures(m).is_empty() || MODELS[m as usize].name.starts_with("House"), "{}", MODELS[m as usize].name);
         }
     }
 

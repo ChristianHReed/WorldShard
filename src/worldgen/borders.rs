@@ -23,11 +23,17 @@ pub struct BorderPath {
 
 impl BorderPath {
     pub fn new(isl: &Island, k: usize, r0: f64) -> BorderPath {
+        Self::along(isl, k, r0, |r| isl.border_angle(k, r))
+    }
+
+    /// A path running outward from `r0` map pixels at the direction
+    /// `angle(r)` (degrees). `k` tells paths apart (it seeds the meanders).
+    pub fn along(isl: &Island, k: usize, r0: f64, angle: impl Fn(f64) -> f64) -> BorderPath {
         let (mut pts, mut s): (Vec<(f64, f64)>, Vec<f64>) = (Vec::new(), Vec::new());
         let (mut acc, mut coast_s) = (0.0, None::<f64>);
         let mut r = r0;
         loop {
-            let (mx, my) = pol(isl.border_angle(k, r), r);
+            let (mx, my) = pol(angle(r), r);
             let w = to_world(mx, my);
             if let Some(&(lx, lz)) = pts.last() {
                 acc += (w.0 - lx).hypot(w.1 - lz);
@@ -151,11 +157,18 @@ pub struct River {
     pub path: BorderPath,
     /// Water level at each path point (falls toward the sea).
     pub levels: Vec<f64>,
+    /// Size: 1 for the border rivers, smaller for streams.
+    pub scale: f64,
 }
 
 impl River {
     pub fn new(isl: &Island, k: usize) -> River {
-        River { path: BorderPath::new(isl, k, 118.0), levels: Vec::new() }
+        River { path: BorderPath::new(isl, k, 118.0), levels: Vec::new(), scale: 1.0 }
+    }
+
+    /// A stream along `angle(r)` (degrees) from `r0` map pixels out.
+    pub fn stream(isl: &Island, k: usize, r0: f64, scale: f64, angle: impl Fn(f64) -> f64) -> River {
+        River { path: BorderPath::along(isl, k, r0, angle), levels: Vec::new(), scale }
     }
 
     /// Set the water levels from the ground heights along the path: always
@@ -196,12 +209,12 @@ impl River {
 
     /// Half-width of the water: a stream at the source, wide at the mouth.
     pub fn half_width(&self, s: f64) -> f64 {
-        40.0 + 360.0 * self.along(s)
+        (40.0 + 360.0 * self.along(s)) * self.scale
     }
 
     /// Half-width of the valley the river has worn.
     pub fn valley(&self, s: f64) -> f64 {
-        2_500.0 + 4_500.0 * self.along(s)
+        (2_500.0 + 4_500.0 * self.along(s)) * self.scale.powf(0.6)
     }
 
     /// The ground with the river's valley and channel cut into it.
@@ -223,7 +236,7 @@ impl River {
         }
         // the channel
         if d < w * 1.25 {
-            let depth = 3.0 + 7.0 * self.along(s);
+            let depth = (3.0 + 7.0 * self.along(s)) * self.scale.sqrt();
             let bed = lv - depth * (1.0 - (d / (w * 1.25)).powi(2));
             h = h.min(bed);
         }

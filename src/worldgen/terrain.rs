@@ -7,6 +7,7 @@
 //! World space: metres, +x east, +z south, y up, island centre at (0, 0).
 
 use super::borders::{BorderPath, BridgeSite, Canyon, River, ABUTMENT_BLEND, ABUTMENT_R, DECK_HALF_W};
+use super::features::{needle_height, Needle, Oasis, Outpost, Tableland, Terraces};
 use super::island::*;
 use super::noise::{angd, lerp, sm, Rng};
 
@@ -32,17 +33,22 @@ pub const PEAK_SCALE: f64 = 25.0;
 pub const EVEREST_M: f64 = PEAK_SCALE * 8849.0;
 pub const ST_HELENS_M: f64 = PEAK_SCALE * 2549.0;
 
+/// How far Everest's mountain mass spreads, relative to the first version
+/// (the designer's choice: a snowy core about 20–25% smaller in area, so
+/// the regions get more room). The peaks keep their heights.
+pub const CORE: f64 = 0.87;
+
 // Shapes of the giants, metres. The spire and St. Helens' cone are scaled
 // when the world is built so the summits land exactly on the heights above.
-pub const EV_SPIRE_R: f64 = 60_000.0;
+pub const EV_SPIRE_R: f64 = 60_000.0 * CORE;
 pub const EV_MASSIF_M: f64 = 85_000.0;
-pub const EV_MASSIF_R: f64 = 220_000.0;
+pub const EV_MASSIF_R: f64 = 220_000.0 * CORE;
 /// Shape of Everest's body: higher = steeper edge, less long apron.
 pub const EV_MASSIF_P: f64 = 1.6;
 pub const HEL_R: f64 = 55_000.0;
 const HEL_CRATER_R: f64 = 11_000.0;
 /// The range of lesser mountains around the giants.
-const RANGE_R: f64 = 260_000.0;
+const RANGE_R: f64 = 260_000.0 * CORE;
 const CLIFF_M: f64 = 600.0;
 
 pub fn to_map(wx: f64, wz: f64) -> (f64, f64) {
@@ -86,48 +92,73 @@ impl Lava {
 /// They leave through the crater's open north side as one flow, then split
 /// and run north-east across the Northeast to the sea, staying north of the
 /// Great Canyon.
+/// One lava flow's line on the map: a cubic curve from `p0` to `p3`,
+/// wandering from side to side, stopping at the coast.
+fn lava_line(isl: &Island, p: [(f64, f64); 4], ph: f64, wander: f64) -> Vec<(f64, f64)> {
+    let n = &isl.noise;
+    let bez = |t: f64| -> (f64, f64) {
+        let u = 1.0 - t;
+        let (a, b, c, d) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
+        (a * p[0].0 + b * p[1].0 + c * p[2].0 + d * p[3].0, a * p[0].1 + b * p[1].1 + c * p[2].1 + d * p[3].1)
+    };
+    let mut pts = Vec::new();
+    let mut t = 0.0;
+    let mut last = bez(0.0);
+    while t < 1.0 {
+        // step about 3 px along the curve
+        let mut t2 = t + 0.002;
+        while t2 < 1.0 && {
+            let q = bez(t2);
+            (q.0 - last.0).hypot(q.1 - last.1) < 3.0
+        } {
+            t2 += 0.002;
+        }
+        t = t2;
+        let (x, y) = bez(t.min(1.0));
+        // the flows wander in long bends and shorter wiggles
+        let (dx, dy) = (x - last.0, y - last.1);
+        let dl = dx.hypot(dy).max(1e-9);
+        let wob = wander * (9.0 * n.n2(t * 4.0, ph) + 3.0 * n.n2(t * 18.0, ph + 3.0)) * sm(0.03, 0.25, t);
+        let (wx, wy) = (x - dy / dl * wob, y + dx / dl * wob);
+        last = (x, y);
+        if t > 0.12 && isl.land_at(wx, wy) < 0.035 {
+            break;
+        }
+        pts.push((wx, wy));
+    }
+    pts
+}
+
+/// The lava flows (the designer's choice: they pour from St. Helens'
+/// breach), in the Northeast's lava fields. Three main flows of different
+/// lengths, curving and splitting into branches; only some reach the sea.
 fn build_lava(isl: &Island) -> Lava {
     let n = &isl.noise;
     let mut flows: Vec<Vec<(f64, f64)>> = Vec::new();
-    let p0 = (HX, HY - 5.0);
-    let p1 = (HX + 4.0, HY - 45.0);
-    for (k, &(a0, ph)) in [(-56.0, 1.3), (-44.0, 5.1), (-30.0, 8.7), (-17.0, 12.2)].iter().enumerate() {
-        let p2 = pol(a0, 210.0);
-        let p3 = pol(a0, 470.0);
-        let bez = |t: f64| -> (f64, f64) {
-            let u = 1.0 - t;
-            let (a, b, c, d) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
-            (a * p0.0 + b * p1.0 + c * p2.0 + d * p3.0, a * p0.1 + b * p1.1 + c * p2.1 + d * p3.1)
-        };
-        let mut pts = Vec::new();
-        let mut t = 0.0;
-        let mut last = bez(0.0);
-        while t < 1.0 {
-            // step about 3 px along the curve
-            let mut t2 = t + 0.002;
-            while t2 < 1.0 && {
-                let q = bez(t2);
-                (q.0 - last.0).hypot(q.1 - last.1) < 3.0
-            } {
-                t2 += 0.002;
-            }
-            t = t2;
-            let (x, y) = bez(t.min(1.0));
-            // the flows wander, more as they spread out
-            let (dx, dy) = (x - last.0, y - last.1);
-            let dl = dx.hypot(dy).max(1e-9);
-            let wob = (4.0 * n.n2(t * 9.0, ph) + 1.5 * n.n2(t * 40.0, ph + 3.0)) * sm(0.03, 0.2, t);
-            let (wx, wy) = (x - dy / dl * wob, y + dx / dl * wob);
-            last = (x, y);
-            if t > 0.15 && isl.land_at(wx, wy) < 0.035 {
-                break;
-            }
-            pts.push((wx, wy));
-        }
+    // two main flows leave the breach in different directions...
+    // (first bend, end direction, end radius, phase)
+    let mains = [((HX - 14.0, HY - 60.0), -55.0, 452.0, 1.3), ((HX + 16.0, HY - 48.0), -41.0, 390.0, 8.7)];
+    for &(p1, a0, re, ph) in &mains {
+        let pts = lava_line(isl, [(HX, HY - 5.0), p1, pol(a0 + 7.0, re * 0.45), pol(a0, re)], ph, 1.7);
         if pts.len() > 10 {
             flows.push(pts);
         }
-        let _ = k;
+    }
+    // ...and split into branches of different lengths: (which main flow,
+    // where along it they split, end direction, end radius, phase)
+    let branches = [(0usize, 0.5, -59.0, 318.0, 2.2), (1, 0.38, -35.5, 268.0, 9.9), (1, 0.62, -47.0, 448.0, 4.4)];
+    for &(m, at, a0, re, ph) in &branches {
+        let Some(main) = flows.get(m) else { continue };
+        let k = ((main.len() as f64 * at) as usize).clamp(1, main.len() - 1);
+        let start = main[k];
+        let (dx, dy) = (main[k].0 - main[k - 1].0, main[k].1 - main[k - 1].1);
+        let dl = dx.hypot(dy).max(1e-9);
+        let end = pol(a0, re);
+        let mid = pol(a0 + 4.0, (re + ((start.0 - CX).hypot(start.1 - CY))) / 2.0);
+        let pts = lava_line(isl, [start, (start.0 + dx / dl * 22.0, start.1 + dy / dl * 22.0), mid, end], ph, 1.2);
+        if pts.len() > 6 {
+            flows.push(pts);
+        }
     }
     let mut lava = Lava { crust: vec![0.0; MW * MH], core: vec![0.0; MW * MH] };
     let stamp = |arr: &mut Vec<f32>, x: f64, y: f64, rad: f64| {
@@ -148,14 +179,19 @@ fn build_lava(isl: &Island) -> Lava {
             }
         }
     };
-    for pts in &flows {
+    for (fi, pts) in flows.iter().enumerate() {
         let len = pts.len() as f64;
+        let main = fi < mains.len();
         for (k, &(x, y)) in pts.iter().enumerate() {
             let kf = k as f64;
-            let w = 3.0 + 6.0 * (kf / len) + 2.5 * n.n2(kf / 5.0, x / 50.0);
+            let f = kf / len;
+            // broader lobes here and there, and a wide toe at the end
+            let lobe = 5.0 * n.n2(kf / 7.0, fi as f64 * 3.1).max(0.0);
+            let toe = 1.0 + 0.35 * sm(0.9, 1.0, f);
+            let w = ((if main { 3.0 + 6.0 * f } else { 2.5 + 4.0 * f }) + 2.0 * n.n2(kf / 5.0, x / 50.0) + lobe) * toe;
             stamp(&mut lava.crust, x, y, w.max(2.0));
-            if n.n2(kf / 4.0, len) <= 0.28 {
-                stamp(&mut lava.core, x, y, 0.8 + 1.4 * (kf / len));
+            if n.n2(kf / 4.0, len + fi as f64) <= 0.25 {
+                stamp(&mut lava.core, x, y, 0.8 + 1.4 * f);
             }
         }
     }
@@ -215,7 +251,7 @@ impl Ridge {
         let d = (x - cx).hypot(z - cz);
         let along = self.ha + (self.hb - self.ha) * t;
         let hr = self.saddle + (along - self.saddle) * (2.0 * t - 1.0).powi(2);
-        let w = (0.45 * hr).max(4_000.0);
+        let w = (0.45 * CORE * hr).max(4_000.0);
         if d > 4.0 * w {
             return 0.0;
         }
@@ -230,6 +266,7 @@ pub fn range_peak_spots() -> [(f64, f64, f64); 10] {
     let giants = [to_world(EX, EY), to_world(HX, HY)];
     RANGE_PEAKS.map(|(g, bearing, km, top_km)| {
         let a = bearing.to_radians();
+        let km = if g == 0 { km * CORE } else { km };
         (giants[g].0 + a.cos() * km * 1000.0, giants[g].1 + a.sin() * km * 1000.0, top_km * 1000.0)
     })
 }
@@ -279,6 +316,10 @@ const FIELD_COLS: [[f64; 3]; 6] = [
     [210.0, 214.0, 140.0],
 ];
 
+/// How much farther (map pixels) the ground's colours and forests take to
+/// change across a border than its landforms do: the transition zones.
+const SOFT_PX: f64 = 7.0;
+
 /// Makes region weights change over a shorter distance (power `p`), so
 /// each region's landform and colour stay distinct up to its border.
 fn sharpen(w: &mut [f64; 6], p: i32) {
@@ -325,6 +366,20 @@ pub struct Sample {
     /// drawn close up (grass where it is neither).
     pub sand: f32,
     pub rock: f32,
+    /// Around St. Helens: how much ash and broken lava covers the ground.
+    pub ash: f32,
+    /// The greenery around an oasis (0–1).
+    pub oasis: f32,
+    /// A clearing in the South's forest (0–1).
+    pub clearing: f32,
+    /// A rocky outcrop in the Southwest's grass (0–1).
+    pub tor: f32,
+    /// Which part of the Northeast: 0 lava fields, 1 badlands, 2 dune sea.
+    pub ne_zone: u8,
+    /// Where two regions meet: the other region, and how much of it is here
+    /// (0–0.5), so their plants mix in a transition zone.
+    pub region2: u8,
+    pub mix2: f32,
 }
 
 /// The seeded, full-size world.
@@ -349,6 +404,13 @@ pub struct Terrain {
     pub bridge: BridgeSite,
     /// The bridge city's buildings, sorted along the deck.
     pub city: Vec<crate::city::Lot>,
+    /// Tablelands linking regions, oases in the dune sea, the Needles, the
+    /// Terrace Lakes and the ruined outpost (see `features.rs`).
+    pub tablelands: Vec<Tableland>,
+    pub oases: Vec<Oasis>,
+    pub needles: Vec<Needle>,
+    pub terraces: Option<Terraces>,
+    pub outpost: Outpost,
     /// Off while the world is being set up (the border features are
     /// measured from the land without them).
     features: bool,
@@ -383,13 +445,34 @@ impl Terrain {
             bridge: BridgeSite { centre: (0.0, 0.0), axis: (1.0, 0.0), half_len: 0.0, span_half: 0.0, half_w: DECK_HALF_W, deck_y: 0.0, spring_half: 0.0, spring_y: 0.0 },
             features: false,
             city: Vec::new(),
+            tablelands: Vec::new(),
+            oases: Vec::new(),
+            needles: Vec::new(),
+            terraces: None,
+            outpost: Outpost { x: 0.0, z: 0.0, y: f64::NAN, facing: (1.0, 0.0) },
         };
+        // two tablelands that link regions (first pass): one astride the
+        // South / Southwest river, one at the Northwest / North pass
+        for (k, r, rad, top, seed) in [(3usize, 205.0, 26.0, 700.0, 3.0), (5, 255.0, 20.0, 950.0, 11.0)] {
+            let (mx, my) = pol(t.island.border_angle(k, r), r);
+            let (x, z) = to_world(mx, my);
+            t.tablelands.push(Tableland { x, z, r: rad * METRES_PER_PX, top, seed });
+        }
         t.rivers = RIVER_BORDERS.iter().map(|&k| River::new(&t.island, k)).collect();
+        // a stream winding through the middle of the South's forest
+        let isl = &t.island;
+        let stream = River::stream(isl, 10, 128.0, 0.22, |r| 88.0 + 5.0 * isl.noise.n2(r / 45.0, 4.4));
+        t.rivers.push(stream);
         // the giants' range: place the peaks and ridges, then size each
         // peak's spire so its summit lands near its target height
         t.peaks = range_peak_spots()
             .iter()
-            .map(|&(x, z, target)| RangePeak { x, z, target, spire_m: 0.0, spire_r: 0.25 * target, body_m: 0.25 * target, body_r: 0.7 * target })
+            .enumerate()
+            .map(|(i, &(x, z, target))| {
+                // Everest's range is drawn in with it
+                let k = if RANGE_PEAKS[i].0 == 0 { CORE } else { 1.0 };
+                RangePeak { x, z, target, spire_m: 0.0, spire_r: 0.25 * target * k, body_m: 0.25 * target, body_r: 0.7 * target * k }
+            })
             .collect();
         t.ridges = RANGE_RIDGES
             .iter()
@@ -446,6 +529,71 @@ impl Terrain {
             }
             t.lakes.push(Lake { x, z, r, level: level - 2.0 });
         }
+        // a small lake out on the Southwest's grass (first pass)
+        {
+            let (x, z) = { let (mx, my) = pol(161.0, 252.0); to_world(mx, my) };
+            let r = 2_600.0;
+            let mut level = f64::MAX;
+            for k in 0..24 {
+                let a = k as f64 / 24.0 * std::f64::consts::TAU;
+                level = level.min(t.height_no_lakes(x + a.cos() * r * 1.3, z + a.sin() * r * 0.8));
+            }
+            t.lakes.push(Lake { x, z, r, level: level - 1.5 });
+        }
+        // oases in the Northeast's dune sea: a hollow a little below the
+        // lowest dune around it
+        let mut oases = Vec::new();
+        for (deg, rp, r) in [(-12.0, 268.0, 850.0), (-17.0, 372.0, 650.0)] {
+            // well inland (move in toward the centre if the coast is near)
+            let mut rp: f64 = rp;
+            while rp > 150.0 && { let (mx, my) = pol(deg, rp); t.island.land_at(mx, my) < 0.12 } {
+                rp -= 4.0;
+            }
+            let (x, z) = { let (mx, my) = pol(deg, rp); to_world(mx, my) };
+            let mut low = f64::MAX;
+            for k in 0..24 {
+                let a = k as f64 / 24.0 * std::f64::consts::TAU;
+                low = low.min(t.height_no_lakes(x + a.cos() * r * 3.0, z + a.sin() * r * 3.0));
+            }
+            oases.push(Oasis { x, z, r, floor: low - 12.0 });
+        }
+        t.oases = oases;
+        // the Needles: rock spires on an islet off the South coast, and in
+        // the sea around it
+        {
+            let (ix, iy, _) = t.island.islets[4];
+            let (cx, cz) = to_world(ix, iy);
+            let mut rn = Rng::new(4_409);
+            for k in 0..8 {
+                let a = rn.next() * std::f64::consts::TAU;
+                let d = if k == 0 { 0.0 } else { 1_200.0 + rn.next() * 4_800.0 };
+                let top = if k == 0 { 380.0 } else { 140.0 + rn.next() * 210.0 };
+                t.needles.push(Needle { x: cx + a.cos() * d, z: cz + a.sin() * d, r: 70.0 + top * 0.22, top });
+            }
+        }
+        // the Terrace Lakes: on low Northwest ground clear of its big lakes,
+        // stepping down away from the North's range
+        'find: for deg in (196..=234).rev().step_by(3) {
+            for rp in (165..=285).step_by(12) {
+                let (deg, rp) = (deg as f64, rp as f64);
+                let start = { let (mx, my) = pol(deg, rp); to_world(mx, my) };
+                let toward = { let (mx, my) = pol(deg - 30.0, rp + 25.0); to_world(mx, my) };
+                let (dx, dz) = (toward.0 - start.0, toward.1 - start.1);
+                let dl = dx.hypot(dz);
+                let tr = Terraces::new(start, (dx / dl, dz / dl));
+                let ok = tr.lakes.iter().all(|lk| {
+                    let (mx, my) = to_map(lk.x, lk.z);
+                    t.island.land_at(mx, my) > 0.08
+                        && t.island.region_at(to_map_deg(mx, my), mx, my) == 5
+                        && t.height_no_lakes(lk.x, lk.z) < 120.0
+                        && t.lakes.iter().all(|l| ((lk.x - l.x) / 1.3).hypot((lk.z - l.z) / 0.8) > l.r * 1.3 + 14_000.0)
+                });
+                if ok {
+                    t.terraces = Some(tr);
+                    break 'find;
+                }
+            }
+        }
         // where the land really meets the sea along the canyon and the rivers
         // (the coastline's noise moves it a few km from the map's outline):
         // the canyon must end, and its natural wall stand, short of the
@@ -481,6 +629,26 @@ impl Terrain {
         }
         t.bridge.spring_half = x;
         t.city = crate::city::layout(&t.bridge);
+        // the ruined outpost beside the Southeast approach to the bridge
+        let ends = t.bridge.ends();
+        let (bcx, bcz) = t.bridge.centre;
+        let se = ends
+            .into_iter()
+            .find(|&(ex, ez)| {
+                let (ox, oz) = (ex - bcx, ez - bcz);
+                let l = ox.hypot(oz);
+                t.sample(ex + ox / l * 3_000.0, ez + oz / l * 3_000.0).region == 2
+            })
+            .unwrap_or(ends[0]);
+        let (ox, oz) = (se.0 - bcx, se.1 - bcz);
+        let l = ox.hypot(oz);
+        let (ux, uz) = (ox / l, oz / l);
+        // at the foot of the approach ramp, a little off to the side
+        let (px, pz) = (se.0 + ux * 5_200.0 - uz * 900.0, se.1 + uz * 5_200.0 + ux * 900.0);
+        let (fx, fz) = (se.0 - px, se.1 - pz);
+        let fl = fx.hypot(fz);
+        t.outpost = Outpost { x: px, z: pz, y: f64::NAN, facing: (fx / fl, fz / fl) };
+        t.outpost.y = t.height_no_lakes(px, pz);
         t
     }
 
@@ -509,7 +677,7 @@ impl Terrain {
 
     /// The landform of each region, in metres above the sea (before the
     /// coast, the region-border ridgelines and the central mountains).
-    fn region_relief(&self, k: usize, x: f64, z: f64) -> f64 {
+    fn region_relief(&self, k: usize, p: &MapPt, x: f64, z: f64) -> f64 {
         let n = &self.island.noise;
         match k {
             // North, rock mines: high, rugged, knife-edged rock mountains
@@ -520,25 +688,46 @@ impl Terrain {
                 let canyon = (1.0 - n.n2(x / 9_000.0 - 3.0, z / 9_000.0 + 1.0).abs()).powi(10);
                 1200.0 + 3800.0 * r.powf(2.2) + 700.0 * (crags - 0.45) * (0.4 + r) - 900.0 * canyon
             }
-            // Northeast, lava flows and desert: a high plateau of stepped
-            // mesas and buttes, seas of tall dunes, and volcanic cones
+            // Northeast, lava flows and desert, in three parts: lava fields
+            // of cones and broken, hummocky flows in the north; badlands of
+            // stepped mesas and gullied, terraced hills in the middle; and a
+            // sea of tall dunes in the south, by the canyon
             1 => {
-                let m = n.fbm(x / 14_000.0 - 4.0, z / 14_000.0, 4);
-                let mesas = sm(0.03, 0.04, m) * 380.0 + sm(0.17, 0.178, m) * 300.0 + sm(0.3, 0.306, m) * 220.0;
-                let sand = sm(0.02, -0.08, m);
-                let u = x * 0.8 + z * 0.6;
-                let wave = (u / 1500.0 + 2.5 * n.n2(x / 5_000.0, z / 5_000.0)) * std::f64::consts::PI;
-                let dunes = (1.0 - wave.sin().abs()).powf(1.5) * (130.0 + 60.0 * n.n2(x / 9_000.0, z / 9_000.0)) * sand;
-                // smaller dunes riding on the big ones, crests across the wind
-                let u2 = x * 0.75 - z * 0.66;
-                let wave2 = (u2 / 320.0 + 1.6 * n.n2(x / 1_400.0 + 3.0, z / 1_400.0)) * std::f64::consts::PI;
-                let ripples = (1.0 - wave2.sin().abs()).powi(2) * 28.0 * sm(0.03, -0.02, m);
-                let c = n.fbm(x / 6_000.0 + 13.0, z / 6_000.0 - 2.0, 2);
-                let cones = sm(0.32, 0.52, c).powi(2) * 750.0;
-                700.0 + 200.0 * n.fbm(x / 40_000.0, z / 40_000.0 + 3.0, 3) + mesas + dunes + ripples + cones
+                let [lv, bd, du] = self.ne_zones(p, x, z);
+                let base = 700.0 + 200.0 * n.fbm(x / 40_000.0, z / 40_000.0 + 3.0, 3);
+                let mut h = 0.0;
+                if lv > 0.0 {
+                    let c = n.fbm(x / 6_000.0 + 13.0, z / 6_000.0 - 2.0, 2);
+                    let cones = sm(0.32, 0.52, c).powi(2) * 750.0;
+                    let hummock = 40.0 * (n.ridged(x / 1_800.0 + 5.0, z / 1_800.0, 3) - 0.45) + 9.0 * (n.ridged(x / 220.0, z / 220.0 - 3.0, 2) - 0.45);
+                    h += lv * (base + 80.0 + cones + hummock);
+                }
+                if bd > 0.0 {
+                    let m = n.fbm(x / 14_000.0 - 4.0, z / 14_000.0, 4);
+                    let mesas = sm(0.03, 0.04, m) * 380.0 + sm(0.17, 0.178, m) * 300.0 + sm(0.3, 0.306, m) * 220.0;
+                    let hills = n.ridged(x / 5_000.0 - 2.0, z / 5_000.0 + 6.0, 4);
+                    let steps = (hills * 6.0).floor() / 6.0 + sm(0.75, 1.0, (hills * 6.0).fract()) / 6.0;
+                    let gully = (1.0 - n.n2(x / 900.0 + 1.0, z / 900.0).abs()).powi(8) * 70.0 + (1.0 - n.n2(x / 260.0, z / 260.0 + 4.0).abs()).powi(10) * 25.0;
+                    h += bd * (base - 50.0 + mesas + 300.0 * steps - gully);
+                }
+                if du > 0.0 {
+                    let u = x * 0.8 + z * 0.6;
+                    let wave = (u / 1500.0 + 2.5 * n.n2(x / 5_000.0, z / 5_000.0)) * std::f64::consts::PI;
+                    let dunes = (1.0 - wave.sin().abs()).powf(1.5) * (130.0 + 60.0 * n.n2(x / 9_000.0, z / 9_000.0));
+                    // smaller dunes riding on the big ones, crests across the wind
+                    let u2 = x * 0.75 - z * 0.66;
+                    let wave2 = (u2 / 320.0 + 1.6 * n.n2(x / 1_400.0 + 3.0, z / 1_400.0)) * std::f64::consts::PI;
+                    let ripples = (1.0 - wave2.sin().abs()).powi(2) * 28.0;
+                    h += du * (base - 80.0 + dunes + ripples);
+                }
+                h
             }
             // Southeast, mid forest with fields: soft rolling green hills
-            2 => 180.0 + 160.0 * n.fbm(x / 8_000.0 + 5.0, z / 8_000.0, 4) + 50.0 * n.fbm(x / 2_000.0, z / 2_000.0 - 9.0, 3),
+            // (with a broad, open valley across its middle where the fields are)
+            2 => {
+                let v = self.se_valley(p, x, z);
+                180.0 - 110.0 * v + (160.0 * n.fbm(x / 8_000.0 + 5.0, z / 8_000.0, 4) + 50.0 * n.fbm(x / 2_000.0, z / 2_000.0 - 9.0, 3)) * (1.0 - 0.7 * v)
+            }
             // South, dark forest: steep, tall wooded hills and deep ravines
             3 => {
                 let r = n.ridged(x / 9_000.0 - 7.0, z / 9_000.0 + 3.0, 4);
@@ -550,11 +739,60 @@ impl Terrain {
             4 => {
                 let b = n.fbm(x / 12_000.0 + 2.0, z / 12_000.0, 3);
                 let dome = sm(0.42, 0.47, b) * (260.0 + 120.0 * n.n2(x / 3_000.0, z / 3_000.0));
-                110.0 + 12.0 * n.fbm(x / 9_000.0 - 1.0, z / 9_000.0, 3) + dome
+                // low rolling hills in places, and small rocky outcrops
+                let hills = 70.0 * (n.fbm(x / 7_000.0 + 9.0, z / 7_000.0, 3) + 0.2).max(0.0);
+                let tor = self.sw_tor(x, z) * (16.0 + 10.0 * n.n2(x / 240.0, z / 240.0));
+                110.0 + 12.0 * n.fbm(x / 9_000.0 - 1.0, z / 9_000.0, 3) + dome + hills + tor
             }
             // Northwest, lakes and swampy forest: flat, low wetland
             _ => 25.0 + 6.0 * n.fbm(x / 3_000.0 + 8.0, z / 3_000.0, 3),
         }
+    }
+
+    /// The Northeast's parts at a spot: weights (lava fields, badlands,
+    /// dune sea) by direction, with wandering edges.
+    pub fn ne_zones_at(&self, wx: f64, wz: f64) -> [f64; 3] {
+        let p = self.map_pt(wx, wz);
+        self.ne_zones(&p, wx, wz)
+    }
+
+    fn ne_zones(&self, p: &MapPt, wx: f64, wz: f64) -> [f64; 3] {
+        let n = &self.island.noise;
+        let zd = p.deg + 6.0 * n.fbm(wx / 140_000.0 + 3.0, wz / 140_000.0, 3) + 2.0 * n.n2(wx / 30_000.0, wz / 30_000.0 + 5.0);
+        let lava = sm(-35.5, -39.5, zd);
+        let dunes = sm(-25.5, -21.5, zd);
+        [lava, (1.0 - lava - dunes).max(0.0), dunes]
+    }
+
+    /// The Southeast's open valley (0–1), a broad band across its middle.
+    fn se_valley(&self, p: &MapPt, wx: f64, wz: f64) -> f64 {
+        let r = p.r + 14.0 * self.island.noise.fbm(wx / 120_000.0 + 2.0, wz / 120_000.0, 3);
+        sm(135.0, 170.0, r) * (1.0 - sm(255.0, 295.0, r))
+    }
+
+    /// The Southwest's small rocky outcrops (0–1).
+    fn sw_tor(&self, wx: f64, wz: f64) -> f64 {
+        sm(0.5, 0.58, self.island.noise.fbm(wx / 1_100.0 + 31.0, wz / 1_100.0, 2))
+    }
+
+    /// Ash and broken lava ground around St. Helens (0–1), spread farther
+    /// downwind to the north-east.
+    pub fn ash_at(&self, wx: f64, wz: f64) -> f64 {
+        let (dx, dz) = (wx - self.helens.0, wz - self.helens.1);
+        // along the north-east axis (east, north) and across it
+        let (u, v) = (dx * 0.6 - dz * 0.8, dx * 0.8 + dz * 0.6);
+        let dn = ((u - 30_000.0) / 210_000.0).hypot(v / 150_000.0);
+        if dn > 1.3 {
+            return 0.0;
+        }
+        let n = &self.island.noise;
+        sm(1.0, 0.55, dn + 0.14 * n.fbm(wx / 40_000.0 + 2.0, wz / 40_000.0, 3))
+    }
+
+    /// Headland cliffs (0–1) at a spot: where the coast juts out, except
+    /// along the east-coast cliffs and the Northwest's marshes.
+    fn headland_cliff(&self, p: &MapPt, nw: f64) -> f64 {
+        sm(0.35, 0.7, headland(p.deg)) * (1.0 - cliff_w(p.deg)) * (1.0 - nw) * sm(150.0, 220.0, p.r)
     }
 
     /// Ground height on land, metres (before lakes).
@@ -570,7 +808,7 @@ impl Terrain {
         let mut h = 1.2;
         for (k, &w) in wr.iter().enumerate() {
             if w > 0.0 {
-                h += w * inland * self.region_relief(k, wx, wz);
+                h += w * inland * self.region_relief(k, p, wx, wz);
             }
         }
         // mountain ranges along the North / Northeast and Northwest / North
@@ -582,9 +820,13 @@ impl Terrain {
                     let core = (-(pd / 9.0).powf(1.6)).exp();
                     let crest = 0.55 + 0.45 * n.ridged(wx / 18_000.0 + 7.0 * k as f64, wz / 18_000.0, 4);
                     let peaks = n.ridged(wx / 6_000.0 + 2.0, wz / 6_000.0 - 1.0, 4) - 0.45;
-                    h += core * (3_400.0 * crest + 1_400.0 * peaks) * sm(95.0, 130.0, p.r) * sm(0.0, 25_000.0, shore);
+                    h += core * (3_400.0 * crest + 1_400.0 * peaks) * sm(95.0, 130.0, p.r) * sm(0.0, 25_000.0, shore) * (1.0 - 0.85 * pass_dip(k, p.r));
                 }
             }
+        }
+        // tablelands linking regions
+        for tb in &self.tablelands {
+            h = tb.lift(n, wx, wz, h);
         }
         // a range of lesser mountains around the giants
         let mask = ((-(d1 / RANGE_R).powf(1.6)).exp() + 0.35 * (-(d2 / 110_000.0).powf(1.6)).exp()).min(1.0);
@@ -633,11 +875,23 @@ impl Terrain {
             let breach = north * (-(d2 / (2.4 * HEL_CRATER_R)).powi(2)).exp();
             h += self.hel_m * (cone - 0.4 * crater - 0.25 * breach).max(0.0);
         }
+        // ash fields and broken, hummocky lava ground around St. Helens
+        let ash = self.ash_at(wx, wz);
+        if ash > 0.0 {
+            h += ash * (60.0 * (n.ridged(wx / 2_500.0 + 3.0, wz / 2_500.0, 3) - 0.45) + 14.0 * (n.ridged(wx / 300.0, wz / 300.0 + 8.0, 2) - 0.45)) * sm(0.0, 4_000.0, shore);
+        }
         // white cliffs along the east coast: sheer walls of varying height
         let cw = cliff_w(p.deg) * sm(230.0, 300.0, p.r);
         if cw > 0.0 {
             let tall = CLIFF_M * (1.0 + 0.9 * n.fbm(wx / 30_000.0 + 4.0, wz / 30_000.0, 3)).clamp(0.3, 1.7);
             h += cw * tall * sm(0.0, 140.0, shore + 60.0 * n.n2(wx / 900.0, wz / 900.0));
+        }
+        // headlands stand as cliffs
+        let hc = self.headland_cliff(p, wr[5]);
+        if hc > 0.0 {
+            let tall = 170.0 * (1.0 + 0.7 * n.fbm(wx / 25_000.0 + 8.0, wz / 25_000.0, 3)).clamp(0.4, 1.8) * (0.55 + 0.45 * sm(-0.3, 0.3, n.n2(wx / 2_500.0 - 6.0, wz / 2_500.0)));
+            // (the headland's top falls back to the land behind it)
+            h += hc * tall * sm(0.0, 110.0, shore + 50.0 * n.n2(wx / 700.0, wz / 700.0)) * (1.0 - sm(2_500.0, 14_000.0, shore));
         }
         // lava flows run in shallow channels
         let crust = self.lava.crust_at(p.x, p.y);
@@ -648,6 +902,23 @@ impl Terrain {
         h += (5.0 * n.fbm(wx / 700.0 - 3.3, wz / 700.0 + 9.1, 3) + 0.8 * n.fbm(wx / 110.0 + 1.9, wz / 110.0, 2))
             * sm(0.0, 3000.0, shore)
             * sm(300.0, 3000.0, d1);
+        // the Needles' islet: low rock, with the spires standing on it
+        if let Some(nd) = self.needles.first() {
+            let d = (wx - nd.x).hypot(wz - nd.z);
+            if d < 30_000.0 {
+                h = lerp(h, 14.0 + 10.0 * n.n2(wx / 1_500.0, wz / 1_500.0), sm(30_000.0, 18_000.0, d));
+            }
+        }
+        if let Some(nh) = needle_height(&self.needles, wx, wz) {
+            h = h.max(nh);
+        }
+        // oases in the dune sea, and the Terrace Lakes
+        for oa in &self.oases {
+            h = oa.shape(wx, wz, h);
+        }
+        if let Some(tr) = &self.terraces {
+            h = tr.shape(n, wx, wz, h);
+        }
         if self.features {
             h = self.border_features(p, wx, wz, h);
         }
@@ -666,6 +937,7 @@ impl Terrain {
                 h = lerp(h, b.deck_y - 1.0, sm(ABUTMENT_BLEND, ABUTMENT_R, d));
             }
         }
+        h = self.outpost.pad(wx, wz, h);
         if let Some((d, s)) = self.canyon.path.nearest(wx, wz, p.r) {
             h += self.canyon.sea_wall(d, s);
             h -= self.canyon.carve(n, wx, wz, d, s);
@@ -728,8 +1000,20 @@ impl Terrain {
     /// A sea stack (a rock pillar standing in the sea off the cliffs): its
     /// height here, if there is one.
     fn sea_stack(&self, p: &MapPt, wx: f64, wz: f64, shore: f64) -> Option<f64> {
-        let cw = cliff_w(p.deg) * sm(230.0, 300.0, p.r);
+        let needle = needle_height(&self.needles, wx, wz);
+        if needle.is_some() {
+            return needle;
+        }
         let off = -shore;
+        if !(60.0..4_000.0).contains(&off) {
+            return None;
+        }
+        let mut cw = cliff_w(p.deg) * sm(230.0, 300.0, p.r);
+        if cw <= 0.0 && sm(0.35, 0.7, headland(p.deg)) > 0.0 {
+            let mut wr = [0.0; 6];
+            self.island.region_weights(p.deg, p.x, p.y, &mut wr);
+            cw = 0.3 * self.headland_cliff(p, wr[5]);
+        }
         if cw <= 0.0 || !(60.0..4_000.0).contains(&off) {
             return None;
         }
@@ -866,29 +1150,40 @@ impl Terrain {
             let mut wr = [0.0; 6];
             self.island.region_weights(p.deg, x, y, &mut wr);
             sharpen(&mut wr, 2);
+            // the ground's colour and the forests change more gently across
+            // a border: a transition zone where one region gives way to the next
+            let mut ws = [0.0; 6];
+            self.island.region_weights_b(p.deg, x, y, SOFT_PX, &mut ws);
             let (mut fd, mut f0, mut f1, mut f2) = (0.0, 0.0, 0.0, 0.0);
             cr = 0.0;
             cg = 0.0;
             cb = 0.0;
             let (mut best, mut bw) = (0usize, 0.0);
             for (q, g) in REGIONS.iter().enumerate() {
-                let wq = wr[q];
-                if wq == 0.0 {
-                    continue;
+                let wq = ws[q];
+                if wq > 0.0 {
+                    cr += wq * g.col[0];
+                    cg += wq * g.col[1];
+                    cb += wq * g.col[2];
+                    f0 += wq * g.fcol[0];
+                    f1 += wq * g.fcol[1];
+                    f2 += wq * g.fcol[2];
+                    fd += wq * g.forest;
                 }
-                cr += wq * g.col[0];
-                cg += wq * g.col[1];
-                cb += wq * g.col[2];
-                f0 += wq * g.fcol[0];
-                f1 += wq * g.fcol[1];
-                f2 += wq * g.fcol[2];
-                fd += wq * g.forest;
-                if wq > bw {
-                    bw = wq;
+                if wr[q] > bw {
+                    bw = wr[q];
                     best = q;
                 }
             }
             s.region = best as u8;
+            let (mut r2, mut w2) = (best, 0.0);
+            for (q, &wq) in ws.iter().enumerate() {
+                if q != best && wq > w2 {
+                    (r2, w2) = (q, wq);
+                }
+            }
+            s.region2 = r2 as u8;
+            s.mix2 = w2.min(0.5) as f32;
             s.patch = n.fbm(wx / 220.0 + 41.0, wz / 220.0 - 17.0, 2) as f32;
             // colour variation at map scale and at walking scale
             let patch = 1.0
@@ -914,14 +1209,31 @@ impl Terrain {
                 mix!(if band > 0.0 { [150.0, 146.0, 140.0] } else { [98.0, 96.0, 96.0] }, wr[0] * 0.22 * band.abs());
                 mix!([120.0, 128.0, 92.0], wr[0] * 0.3 * sm(0.25, 0.5, s.patch as f64) * (1.0 - sm(2_200.0, 3_200.0, h)));
             }
-            // the Northeast's mesas are red sandstone in stripes
-            if wr[1] > 0.05 && h > 850.0 {
-                mix!([186.0, 108.0, 68.0], wr[1] * 0.55 * sm(900.0, 1_150.0, h));
-                let strata = (h / 32.0 + 2.0 * n.n2(wx / 3_000.0 + 9.0, wz / 3_000.0)).sin();
-                mix!(if strata > 0.0 { [214.0, 150.0, 100.0] } else { [140.0, 78.0, 52.0] }, wr[1] * 0.3 * strata.abs() * sm(900.0, 1_150.0, h));
+            // the Northeast: dark basalt and grey ash in the lava fields,
+            // thin bands of red, cream and purple-grey rock in the badlands,
+            // golden sand in the dune sea
+            let mut ne = [0.0; 3];
+            if wr[1] > 0.05 {
+                ne = self.ne_zones(&p, wx, wz);
+                mix!([86.0, 76.0, 72.0], wr[1] * ne[0] * 0.72);
+                mix!([128.0, 118.0, 110.0], wr[1] * ne[0] * 0.3 * sm(0.2, 0.5, s.patch as f64));
+                if ne[1] > 0.02 {
+                    const BANDS: [[f64; 3]; 4] = [[196.0, 112.0, 78.0], [226.0, 198.0, 158.0], [150.0, 104.0, 104.0], [212.0, 150.0, 98.0]];
+                    let b = ((h / 24.0 + 1.5 * n.n2(wx / 2_000.0 + 9.0, wz / 2_000.0)).rem_euclid(4.0)) as usize;
+                    mix!(BANDS[b.min(3)], wr[1] * ne[1] * 0.8);
+                }
+                mix!([234.0, 204.0, 146.0], wr[1] * ne[2] * 0.6);
+                s.ne_zone = if ne[0] >= ne[1] && ne[0] >= ne[2] { 0 } else if ne[1] >= ne[2] { 1 } else { 2 };
             }
-            // the Southwest: golden dry patches among the green
+            // the Southwest: golden dry patches among the green, and grey
+            // rock where the small outcrops break through
             mix!([196.0, 182.0, 104.0], wr[4] * 0.35 * sm(-0.1, 0.25, n.fbm(wx / 1_800.0 + 5.0, wz / 1_800.0, 2)));
+            if wr[4] > 0.05 {
+                let tor = wr[4] * self.sw_tor(wx, wz);
+                mix!([156.0, 150.0, 136.0], tor * 0.8);
+                s.tor = tor as f32;
+                s.rock = s.rock.max(tor as f32);
+            }
             // the Northwest: dark peat and mud
             mix!([70.0, 66.0, 48.0], wr[5] * 0.3 * sm(0.1, 0.35, s.patch as f64) * (1.0 - sm(900.0, 1_500.0, h)));
             // high ground: tan, then grey rock, then snow (by height)
@@ -936,11 +1248,21 @@ impl Terrain {
                 let ribs = sm(0.6, 0.8, n.ridged(wx / 6_000.0 + 17.0, wz / 6_000.0, 3)) * (1.0 - sm(40_000.0, 90_000.0, h));
                 snow *= fields * (1.0 - 0.85 * ribs);
             }
+            // St. Helens: grey ash and black lava where snow would be, with
+            // only a little dirty snow near the top
+            let ash = self.ash_at(wx, wz);
+            snow *= 1.0 - ash * 0.92 * (1.0 - sm(45_000.0, 58_000.0, h));
             mix!([236.0, 241.0, 250.0], snow);
-            // St. Helens' ash and crater
+            if ash > 0.0 {
+                mix!([112.0, 106.0, 104.0], ash * 0.85);
+                mix!([50.0, 46.0, 48.0], ash * 0.62 * sm(0.2, 0.45, n.fbm(wx / 6_000.0 + 7.0, wz / 6_000.0, 3)));
+                mix!([156.0, 148.0, 142.0], ash * 0.25 * sm(0.3, 0.6, s.patch as f64));
+                s.ash = ash as f32;
+                s.rock = s.rock.max((ash * 0.55) as f32);
+            }
+            // St. Helens' crater
             let d2 = (x - HX).hypot(y - HY);
-            mix!([132.0, 96.0, 72.0], 0.8 * (-(d2 / 46.0).powf(2.2)).exp());
-            mix!([70.0, 52.0, 42.0], 0.7 * (-(d2 / 11.0).powi(2)).exp());
+            mix!([58.0, 46.0, 42.0], 0.75 * (-(d2 / 11.0).powi(2)).exp());
             // white cliffs along the east coast, layered
             let cw = cliff_w(p.deg) * sm(230.0, 300.0, p.r) * (1.0 - sm(400.0, 2500.0, shore));
             if cw > 0.0 {
@@ -949,12 +1271,35 @@ impl Terrain {
                 mix!(c, cw * 0.85);
                 s.rock = s.rock.max((cw * sm(30.0, 90.0, h)) as f32);
             }
+            // headland cliffs, in each region's rock, layered
+            let hc = self.headland_cliff(&p, wr[5]) * (1.0 - sm(300.0, 1_500.0, shore));
+            if hc > 0.0 {
+                const ROCK: [[f64; 3]; 6] = [
+                    [150.0, 146.0, 140.0],
+                    [196.0, 128.0, 92.0],
+                    [228.0, 224.0, 212.0],
+                    [116.0, 108.0, 96.0],
+                    [206.0, 176.0, 128.0],
+                    [120.0, 116.0, 100.0],
+                ];
+                let mut rc = [0.0; 3];
+                for (k, w) in ws.iter().enumerate() {
+                    for c in 0..3 {
+                        rc[c] += w * ROCK[k][c];
+                    }
+                }
+                let layer = (h / 30.0 + n.n2(wx / 1_500.0, wz / 1_500.0 + 2.0)).sin();
+                let k = if layer > 0.5 { 0.82 } else { 1.0 };
+                mix!([rc[0] * k, rc[1] * k, rc[2] * k], hc * sm(6.0, 30.0, h) * 0.9);
+                s.rock = s.rock.max((hc * sm(20.0, 60.0, h)) as f32);
+            }
             // ground detail: sand, rock (grass where neither)
-            s.sand = s.sand.max((wr[1] * (1.0 - sm(850.0, 1_150.0, h))) as f32);
-            s.rock = s.rock.max((wr[0] * sm(700.0, 1_600.0, h) * 0.8 + wr[1] * sm(900.0, 1_150.0, h)).min(1.0) as f32);
+            s.sand = s.sand.max((wr[1] * ne[2]) as f32);
+            s.rock = s.rock.max((wr[0] * sm(700.0, 1_600.0, h) * 0.8 + wr[1] * (0.5 * ne[0] + 0.7 * ne[1])).min(1.0) as f32);
             s.rock = s.rock.max((sm(3_400.0, 4_700.0, h) * (1.0 - snow)) as f32);
             // shores: beaches of each region's sand or stones, darker where wet
-            let beach = sm(320.0 + 200.0 * n.n2(wx / 1_500.0, wz / 1_500.0 + 3.0), 40.0, shore) * sm(14.0, 4.0, h) * (1.0 - cw);
+            let bay = 1.0 + 1.3 * sm(-0.2, -0.7, headland(p.deg));
+            let beach = sm((320.0 + 200.0 * n.n2(wx / 1_500.0, wz / 1_500.0 + 3.0)) * bay, 40.0, shore) * sm(14.0, 4.0, h) * (1.0 - cw);
             if beach > 0.0 {
                 const SHORE: [[f64; 3]; 6] = [
                     [150.0, 146.0, 138.0],
@@ -1004,13 +1349,32 @@ impl Terrain {
                 }
             }
             // forest: the map's forests, broken up into woods and clearings
+            // the Southeast: its fields lie in the open valley, its woods
+            // thicken toward the coast
+            let coastal = 1.0 - sm(30_000.0, 90_000.0, shore);
+            let valley = if ws[2] > 0.02 { self.se_valley(&p, wx, wz) } else { 0.0 };
+            let fd = (fd + ws[2] * (0.5 * coastal - 0.35 * valley)).clamp(0.0, 1.0);
             let fine = n.fbm(wx / 3200.0 - 8.0, wz / 3200.0 + 2.0, 3);
-            let fm_map = sm(1.0 - fd - 0.07, 1.0 - fd + 0.07, n.fbm(x / 60.0, y / 60.0, 3) * 1.4 + 0.5);
-            let fm = (fm_map * sm(-0.35, 0.05, fine + fd * 0.6 - 0.3)) * (1.0 - sm(2600.0, 3400.0, h)) * sm(60.0, 400.0, shore) * (1.0 - sm(0.0, 300.0, cut));
+            // (in a transition zone the woods thin out gradually)
+            let tw = 0.07 + 0.5 * s.mix2 as f64;
+            let fm_map = sm(1.0 - fd - tw, 1.0 - fd + tw, n.fbm(x / 60.0, y / 60.0, 3) * 1.4 + 0.5);
+            // the South's forest opens into clearings here and there
+            let clearing = ws[3] * sm(0.28, 0.4, n.fbm(wx / 2_600.0 + 23.0, wz / 2_600.0 - 4.0, 3));
+            let fm = (fm_map * sm(-0.35, 0.05, fine + fd * 0.6 - 0.3))
+                * (1.0 - sm(2600.0, 3400.0, h))
+                * sm(60.0, 400.0, shore)
+                * (1.0 - sm(0.0, 300.0, cut))
+                * (1.0 - 0.92 * clearing)
+                * (1.0 - ash);
             s.forest = fm as f32;
+            s.clearing = clearing as f32;
+            mix!([128.0, 148.0, 74.0], clearing * 0.55);
             // Southeast farmland: real-size fields
             let fw = wr[2] * (1.0 - fm) * (1.0 - sm(1200.0, 1800.0, h)) * sm(300.0, 1500.0, shore)
-                * sm(-0.25, -0.05, n.fbm(x / 110.0 + 9.0, y / 110.0, 2))
+                * sm(-0.25, -0.05, n.fbm(x / 110.0 + 9.0, y / 110.0, 2) - 0.4 * valley)
+                * (0.15 + 0.85 * valley)
+                * (1.0 - coastal)
+                * (1.0 - ash)
                 * (1.0 - sm(0.0, 300.0, cut));
             if fw > 0.01 {
                 let u = wx * 0.88 + wz * 0.47;
@@ -1055,6 +1419,51 @@ impl Terrain {
                 mix!([170.0, 168.0, 130.0], t);
                 s.wet = s.wet.max(t as f32);
             }
+            // the Needles' islet: low rock and grass, no forest; its spires bare rock
+            if let Some(nd) = self.needles.first() {
+                let d = (wx - nd.x).hypot(wz - nd.z);
+                if d < 30_000.0 {
+                    let w = sm(30_000.0, 18_000.0, d);
+                    s.forest *= (1.0 - w) as f32;
+                    s.clearing = s.clearing.max(w as f32);
+                    mix!([150.0, 156.0, 112.0], w * 0.5);
+                }
+            }
+            if let Some(nh) = needle_height(&self.needles, wx, wz) {
+                if nh >= h - 1.0 && nh > 20.0 {
+                    let layer = (h / 45.0).sin();
+                    mix!(if layer > 0.6 { [196.0, 190.0, 176.0] } else { [222.0, 218.0, 206.0] }, 0.95);
+                    s.rock = 1.0;
+                    s.forest = 0.0;
+                }
+            }
+            // oases: water, and green around it
+            for oa in &self.oases {
+                let g = oa.green(wx, wz);
+                if g > 0.0 {
+                    mix!([104.0, 140.0, 62.0], g * 0.85);
+                    mix!([176.0, 168.0, 124.0], sm(oa.r * 1.25, oa.r * 1.02, (wx - oa.x).hypot(wz - oa.z)));
+                    s.oasis = s.oasis.max(g as f32);
+                    s.sand *= 1.0 - g as f32;
+                    if let Some(lv) = oa.water(wx, wz) {
+                        s.water = Some(lv);
+                    }
+                }
+            }
+            // the Terrace Lakes: rocky step edges, the lakes and their streams
+            if let Some(tr) = &self.terraces {
+                let rk = tr.rocky(wx, wz);
+                if rk > 0.0 {
+                    mix!([132.0, 128.0, 116.0], rk * 0.85);
+                    s.rock = s.rock.max(rk as f32);
+                }
+                if let Some(lv) = tr.water(wx, wz) {
+                    if h < lv {
+                        s.water = Some(lv);
+                        mix!([150.0, 150.0, 120.0], 0.5);
+                    }
+                }
+            }
             // Northeast lava
             let crust = self.lava.crust_at(x, y);
             let core = self.lava.core_at(x, y);
@@ -1096,6 +1505,14 @@ impl Terrain {
         s
     }
 
+    /// Region weights that change gently across the borders (sums to 1).
+    pub fn region_mix_soft(&self, wx: f64, wz: f64) -> [f64; 6] {
+        let p = self.map_pt(wx, wz);
+        let mut ws = [0.0; 6];
+        self.island.region_weights_b(p.deg, p.x, p.y, SOFT_PX, &mut ws);
+        ws
+    }
+
     /// How much each region (index into `REGIONS`) owns a spot; sums to 1.
     pub fn region_mix(&self, wx: f64, wz: f64) -> [f64; 6] {
         let p = self.map_pt(wx, wz);
@@ -1122,6 +1539,20 @@ impl Terrain {
             if dh > h - 50.0 {
                 return ("The Bridge City", "A city stretched across the canyon");
             }
+        }
+        if (wx - self.outpost.x).hypot(wz - self.outpost.z) < 450.0 {
+            return ("Ruined Outpost", "An old fort on the road to the bridge");
+        }
+        if let Some(tr) = &self.terraces {
+            if tr.lakes.iter().any(|lk| (wx - lk.x).hypot(wz - lk.z) < lk.step + 2_500.0) {
+                return ("The Terrace Lakes", "Lakes stepping down in waterfalls");
+            }
+        }
+        if self.needles.first().is_some_and(|nd| (wx - nd.x).hypot(wz - nd.z) < 12_000.0) {
+            return ("The Needles", "Rock spires off the South coast");
+        }
+        if self.oases.iter().any(|oa| (wx - oa.x).hypot(wz - oa.z) < oa.r * 3.5) {
+            return ("Oasis", "Water in the dune sea");
         }
         if self.canyon_cut(wx, wz) > 3_000.0 {
             return ("The Great Canyon", "Between the Northeast and the Southeast");

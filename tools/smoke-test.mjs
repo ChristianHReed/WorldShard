@@ -104,8 +104,8 @@ try {
     ["19-bridge-from-the-rim", { fly: true, y: 1700, x: 1111471, z: -22148, yaw: -2.35, pitch: -0.06, hours: 16 }],
     ["20-canyon-floor-looking-up", { fly: true, y: -44200, x: 1040148, z: -1216, yaw: 1.419, pitch: 0.5, hours: 12 }],
     ["21-river-valley", { fly: true, y: 140, x: -1058754, z: 33900, yaw: -1.79, pitch: -0.12, hours: 11 }],
-    ["22-northeast-cliffs-and-sea-stacks", { fly: true, y: 250, x: 1264808, z: -730237, yaw: -0.63, pitch: -0.02, hours: 15 }],
-    ["23-southwest-beach-surf", { x: -1513999, z: 874108, yaw: -2.094, pitch: -0.08, hours: 16 }],
+    ["22-northeast-cliffs-and-sea-stacks", { fly: true, y: 250, x: 901755, z: -1339053, yaw: -2.384, pitch: 0.0, hours: 15 }],
+    ["23-southwest-beach-surf", { x: -1218486, z: 1022431, yaw: -2.269, pitch: -0.08, hours: 16 }],
     ["24-lava-from-st-helens", { fly: true, y: 4600, x: 431571, z: -109229, yaw: -2.585, pitch: -0.02, hours: 19 }],
     ["25-sea-wall-from-the-sea", { fly: true, y: 6000, x: 1735574, z: 9051, yaw: -1.758, pitch: -0.1, hours: 9 }],
   ];
@@ -158,10 +158,64 @@ try {
     // (software rendering can take several seconds a frame here)
     await page.waitForFunction(() => JSON.parse(window.wsSettings).view === 6000, { timeout: 90000, polling: 250 });
     note(`settings: land view distance ${before} km -> 6000 km applied`);
+    // put it back, and close the panels
+    await page.evaluate((v) => {
+      const el = document.getElementById("s-view");
+      el.value = v;
+      el.dispatchEvent(new Event("input"));
+      document.getElementById("settings-panel").hidden = true;
+      document.getElementById("map-panel").hidden = true;
+    }, before);
   } catch (e) {
     ok = false;
     note(`map/travel/settings: ${e.message}`);
   }
+
+  // more views without reloading the page: jump there with the travel
+  // request (which can also set the view), as fast travel does. These also
+  // check that each region's models load as you arrive and are let go
+  // after you leave.
+  const jumps = [
+    ["26-st-helens-ash-fields", { x: 345496, z: 47240, fly: 1, y: 17100, yaw: -2.498, pitch: 0.12, hours: 15 }],
+    ["27-northeast-badlands", { x: 927386, z: -557230, yaw: 2.4, pitch: 0.0, hours: 17 }],
+    ["28-oasis", { x: 1182661, z: -251187, yaw: -1.571, pitch: -0.08, hours: 11 }, ["Northeast"], ["Southwest", "Northwest"]],
+    ["29-south-stream", { x: 21247, z: 951890, fly: 1, y: 808, yaw: -3.022, pitch: -0.15, hours: 13 }],
+    ["30-south-clearing", { x: -126106, z: 897290, yaw: 0.0, pitch: 0.0, hours: 14 }],
+    ["31-southwest-lake", { x: -1077707, z: 369851, yaw: 1.571, pitch: -0.08, hours: 16 }, ["Southwest"], ["Northeast"]],
+    ["32-southeast-valley-fields", { x: 643759, z: 493973, fly: 1, y: 200, yaw: 1.941, pitch: -0.15, hours: 10 }],
+    ["33-terrace-lakes-falls", { x: -534510, z: -731526, fly: 1, y: 177, yaw: 0.896, pitch: 0.05, hours: 12 }],
+    ["34-terrace-lakes-from-the-top", { x: -534261, z: -731815, yaw: -2.246, pitch: -0.3, hours: 12 }],
+    ["35-ruined-outpost", { x: 1101138, z: 3721, yaw: 3.13, pitch: 0.02, hours: 17 }, ["Bridge City"]],
+    ["36-the-needles", { x: 279997, z: 1428115, yaw: -1.571, pitch: 0.12, hours: 18 }],
+    ["37-north-pass", { x: 395148, z: -698385, fly: 1, y: 4630, yaw: 0.515, pitch: -0.12, hours: 11 }],
+    ["38-headland-cliffs", { x: -575013, z: 1595389, fly: 1, y: 90, yaw: 0.75, pitch: 0.0, hours: 16 }],
+    ["39-tableland-escarpment", { x: -572326, z: 806442, yaw: 1.571, pitch: 0.06, hours: 15 }],
+  ];
+  for (const [name, v, mustHave, mustNot] of jumps) {
+    try {
+      const req = `${Date.now()};${v.x};${v.z};${v.yaw};${v.pitch};${v.hours};${v.fly ? 1 : 0};${v.y ?? 0}`;
+      await page.evaluate((r) => localStorage.setItem("worldshard-travel", r), req);
+      await page.waitForFunction((x, z) => {
+        const p = (window.wsPlayer || "").split(",").map(Number);
+        return Math.abs(p[0] - x) < 60 && Math.abs(p[1] - z) < 60;
+      }, { timeout: 180000, polling: 500 }, v.x, v.z);
+      await new Promise((r) => setTimeout(r, 14000));
+      await page.screenshot({ path: `${out}/${name}.png` });
+      const loaded = await page.evaluate(() => window.wsLoaded || "");
+      note(`screenshot ${name}.png (models loaded: ${loaded})`);
+      const have = loaded.split(",");
+      for (const want of mustHave || []) {
+        if (!have.includes(want)) { ok = false; note(`PROBLEM: ${want} models not loaded at ${name}`); }
+      }
+      for (const gone of mustNot || []) {
+        if (have.includes(gone)) { ok = false; note(`PROBLEM: ${gone} models still loaded at ${name}`); }
+      }
+    } catch (e) {
+      ok = false;
+      note(`${name}: ${e.message}`);
+    }
+  }
+
 } catch (e) {
   ok = false;
   note(`ERROR: ${e.stack || e}`);

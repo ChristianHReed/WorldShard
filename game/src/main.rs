@@ -23,6 +23,7 @@ use bevy::window::WindowResolution;
 
 use worldshard::lod::{self, NodeKey};
 use worldshard::bridge;
+use worldshard::landmarks;
 use worldshard::meshgen::{self, model, MeshData, Placement, PropKinds, Tint, DETAIL_CELL, GRASS_CELL, MODELS, PROP_CELL};
 use worldshard::places::{places, MapImage};
 use worldshard::save::{SaveData, STORAGE_KEY};
@@ -400,6 +401,7 @@ fn main() {
         )
         .add_systems(Update, (apply_settings, web_bridge).before(move_player))
         .add_systems(Update, show_city_pieces.after(stream_plants))
+        .add_systems(Update, load_regions.before(stream_plants))
         .add_systems(Update, add_mipmaps)
         .add_systems(Update, log_memory)
         .run();
@@ -539,6 +541,27 @@ fn setup(
     for (u0, u1, m) in bm.city {
         let (mesh, aabb) = to_mesh(m);
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.ground.clone()), aabb, NotShadowCaster, CityPiece { u0, u1 }, ChildOf(bridge)));
+    }
+
+    // ---- landmarks: the ruined outpost and the Terrace Lakes' waterfalls ----
+    let o = world.outpost;
+    let (mesh, aabb) = to_mesh(landmarks::outpost_mesh(&o));
+    let ruin = commands.spawn((Anchor { x: o.x, y: 0.0, z: o.z }, Transform::default(), Visibility::default())).id();
+    commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.ground.clone()), aabb, ChildOf(ruin)));
+    if let Some(tr) = &world.terraces {
+        let (mesh, aabb) = to_mesh(landmarks::falls_mesh(&tr.falls, tr.start));
+        let water = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            alpha_mode: AlphaMode::Blend,
+            double_sided: true,
+            cull_mode: None,
+            perceptual_roughness: 0.25,
+            reflectance: 0.3,
+            emissive: LinearRgba::rgb(0.04, 0.05, 0.06),
+            ..default()
+        });
+        let falls = commands.spawn((Anchor { x: tr.start.0, y: 0.0, z: tr.start.1 }, Transform::default(), Visibility::default())).id();
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(water), aabb, NotShadowCaster, ChildOf(falls)));
     }
 
     // ---- the player: resume the save, or start in the Southwest grasslands ----
@@ -692,7 +715,8 @@ fn setup(
     });
     commands.insert_resource(player);
     commands.insert_resource(Kinds(PropKinds::build()));
-    commands.insert_resource(load_models(&asset_server));
+    commands.insert_resource(empty_model_assets());
+    commands.insert_resource(RegionLoad::default());
     commands.insert_resource(mats);
     commands.insert_resource(GameWorld(world));
 }
@@ -1043,10 +1067,14 @@ fn cells_near(x: f64, z: f64, cell: f64, radius: f64) -> Vec<(i64, i64)> {
 /// The MegaKit models (one mesh per part) and their textures.
 #[derive(Resource)]
 struct ModelAssets {
-    parts: Vec<Vec<Handle<Mesh>>>,
+    /// Each model's parts, while it is loaded (see `load_regions`).
+    parts: Vec<Option<Vec<Handle<Mesh>>>>,
     textures: HashMap<&'static str, Handle<Image>>,
     /// Textures with cut-out leaves (their mipmaps keep the leaves full).
     masked: HashSet<AssetId<Image>>,
+    /// Models asked for on the spot, outside the loaded sets (kept until
+    /// the sets change).
+    extra: HashSet<u16>,
 }
 
 const TEXTURES: &[(&str, bool)] = &[
@@ -1072,21 +1100,91 @@ const TEXTURES: &[(&str, bool)] = &[
     ("T_MetalOrnaments_BaseColor.png", false),
 ];
 
-fn load_models(server: &AssetServer) -> ModelAssets {
-    let parts = MODELS
-        .iter()
-        .map(|m| (0..m.parts.len()).map(|p| server.load(format!("models/{}.gltf#Mesh0/Primitive{}", m.name, p))).collect())
-        .collect();
-    let mut textures = HashMap::new();
-    let mut masked = HashSet::new();
-    for &(file, mask) in TEXTURES {
-        let h: Handle<Image> = server.load(format!("textures/{file}"));
-        if mask {
-            masked.insert(h.id());
-        }
-        textures.insert(file, h);
+fn empty_model_assets() -> ModelAssets {
+    ModelAssets { parts: vec![None; MODELS.len()], textures: HashMap::new(), masked: HashSet::new(), extra: HashSet::new() }
+}
+
+/// Start loading a model and its textures, if they aren't already.
+fn ensure_model(server: &AssetServer, ma: &mut ModelAssets, m: u16) {
+    let info = &MODELS[m as usize];
+    if ma.parts[m as usize].is_none() {
+        ma.parts[m as usize] = Some((0..info.parts.len()).map(|p| server.load(format!("models/{}.gltf#Mesh0/Primitive{}", info.name, p))).collect());
     }
-    ModelAssets { parts, textures, masked }
+    for file in meshgen::model_textures(m) {
+        if !ma.textures.contains_key(file) {
+            let h: Handle<Image> = server.load(format!("textures/{file}"));
+            if TEXTURES.iter().any(|&(f, mask)| f == file && mask) {
+                ma.masked.insert(h.id());
+            }
+            ma.textures.insert(file, h);
+        }
+    }
+}
+
+/// A model whose parts and textures have all arrived.
+fn model_ready(ma: &ModelAssets, meshes: &Assets<Mesh>, images: &Assets<Image>, m: u16) -> bool {
+    let Some(parts) = &ma.parts[m as usize] else { return false };
+    parts.iter().all(|h| meshes.contains(h.id())) && meshgen::model_textures(m).iter().all(|f| ma.textures.get(f).is_some_and(|h| images.contains(h.id())))
+}
+
+/// Which model sets are loaded (each region's plants and rocks, and the
+/// Bridge City's buildings), and when to look again.
+#[derive(Resource, Default)]
+struct RegionLoad {
+    loaded: [bool; 7],
+    wait: f32,
+}
+
+/// Each region's models load as the player nears it (within a few km of
+/// its transition zone) and are let go well after they leave, so only the
+/// regions around the player take up memory.
+fn load_regions(
+    time: Res<Time>,
+    server: Res<AssetServer>,
+    w: Res<GameWorld>,
+    pl: Res<Player>,
+    mut ma: ResMut<ModelAssets>,
+    mut rl: ResMut<RegionLoad>,
+    mut pt: ResMut<Plants>,
+) {
+    rl.wait -= time.delta_secs();
+    if rl.wait > 0.0 {
+        return;
+    }
+    rl.wait = 0.5;
+    let t = &w.0;
+    let want = meshgen::wanted_sets(t, pl.x, pl.z, 6_000.0);
+    let keep = meshgen::wanted_sets(t, pl.x, pl.z, 14_000.0);
+    let mut changed = false;
+    for k in 0..7 {
+        if want[k] && !rl.loaded[k] {
+            rl.loaded[k] = true;
+            changed = true;
+            for m in meshgen::set_models(k) {
+                ensure_model(&server, &mut ma, m);
+            }
+        } else if rl.loaded[k] && !keep[k] {
+            rl.loaded[k] = false;
+            changed = true;
+        }
+    }
+    if !changed {
+        return;
+    }
+    // let go of what no loaded set uses (cells still showing a model keep
+    // it until they go)
+    ma.extra.clear();
+    let needed: HashSet<u16> = (0..7).filter(|&k| rl.loaded[k]).flat_map(meshgen::set_models).collect();
+    for m in 0..MODELS.len() {
+        if !needed.contains(&(m as u16)) {
+            ma.parts[m] = None;
+        }
+    }
+    let tex: HashSet<&str> = needed.iter().flat_map(|&m| meshgen::model_textures(m)).collect();
+    ma.textures.retain(|f, _| tex.contains(f));
+    pt.materials.retain(|(part, tint), _| meshgen::part_texture(part, *tint).is_none_or(|f| tex.contains(f)));
+    let names: Vec<&str> = (0..7).filter(|&k| rl.loaded[k]).map(|k| meshgen::LOAD_SETS[k]).collect();
+    page_set_text("wsLoaded", &names.join(","));
 }
 
 /// One material per (part, tint), made the first time it is needed.
@@ -1104,19 +1202,18 @@ fn plant_material(
         cache.insert((part, tint), h.clone());
         return h;
     }
-    let (file, mask, rough) = match part {
-        "Bark_NormalTree" => ("Bark_NormalTree.png", true, 0.95),
-        "Bark_DeadTree" => ("Bark_DeadTree.png", false, 0.95),
-        "Bark_TwistedTree" => ("Bark_TwistedTree.png", false, 0.95),
-        "Leaves_NormalTree" => ("Leaves_NormalTree_C.png", true, 0.8),
-        "Leaves_Pine" => ("Leaf_Pine_C.png", true, 0.8),
-        "Leaves_TwistedTree" => ("Leaves_TwistedTree_Green.png", true, 0.8),
-        "Leaves" => ("Leaves.png", true, 0.8),
-        "Flowers" => ("Flowers.png", true, 0.7),
-        "Grass" => ("Grass.png", false, 0.85),
-        "Mushrooms" => ("Mushrooms.png", false, 0.7),
-        "PathRocks" => ("PathRocks_Diffuse.png", false, 0.9),
-        _ => (if tint == Tint::Desert { "Rocks_Desert_Diffuse.png" } else { "Rocks_Diffuse.png" }, false, 0.9),
+    let file = meshgen::part_texture(part, tint).unwrap_or("Rocks_Diffuse.png");
+    let mask = TEXTURES.iter().any(|&(f, m)| f == file && m);
+    let rough = if part.starts_with("Bark") {
+        0.95
+    } else if part.starts_with("Leaves") {
+        0.8
+    } else if part == "Flowers" || part == "Mushrooms" {
+        0.7
+    } else if part == "Grass" {
+        0.85
+    } else {
+        0.9
     };
     let foliage = part.starts_with("Leaves") || part == "Grass";
     let c = match (foliage, tint) {
@@ -1211,10 +1308,11 @@ fn spawn_models(
             continue;
         }
         let info = &MODELS[p.model as usize];
+        let Some(handles) = &ma.parts[p.model as usize] else { continue };
         let tf = Transform { translation: Vec3::from_array(p.pos), rotation: Quat::from_rotation_y(p.rot), scale: Vec3::splat(p.scale) };
         for (k, &part) in info.parts.iter().enumerate() {
             let mat = plant_material(cache, materials, ma, part, p.tint);
-            let mut e = commands.spawn((Mesh3d(ma.parts[p.model as usize][k].clone()), MeshMaterial3d(mat), tf, ChildOf(parent)));
+            let mut e = commands.spawn((Mesh3d(handles[k].clone()), MeshMaterial3d(mat), tf, ChildOf(parent)));
             if !cast_shadows {
                 e.insert(NotShadowCaster);
             }
@@ -1236,17 +1334,19 @@ fn stream_plants(
     w: Res<GameWorld>,
     kinds: Res<Kinds>,
     mats: Res<Mats>,
-    ma: Res<ModelAssets>,
+    mut ma: ResMut<ModelAssets>,
     pl: Res<Player>,
     q: Res<Quality>,
     mut pt: ResMut<Plants>,
+    server: Res<AssetServer>,
+    images: Res<Assets<Image>>,
 ) {
     let t = &w.0;
     let first = !pt.ready;
     pt.ready = true;
     let ground = meshgen::ground_under(t, pl.x, pl.z, pl.y);
     let above = pl.y - ground;
-    let (near_want, far_want, detail_want) = if above < 400.0 {
+    let (near_want, mut far_want, detail_want) = if above < 400.0 {
         let all = cells_near(pl.x, pl.z, PROP_CELL, q.prop_radius);
         let near: Vec<(i64, i64)> = cells_near(pl.x, pl.z, PROP_CELL, q.near_radius);
         let near_set: HashSet<(i64, i64)> = near.iter().copied().collect();
@@ -1258,7 +1358,8 @@ fn stream_plants(
     };
     let pt = &mut *pt;
 
-    // near cells: real models
+    // near cells: real models, once they have loaded (till then, the
+    // stand-in shapes)
     let mut budget = if first { usize::MAX } else { 2 };
     for &c in &near_want {
         if budget == 0 {
@@ -1268,6 +1369,21 @@ fn stream_plants(
             continue;
         }
         let pl_list = pt.placements.entry(c).or_insert_with(|| meshgen::prop_placements(t, c.0, c.1));
+        let mut seen = HashSet::new();
+        let mut waiting = false;
+        for p in pl_list.iter() {
+            if p.model != model::MINE && seen.insert(p.model) && !model_ready(&ma, &meshes, &images, p.model) {
+                waiting = true;
+                if ma.parts[p.model as usize].is_none() {
+                    ensure_model(&server, &mut ma, p.model);
+                    ma.extra.insert(p.model);
+                }
+            }
+        }
+        if waiting {
+            far_want.push(c);
+            continue;
+        }
         let (x, z) = ((c.0 as f64 + 0.5) * PROP_CELL, (c.1 as f64 + 0.5) * PROP_CELL);
         let e = spawn_models(&mut commands, &mut meshes, &mut materials, &mut pt.materials, &ma, &mats.plants, &kinds.0, Anchor { x, y: 0.0, z }, pl_list, true);
         pt.near.insert(c, e);
@@ -1320,6 +1436,20 @@ fn stream_plants(
             continue;
         }
         let list = meshgen::detail_placements(t, c.0, c.1);
+        let mut seen = HashSet::new();
+        let mut waiting = false;
+        for p in &list {
+            if seen.insert(p.model) && !model_ready(&ma, &meshes, &images, p.model) {
+                waiting = true;
+                if ma.parts[p.model as usize].is_none() {
+                    ensure_model(&server, &mut ma, p.model);
+                    ma.extra.insert(p.model);
+                }
+            }
+        }
+        if waiting {
+            continue;
+        }
         let e = (!list.is_empty()).then(|| {
             let (x, z) = ((c.0 as f64 + 0.5) * DETAIL_CELL, (c.1 as f64 + 0.5) * DETAIL_CELL);
             spawn_models(&mut commands, &mut meshes, &mut materials, &mut pt.materials, &ma, &mats.plants, &kinds.0, Anchor { x, y: 0.0, z }, &list, false)
@@ -1899,11 +2029,24 @@ fn web_bridge(
         return;
     }
     // go there: land on the ground (or keep flying just above it) and
-    // build the world around the new spot at once
+    // build the world around the new spot at once. (Tests may add
+    // ";yaw;pitch;hours;fly;height" to set the view too.)
     pl.x = x;
     pl.z = z;
+    if parts.len() >= 6 && parts[3..6].iter().all(|v| v.is_finite()) {
+        pl.yaw = parts[3];
+        pl.pitch = parts[4];
+        pl.hours = parts[5].rem_euclid(24.0);
+    }
+    if parts.len() >= 7 {
+        pl.fly = parts[6] > 0.5;
+    }
     let ground = meshgen::ground_under(t, x, z, f64::INFINITY);
-    pl.y = if pl.fly { ground + 150.0 } else { ground + EYE };
+    pl.y = match (pl.fly, parts.get(7)) {
+        (true, Some(&y)) if y.is_finite() && y > ground + 2.0 => y,
+        (true, _) => ground + 150.0,
+        _ => ground + EYE,
+    };
     pl.vy = 0.0;
     streamer.ready = false;
     plants.ready = false;
