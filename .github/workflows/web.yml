@@ -79,6 +79,7 @@ jobs:
             && python3 -c "import json,os,glob; print(json.dumps([{'file':f,'size':os.path.getsize(f)} for f in sorted(glob.glob('worldshard_bg.part*.wasm'))]))" > wasm-parts.json \
             && cat wasm-parts.json)
           cp game/web/index.html dist/index.html
+          cp game/web/manifest.webmanifest dist/ && cp -r game/web/icons dist/icons # Home Screen app
           # the build, for problem reports: a commit, or "pr<number>-<commit>" for a preview
           B="${GITHUB_SHA::7}"
           if [ "${{ github.event_name }}" = "pull_request" ]; then

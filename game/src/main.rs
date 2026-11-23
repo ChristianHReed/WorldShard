@@ -7,6 +7,9 @@
 //! its meshes, the day/night maths and the save format all come from the
 //! engine-independent `worldshard` library.
 
+// a Windows release build opens as a game window only, without a console
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use std::collections::{HashMap, HashSet};
 
 use bevy::asset::{AssetId, AssetMetaCheck, RenderAssetUsages};
@@ -27,7 +30,7 @@ use worldshard::landmarks;
 use worldshard::meshgen::{self, model, MeshData, Placement, PropKinds, Tint, DETAIL_CELL, GRASS_CELL, MODELS, PROP_CELL};
 use worldshard::places::{places, MapImage};
 use worldshard::save::{SaveData, STORAGE_KEY};
-use worldshard::sky::{clock_text, sun_state};
+use worldshard::sky::{clock_rate, clock_text, sun_state};
 use worldshard::worldgen::terrain::WALL_R;
 use worldshard::worldgen::Terrain;
 
@@ -901,9 +904,9 @@ fn move_player(
         }
     }
 
-    // clock: a game day is a real day
+    // clock: a game day lasts a real hour (40 minutes of daylight, 20 of night)
     pl.play_sec += dt;
-    pl.hours += dt / 3600.0;
+    pl.hours += dt * clock_rate(pl.hours);
     if pl.hours >= 24.0 {
         pl.hours -= 24.0;
         pl.day += 1;
@@ -1706,7 +1709,9 @@ fn sky_and_light(
     let horizon = (sky_lin * 1.12) * 0.65 + haze_lin * 0.35;
     let cover_region = (wr[5] * 0.18 + wr[3] * 0.1 + wr[2] * 0.05 - wr[1] * 0.25 - wr[4] * 0.05) as f32;
     let cover = (0.45 + 0.22 * ((pl.day as f32) * 1.7 + pl.hours as f32 / 9.0).sin() + cover_region).clamp(0.05, 0.95);
-    let secs = (pl.hours * 3600.0) as f32;
+    // clouds drift and stars twinkle in real seconds (the game clock runs
+    // 24 to 36 times faster than real time)
+    let secs = pl.play_sec.rem_euclid(86400.0) as f32;
     for (handle, mode) in [(&sky_mats.dome, 0.0f32), (&sky_mats.wall, 1.0f32)] {
         if let Some(m) = sky_materials.get_mut(handle) {
             m.extension.u = SkyUniform {

@@ -1,0 +1,72 @@
+name: Desktop builds
+
+# The game for Windows, Mac and Linux: a folder with the program and its
+# assets, kept as a download on each run (Actions → this run → Artifacts).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths: ["game/**", "src/**", "Cargo.toml", "Cargo.lock", ".github/workflows/desktop.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, name: windows, exe: worldshard-game.exe }
+          - { os: macos-latest, name: mac, exe: worldshard-game }
+          - { os: ubuntu-latest, name: linux, exe: worldshard-game }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Linux window libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libx11-dev libxcursor-dev libxrandr-dev libxi-dev libxkbcommon-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: game -> target
+          key: desktop
+
+      - name: Build the game
+        shell: bash
+        working-directory: game
+        run: cargo build --release 2>&1 | tail -60
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p pkg/WorldShard
+          cp "game/target/release/${{ matrix.exe }}" pkg/WorldShard/
+          cp -r game/assets pkg/WorldShard/assets
+          cat > pkg/WorldShard/README.txt <<'TXT'
+          WorldShard (desktop test build)
+
+          Keep the program and the assets folder together, then open the program.
+          WASD or the arrow keys to move, hold a mouse button and drag to look, Shift to run.
+          Saves go in a file called worldshard-save-v1.json, in the folder the game was started from.
+
+          This build is not signed yet:
+          - Windows may say "Windows protected your PC": choose More info, then Run anyway.
+          - Mac: right-click the program, choose Open, then Open again.
+          TXT
+          ls -la pkg/WorldShard
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WorldShard-${{ matrix.name }}
+          path: pkg
+          retention-days: 30
