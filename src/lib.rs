@@ -6,6 +6,7 @@
 pub mod lod;
 pub mod bridge;
 pub mod city;
+pub mod landmarks;
 pub mod meshgen;
 pub mod places;
 pub mod save;
