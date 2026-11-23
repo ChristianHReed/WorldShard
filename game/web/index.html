@@ -435,20 +435,36 @@
   })();
 </script>
 <script type="module">
-  // --- graphics: WebGPU where the browser has it, else WebGL 2 (two builds of
-  // the game). WebGPU prepares its shaders without freezing the page, which
-  // an iPhone 11 couldn't survive with WebGL. "?gfx=webgl" or "?gfx=webgpu"
-  // picks one; if WebGPU fails to start here, this device uses WebGL. ---
-  const GKEY = "worldshard-graphics";
+  // --- graphics: two builds of the game, WebGL 2 and WebGPU. WebGL is the
+  // default: on an iPad it starts faster and runs smoother. Phones use WebGPU,
+  // since starting with WebGL was more than an iPhone 11 could take, and so
+  // does any device where a WebGL start never finished. If WebGPU fails to
+  // start, the device goes back to WebGL. "?gfx=webgl" / "?gfx=webgpu" picks one. ---
+  const GKEY = "worldshard-graphics"; // what this device should use, once a start has gone wrong
+  const LAST = "worldshard-graphics-last";
+  const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  let bootCrashed = false;
+  try { bootCrashed = sessionStorage.getItem("worldshard-booting") === "1"; } catch {}
+  async function hasWebgpu() {
+    if (!navigator.gpu) return false;
+    try { return !!(await navigator.gpu.requestAdapter()); } catch { return false; }
+  }
   async function pickGraphics() {
     const asked = new URLSearchParams(location.search).get("gfx");
     if (asked === "webgl" || asked === "webgpu") return asked;
-    let saved = null;
-    try { saved = localStorage.getItem(GKEY); } catch {}
-    if (saved === "webgl" || !navigator.gpu) return "webgl";
-    try { return (await navigator.gpu.requestAdapter()) ? "webgpu" : "webgl"; } catch { return "webgl"; }
+    let saved = lsGet(GKEY);
+    if (bootCrashed && lsGet(LAST) === "webgl" && saved !== "webgl" && (await hasWebgpu())) {
+      lsSet(GKEY, "webgpu");
+      saved = "webgpu";
+    }
+    if (saved === "webgl") return "webgl";
+    if (saved === "webgpu") return (await hasWebgpu()) ? "webgpu" : "webgl";
+    const phone = navigator.maxTouchPoints > 0 && Math.max(screen.width, screen.height) < 1000;
+    return phone && (await hasWebgpu()) ? "webgpu" : "webgl";
   }
   const gfx = await pickGraphics();
+  lsSet(LAST, gfx);
   window.wsGraphics = gfx === "webgpu" ? "WebGPU" : "WebGL 2";
   const gameName = gfx === "webgpu" ? "worldshard_webgpu" : "worldshard";
   const useWebgl = () => {
