@@ -889,7 +889,7 @@ impl Terrain {
         // headlands stand as cliffs
         let hc = self.headland_cliff(p, wr[5]);
         if hc > 0.0 {
-            let tall = 170.0 * (1.0 + 0.7 * n.fbm(wx / 25_000.0 + 8.0, wz / 25_000.0, 3)).clamp(0.4, 1.8);
+            let tall = 170.0 * (1.0 + 0.7 * n.fbm(wx / 25_000.0 + 8.0, wz / 25_000.0, 3)).clamp(0.4, 1.8) * (0.55 + 0.45 * sm(-0.3, 0.3, n.n2(wx / 2_500.0 - 6.0, wz / 2_500.0)));
             // (the headland's top falls back to the land behind it)
             h += hc * tall * sm(0.0, 110.0, shore + 50.0 * n.n2(wx / 700.0, wz / 700.0)) * (1.0 - sm(2_500.0, 14_000.0, shore));
         }
@@ -1371,7 +1371,7 @@ impl Terrain {
             mix!([128.0, 148.0, 74.0], clearing * 0.55);
             // Southeast farmland: real-size fields
             let fw = wr[2] * (1.0 - fm) * (1.0 - sm(1200.0, 1800.0, h)) * sm(300.0, 1500.0, shore)
-                * sm(-0.25, -0.05, n.fbm(x / 110.0 + 9.0, y / 110.0, 2) - 0.12 * valley)
+                * sm(-0.25, -0.05, n.fbm(x / 110.0 + 9.0, y / 110.0, 2) - 0.4 * valley)
                 * (0.15 + 0.85 * valley)
                 * (1.0 - coastal)
                 * (1.0 - ash)
@@ -1419,7 +1419,16 @@ impl Terrain {
                 mix!([170.0, 168.0, 130.0], t);
                 s.wet = s.wet.max(t as f32);
             }
-            // the Needles: bare rock spires
+            // the Needles' islet: low rock and grass, no forest; its spires bare rock
+            if let Some(nd) = self.needles.first() {
+                let d = (wx - nd.x).hypot(wz - nd.z);
+                if d < 30_000.0 {
+                    let w = sm(30_000.0, 18_000.0, d);
+                    s.forest *= (1.0 - w) as f32;
+                    s.clearing = s.clearing.max(w as f32);
+                    mix!([150.0, 156.0, 112.0], w * 0.5);
+                }
+            }
             if let Some(nh) = needle_height(&self.needles, wx, wz) {
                 if nh >= h - 1.0 && nh > 20.0 {
                     let layer = (h / 45.0).sin();

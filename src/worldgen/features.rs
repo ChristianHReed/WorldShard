@@ -29,7 +29,7 @@ impl Tableland {
         }
         let a = dz.atan2(dx);
         let edge = self.r * (1.0 + 0.16 * n.n2(a.cos() * 1.7 + self.seed, a.sin() * 1.7 - self.seed));
-        let w = sm(edge, edge - 4_000.0, d);
+        let w = sm(edge, edge - 1_600.0, d);
         if w <= 0.0 {
             return h;
         }
@@ -221,7 +221,7 @@ impl Terraces {
             }
             // the lip toward the next lake is sheer; elsewhere the step's
             // edge is a rocky slope that wanders a little
-            let toward = if k < 3 { ((dx * self.dir.0 + dz * self.dir.1) / d.max(1.0)).max(0.0).powi(6) } else { 0.0 };
+            let toward = if k < 3 { ((dx * self.dir.0 + dz * self.dir.1) / d.max(1.0)).max(0.0).powi(40) } else { 0.0 };
             let a = dz.atan2(dx);
             let edge_r = lk.step * (1.0 + 0.1 * (1.0 - toward) * n.n2(a.cos() * 1.3 + k as f64 * 5.0, a.sin() * 1.3));
             let slope = lerp(240.0, 16.0, toward);
