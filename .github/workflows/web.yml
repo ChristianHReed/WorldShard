@@ -49,7 +49,12 @@ jobs:
           RUSTFLAGS: --cfg getrandom_backend="wasm_js"
         run: |
           set -o pipefail
+          # two builds: WebGL 2 (works everywhere) and WebGPU (the page picks it
+          # when the browser has WebGPU)
           cargo build --release --target wasm32-unknown-unknown 2>&1 | tee ../build.log
+          cp target/wasm32-unknown-unknown/release/worldshard-game.wasm /tmp/ws-webgl.wasm
+          cargo build --release --target wasm32-unknown-unknown --no-default-features --features webgpu 2>&1 | tee -a ../build.log
+          cp target/wasm32-unknown-unknown/release/worldshard-game.wasm /tmp/ws-webgpu.wasm
 
       - name: Install wasm-bindgen (same version as the game uses)
         shell: bash
@@ -63,19 +68,23 @@ jobs:
         run: |
           set -e
           mkdir -p dist/prototype
-          wasm-bindgen --target web --no-typescript --out-dir dist --out-name worldshard \
-            game/target/wasm32-unknown-unknown/release/worldshard-game.wasm
-          # shrink the download with wasm-opt (skipped if it is unavailable)
+          wasm-bindgen --target web --no-typescript --out-dir dist --out-name worldshard /tmp/ws-webgl.wasm
+          wasm-bindgen --target web --no-typescript --out-dir dist --out-name worldshard_webgpu /tmp/ws-webgpu.wasm
+          # shrink the downloads with wasm-opt (skipped if it is unavailable)
           if curl -sSfL https://github.com/WebAssembly/binaryen/releases/download/version_123/binaryen-version_123-x86_64-linux.tar.gz | tar xz -C /tmp; then
-            before=$(stat -c %s dist/worldshard_bg.wasm)
-            /tmp/binaryen-version_123/bin/wasm-opt -Oz \
-              --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext \
-              --enable-mutable-globals --enable-reference-types --enable-multivalue \
-              dist/worldshard_bg.wasm -o /tmp/opt.wasm && mv /tmp/opt.wasm dist/worldshard_bg.wasm \
-              || echo "wasm-opt failed; keeping the unoptimised build"
-            echo "wasm: $before -> $(stat -c %s dist/worldshard_bg.wasm) bytes" | tee -a build.log
+            for w in dist/worldshard_bg.wasm dist/worldshard_webgpu_bg.wasm; do
+              before=$(stat -c %s "$w")
+              /tmp/binaryen-version_123/bin/wasm-opt -Oz \
+                --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext \
+                --enable-mutable-globals --enable-reference-types --enable-multivalue \
+                "$w" -o /tmp/opt.wasm && mv /tmp/opt.wasm "$w" \
+                || echo "wasm-opt failed; keeping the unoptimised $w"
+              echo "$w: $before -> $(stat -c %s "$w") bytes" | tee -a build.log
+            done
           fi
-          gzip -9 -c dist/worldshard_bg.wasm | wc -c | xargs echo "gzipped wasm bytes:" | tee -a build.log
+          for w in dist/worldshard_bg.wasm dist/worldshard_webgpu_bg.wasm; do
+            gzip -9 -c "$w" | wc -c | xargs echo "gzipped $w bytes:" | tee -a build.log
+          done
           # split the game into pieces under 15 MB (fits hosts with file-size limits,
           # such as a Claude artifact); the page joins them back together
           (cd dist && split -b 15000000 -d -a 1 --additional-suffix=.wasm worldshard_bg.wasm worldshard_bg.part \

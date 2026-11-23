@@ -4,7 +4,11 @@
 import puppeteer from "puppeteer-core";
 import fs from "node:fs";
 
-const url = process.argv[2] || "http://localhost:8080/";
+// the game picks WebGPU where the browser has it; the main checks use WebGL 2
+// (what software rendering does well), and WebGPU gets a try at the end
+const base = process.argv[2] || "http://localhost:8080/";
+const url = base + "?gfx=webgl";
+const urlGpu = base + "?gfx=webgpu";
 const out = process.argv[3] || "smoke";
 fs.mkdirSync(out, { recursive: true });
 const log = [];
@@ -255,6 +259,28 @@ try {
     note("screenshot 40-map-picture.png (the map picture, drawn at full quality)");
   } catch (e) {
     note(`map picture at full quality: not drawn yet (${e.message}); the phone check covers it`);
+  }
+
+  // the WebGPU build, where this Chrome has WebGPU (it often doesn't with
+  // software rendering): does it start and draw?
+  try {
+    const gp = await browser.newPage();
+    gp.on("console", (m) => { if (m.type() === "error") note(`webgpu console.error: ${m.text().slice(0, 300)}`); });
+    gp.on("pageerror", (e) => note(`webgpu pageerror: ${e.message}`));
+    await gp.setViewport({ width: 1280, height: 720 });
+    await gp.goto(urlGpu, { waitUntil: "load" });
+    const has = await gp.evaluate(async () => !!navigator.gpu && !!(await navigator.gpu.requestAdapter().catch(() => null)));
+    if (!has) {
+      note("WebGPU: not available in this Chrome; skipped");
+    } else {
+      await gp.waitForFunction(() => !document.getElementById("loading"), { timeout: 300000, polling: 1000 });
+      await new Promise((r) => setTimeout(r, 8000));
+      await gp.screenshot({ path: `${out}/41-webgpu.png` });
+      note(`WebGPU: started and drew the world (game using ${await gp.evaluate(() => window.wsGraphics)}); screenshot 41-webgpu.png`);
+    }
+    await gp.close();
+  } catch (e) {
+    note(`WebGPU: did not start (${e.message})`);
   }
 
 } catch (e) {
