@@ -22,6 +22,7 @@ use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
 use bevy::window::WindowResolution;
 
 use worldshard::lod::{self, NodeKey};
+use worldshard::bridge;
 use worldshard::meshgen::{self, model, MeshData, Placement, PropKinds, Tint, DETAIL_CELL, GRASS_CELL, MODELS, PROP_CELL};
 use worldshard::places::{places, MapImage};
 use worldshard::save::{SaveData, STORAGE_KEY};
@@ -132,6 +133,9 @@ struct HazeUniform {
     mist_col: Vec4,
     /// the big peaks, two entries each (see haze.wgsl)
     peaks: [Vec4; 24],
+    /// ground detail and surf: x, z the camera's position (wrapped every
+    /// 4,096 m), y seconds (wrapped), w detail strength
+    detail: Vec4,
 }
 
 /// The sky dome and the Cloudwall: their own shader (sky.wgsl).
@@ -254,6 +258,14 @@ struct Anchor {
     x: f64,
     y: f64,
     z: f64,
+}
+
+/// A stretch of the bridge city drawn as simple blocks, shown only beyond
+/// the distance where the real houses (or their stand-ins) are drawn.
+#[derive(Component)]
+struct CityPiece {
+    u0: f64,
+    u1: f64,
 }
 
 #[derive(Component)]
@@ -387,12 +399,14 @@ fn main() {
             (move_player, stream_world, stream_plants, place_relative, sky_and_light, update_hud, autosave, hide_loader).chain(),
         )
         .add_systems(Update, (apply_settings, web_bridge).before(move_player))
+        .add_systems(Update, show_city_pieces.after(stream_plants))
         .add_systems(Update, add_mipmaps)
         .add_systems(Update, log_memory)
         .run();
 }
 
 fn to_mesh(m: MeshData) -> (Mesh, Aabb) {
+    let n = m.positions.len();
     let mut lo = Vec3::splat(f32::MAX);
     let mut hi = Vec3::splat(f32::MIN);
     for p in &m.positions {
@@ -405,6 +419,7 @@ fn to_mesh(m: MeshData) -> (Mesh, Aabb) {
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, m.normals)
         .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, m.colors)
         .with_inserted_indices(Indices::U32(m.indices));
+    let mesh = if !m.uvs.is_empty() && m.uvs.len() == n { mesh.with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, m.uvs) } else { mesh };
     (mesh, Aabb::from_min_max(lo, hi))
 }
 
@@ -459,6 +474,7 @@ fn setup(
                 mist: Vec4::ZERO,
                 mist_col: Vec4::ONE,
                 peaks: [Vec4::ZERO; 24],
+                detail: Vec4::new(0.0, 0.0, 0.0, 1.0),
             } },
         }),
         water: materials.add(StandardMaterial {
@@ -514,6 +530,17 @@ fn setup(
     commands.insert_resource(DirectionalLightShadowMap { size: quality.shadow_map });
     commands.insert_resource(AmbientLight { color: Color::WHITE, brightness: 1200.0, ..default() });
 
+    // ---- the bridge city across the canyon ----
+    let bm = bridge::bridge_meshes(&world);
+    let anchor = Anchor { x: bm.centre.0, y: 0.0, z: bm.centre.1 };
+    let bridge = commands.spawn((anchor, Transform::default(), Visibility::default())).id();
+    let (mesh, aabb) = to_mesh(bm.structure);
+    commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.ground.clone()), aabb, ChildOf(bridge)));
+    for (u0, u1, m) in bm.city {
+        let (mesh, aabb) = to_mesh(m);
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.ground.clone()), aabb, NotShadowCaster, CityPiece { u0, u1 }, ChildOf(bridge)));
+    }
+
     // ---- the player: resume the save, or start in the Southwest grasslands ----
     let (sx, sz) = meshgen::spawn_point();
     let mut player = Player {
@@ -533,7 +560,9 @@ fn setup(
     };
     let mut status = "New game".to_string();
     let mut fly_y = None;
+    let mut saved_y = f64::INFINITY;
     if let Some(save) = storage_get().and_then(|s| SaveData::from_json(&s)) {
+        saved_y = save.y;
         player.x = save.x;
         player.z = save.z;
         player.yaw = save.yaw;
@@ -548,10 +577,10 @@ fn setup(
         }
         status = "Save loaded".to_string();
     }
-    let ground = meshgen::drawn_height(&world, player.x, player.z);
+    let ground = meshgen::ground_under(&world, player.x, player.z, fly_y.unwrap_or(saved_y));
     player.y = match fly_y {
         Some(y) => y.max(ground + 2.0),
-        None => ground.max(0.0) + EYE,
+        None => ground + EYE,
     };
 
     // ---- camera: hazy distance, a little extra colour ----
@@ -789,7 +818,7 @@ fn move_player(
     }
     let run = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) || joy.length() > 0.92;
     let (sy, cy) = (pl.yaw.sin(), pl.yaw.cos());
-    let ground = meshgen::drawn_height(t, pl.x, pl.z);
+    let ground = meshgen::stand_height(t, pl.x, pl.z, pl.y);
 
     if pl.fly {
         let speed = FLY_SPEEDS[pl.fly_speed] * if run { 3.0 } else { 1.0 };
@@ -797,7 +826,7 @@ fn move_player(
         pl.x += (sy * cp * fz + cy * fx) * speed * dt;
         pl.z += (-cy * cp * fz + sy * fx) * speed * dt;
         pl.y += (sp * fz + up_down) * speed * dt;
-        let g = meshgen::drawn_height(t, pl.x, pl.z).max(0.0);
+        let g = meshgen::ground_under(t, pl.x, pl.z, pl.y);
         pl.y = pl.y.clamp(g + 2.0, 3_000_000.0);
         clamp_to_wall(&mut pl, &mut banner);
     } else {
@@ -821,10 +850,11 @@ fn move_player(
                 vz *= k;
             }
         }
-        pl.x += vx * dt;
-        pl.z += vz * dt;
+        let (nx, nz) = meshgen::keep_on_deck(t, pl.x, pl.z, pl.x + vx * dt, pl.z + vz * dt, pl.y - EYE);
+        pl.x = nx;
+        pl.z = nz;
         clamp_to_wall(&mut pl, &mut banner);
-        let g = meshgen::drawn_height(t, pl.x, pl.z);
+        let g = meshgen::stand_height(t, pl.x, pl.z, pl.y);
         if swimming {
             pl.y += (water + 0.55 - pl.y) * (dt * 4.0).min(1.0);
             pl.vy = 0.0;
@@ -881,7 +911,7 @@ fn toggle_fly(pl: &mut Player, t: &Terrain) {
     pl.fly = !pl.fly;
     if !pl.fly {
         // land straight away rather than falling for minutes
-        pl.y = meshgen::drawn_height(t, pl.x, pl.z).max(0.0) + EYE;
+        pl.y = meshgen::ground_under(t, pl.x, pl.z, pl.y) + EYE;
         pl.vy = 0.0;
     } else {
         pl.y += 3.0;
@@ -917,7 +947,7 @@ fn stream_world(
 ) {
     let t = &w.0;
     let first = !st.ready;
-    let ground = meshgen::drawn_height(t, pl.x, pl.z).max(0.0);
+    let ground = meshgen::ground_under(t, pl.x, pl.z, pl.y);
     let above = pl.y - ground;
 
     // terrain: build missing chunks nearest first, a few per frame
@@ -1033,6 +1063,13 @@ const TEXTURES: &[(&str, bool)] = &[
     ("PathRocks_Diffuse.png", false),
     ("Rocks_Diffuse.png", false),
     ("Rocks_Desert_Diffuse.png", false),
+    ("T_WoodTrim_BaseColor.png", false),
+    ("T_Plaster_BaseColor.png", false),
+    ("T_UnevenBrick_BaseColor.png", false),
+    ("T_RoundTiles_BaseColor.png", false),
+    ("T_RockTrim_BaseColor.png", false),
+    ("T_Brick_BaseColor.png", false),
+    ("T_MetalOrnaments_BaseColor.png", false),
 ];
 
 fn load_models(server: &AssetServer) -> ModelAssets {
@@ -1062,6 +1099,10 @@ fn plant_material(
 ) -> Handle<StandardMaterial> {
     if let Some(h) = cache.get(&(part, tint)) {
         return h.clone();
+    }
+    if let Some(h) = village_material(materials, ma, part, tint) {
+        cache.insert((part, tint), h.clone());
+        return h;
     }
     let (file, mask, rough) = match part {
         "Bark_NormalTree" => ("Bark_NormalTree.png", true, 0.95),
@@ -1096,6 +1137,48 @@ fn plant_material(
     });
     cache.insert((part, tint), h.clone());
     h
+}
+
+/// The bridge city's walls, roofs and trim (the Medieval Village MegaKit).
+/// The tint varies the plaster and roof colours from house to house.
+fn village_material(materials: &mut Assets<StandardMaterial>, ma: &ModelAssets, part: &str, tint: Tint) -> Option<Handle<StandardMaterial>> {
+    let file = match part {
+        "MI_WoodTrim" => "T_WoodTrim_BaseColor.png",
+        "MI_Plaster" => "T_Plaster_BaseColor.png",
+        "MI_UnevenBrick" => "T_UnevenBrick_BaseColor.png",
+        "MI_RoundTiles" => "T_RoundTiles_BaseColor.png",
+        "MI_RockTrim" => "T_RockTrim_BaseColor.png",
+        "MI_Brick" => "T_Brick_BaseColor.png",
+        "MI_MetalOrnaments" => "T_MetalOrnaments_BaseColor.png",
+        "MI_WindowGlass" => {
+            return Some(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.16, 0.2, 0.26),
+                perceptual_roughness: 0.15,
+                reflectance: 0.5,
+                ..default()
+            }));
+        }
+        _ => return None,
+    };
+    let c = match (part, tint) {
+        ("MI_Plaster", Tint::Dry) => [1.0, 0.92, 0.78],
+        ("MI_Plaster", Tint::Desert) => [1.0, 0.86, 0.72],
+        ("MI_Plaster", Tint::Dark) => [0.9, 0.92, 0.95],
+        ("MI_RoundTiles", Tint::Dark) => [0.62, 0.68, 0.8],
+        ("MI_RoundTiles", Tint::Desert) => [1.0, 0.8, 0.66],
+        ("MI_RoundTiles", Tint::Dry) => [0.9, 0.78, 0.62],
+        _ => [1.0, 1.0, 1.0],
+    };
+    Some(materials.add(StandardMaterial {
+        base_color: Color::srgb(c[0], c[1], c[2]),
+        base_color_texture: ma.textures.get(file).cloned(),
+        perceptual_roughness: if part == "MI_MetalOrnaments" { 0.5 } else { 0.9 },
+        metallic: if part == "MI_MetalOrnaments" { 0.6 } else { 0.0 },
+        reflectance: 0.2,
+        double_sided: true,
+        cull_mode: None,
+        ..default()
+    }))
 }
 
 #[derive(Resource, Default)]
@@ -1161,7 +1244,7 @@ fn stream_plants(
     let t = &w.0;
     let first = !pt.ready;
     pt.ready = true;
-    let ground = meshgen::drawn_height(t, pl.x, pl.z).max(0.0);
+    let ground = meshgen::ground_under(t, pl.x, pl.z, pl.y);
     let above = pl.y - ground;
     let (near_want, far_want, detail_want) = if above < 400.0 {
         let all = cells_near(pl.x, pl.z, PROP_CELL, q.prop_radius);
@@ -1249,6 +1332,25 @@ fn stream_plants(
     for c in drop_detail {
         if let Some(Some(e)) = pt.detail.remove(&c) {
             commands.entity(e).despawn();
+        }
+    }
+}
+
+/// The city's distant blocks give way to the real houses near the player.
+fn show_city_pieces(pl: Res<Player>, w: Res<GameWorld>, q: Res<Quality>, mut pieces: Query<(&CityPiece, &mut Visibility)>) {
+    let t = &w.0;
+    let b = &t.bridge;
+    let above = pl.y - meshgen::ground_under(t, pl.x, pl.z, pl.y);
+    // props (and the houses with them) are only drawn near the ground
+    let props_on = above < 400.0;
+    let (u, v) = b.to_deck(pl.x, pl.z);
+    let hide_r = (q.prop_radius - 100.0).max(q.near_radius + 60.0);
+    for (c, mut vis) in &mut pieces {
+        let du = (c.u0 - u).max(u - c.u1).max(0.0);
+        let d = du.hypot((v.abs() - b.half_w).max(0.0));
+        let want = if props_on && d < hide_r { Visibility::Hidden } else { Visibility::Inherited };
+        if *vis != want {
+            *vis = want;
         }
     }
 }
@@ -1348,7 +1450,7 @@ fn place_relative(
 ) {
     // the near clip plane moves out when flying high, which keeps the
     // depth buffer precise for land and sea thousands of km away
-    let above = (pl.y - meshgen::drawn_height(&w.0, pl.x, pl.z).max(0.0)).max(0.0);
+    let above = (pl.y - meshgen::ground_under(&w.0, pl.x, pl.z, pl.y)).max(0.0);
     let near = (above * 0.02).clamp(0.3, 50_000.0) as f32;
     for mut proj in &mut projections {
         if let Projection::Perspective(p) = &mut *proj {
@@ -1389,6 +1491,7 @@ fn sky_and_light(
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
     mats: Res<Mats>,
     sky_mats: Res<SkyMats>,
+    q: Res<Quality>,
 ) {
     let s = sun_state(pl.hours);
     clear.0 = rgb(s.sky_col);
@@ -1420,7 +1523,7 @@ fn sky_and_light(
     let haze_lin = lin(haze);
     let sun_lin = lin(rgb(s.sun_col));
     let t = &w.0;
-    let ground = meshgen::drawn_height(t, pl.x, pl.z).max(0.0);
+    let ground = meshgen::ground_under(t, pl.x, pl.z, pl.y);
     let above = (pl.y - ground).max(0.0);
 
     // the region's ground mist, thickest in the early morning
@@ -1461,6 +1564,9 @@ fn sky_and_light(
             peaks[2 * k + 1] = Vec4::new(sp.body_m as f32, sp.body_r as f32, sp.body_p as f32, sp.reach() as f32);
         }
         u.peaks = peaks;
+        // (no close-up ground detail on lite quality: it costs too much there)
+        let detail = if q.name == "lite" { 0.0 } else { 1.0 };
+        u.detail = Vec4::new(pl.x.rem_euclid(4096.0) as f32, (pl.play_sec % 4096.0) as f32, pl.z.rem_euclid(4096.0) as f32, detail);
     }
 
     // sky and Cloudwall: gradient, sun, clouds that drift and vary by day
@@ -1506,9 +1612,9 @@ fn update_hud(
         Query<&mut Text, With<SpeedLabel>>,
     )>,
 ) {
-    let ground = meshgen::drawn_height(&w.0, pl.x, pl.z).max(0.0);
-    let alt = if pl.fly { pl.y } else { pl.y - EYE }.max(0.0);
-    let alt_text = if alt >= 10_000.0 { format!("{:.0} km", alt / 1000.0) } else { format!("{:.0} m", alt) };
+    let ground = meshgen::ground_under(&w.0, pl.x, pl.z, pl.y);
+    let alt = if pl.fly { pl.y } else { pl.y - EYE };
+    let alt_text = if alt.abs() >= 10_000.0 { format!("{:.0} km", alt / 1000.0) } else { format!("{:.0} m", alt) };
     let above = pl.y - ground;
     if let Ok(mut t) = texts.p0().single_mut() {
         let mut s = format!("Day {}  {}  |  {}", pl.day, clock_text(pl.hours), alt_text);
@@ -1796,7 +1902,7 @@ fn web_bridge(
     // build the world around the new spot at once
     pl.x = x;
     pl.z = z;
-    let ground = meshgen::drawn_height(t, x, z).max(0.0);
+    let ground = meshgen::ground_under(t, x, z, f64::INFINITY);
     pl.y = if pl.fly { ground + 150.0 } else { ground + EYE };
     pl.vy = 0.0;
     streamer.ready = false;

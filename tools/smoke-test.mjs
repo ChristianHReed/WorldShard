@@ -15,6 +15,9 @@ const browser = await puppeteer.launch({
   headless: true,
   args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist", "--no-sandbox", "--window-size=1280,720"],
   defaultViewport: { width: 1280, height: 720 },
+  // software rendering on a slow runner can keep the page busy for minutes;
+  // let the longer waits below run their full time
+  protocolTimeout: 900000,
 });
 let ok = true;
 try {
@@ -96,6 +99,15 @@ try {
     ["15-clouds-overhead", { x: -905738, z: 522928, yaw: 1.05, pitch: 0.55, hours: 13 }],
     ["16-night-sky", { x: -905738, z: 522928, yaw: 2.5, pitch: 0.5, hours: 23 }],
     ["17-range-from-the-west", { x: -900000, z: -150000, yaw: 1.5708, pitch: 0.12, hours: 10 }],
+    // the Great Canyon, its bridge city and natural sea wall; rivers, shores and lava
+    ["18-bridge-city-street", { x: 1099230, z: -11387, y: 1180, yaw: 2.958, pitch: 0.02, hours: 10 }],
+    ["19-bridge-from-the-rim", { fly: true, y: 1700, x: 1111471, z: -22148, yaw: -2.35, pitch: -0.06, hours: 16 }],
+    ["20-canyon-floor-looking-up", { fly: true, y: -44200, x: 1040148, z: -1216, yaw: 1.419, pitch: 0.5, hours: 12 }],
+    ["21-river-valley", { fly: true, y: 140, x: -1058754, z: 33900, yaw: -1.79, pitch: -0.12, hours: 11 }],
+    ["22-northeast-cliffs-and-sea-stacks", { fly: true, y: 250, x: 1264808, z: -730237, yaw: -0.63, pitch: -0.02, hours: 15 }],
+    ["23-southwest-beach-surf", { x: -1513999, z: 874108, yaw: -2.094, pitch: -0.08, hours: 16 }],
+    ["24-lava-from-st-helens", { fly: true, y: 4600, x: 431571, z: -109229, yaw: -2.585, pitch: -0.02, hours: 19 }],
+    ["25-sea-wall-from-the-sea", { fly: true, y: 6000, x: 1735574, z: 9051, yaw: -1.758, pitch: -0.1, hours: 9 }],
   ];
   for (const [name, p] of scenes) {
     const data = JSON.stringify({ game: "WorldShard", v: 2, day: 2, visited: [], playSec: 0, savedAt: 0, ...p });
@@ -143,7 +155,8 @@ try {
       el.value = 6000;
       el.dispatchEvent(new Event("input"));
     });
-    await page.waitForFunction(() => JSON.parse(window.wsSettings).view === 6000, { timeout: 10000, polling: 250 });
+    // (software rendering can take several seconds a frame here)
+    await page.waitForFunction(() => JSON.parse(window.wsSettings).view === 6000, { timeout: 90000, polling: 250 });
     note(`settings: land view distance ${before} km -> 6000 km applied`);
   } catch (e) {
     ok = false;

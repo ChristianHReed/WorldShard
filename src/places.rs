@@ -27,6 +27,8 @@ pub fn places(t: &Terrain) -> Vec<Place> {
     out.push(Place { name: "Mount Everest".into(), sub: "The summit".into(), x: t.everest.0, z: t.everest.1 });
     let (hx, hz) = helens_rim(t);
     out.push(Place { name: "Mount St. Helens".into(), sub: "The crater rim".into(), x: hx, z: hz });
+    let (bx, bz) = t.bridge.from_deck(0.0, 0.0);
+    out.push(Place { name: "The Bridge City".into(), sub: "Midway across the Great Canyon".into(), x: bx, z: bz });
     out
 }
 
@@ -107,7 +109,8 @@ impl MapImage {
             for i in 0..n {
                 let (x, z) = self.world(i, j);
                 let s = t.sample(x, z);
-                let h = s.h.max(0.0);
+                // the canyon keeps its depth so its walls are shaded
+                let h = if s.canyon { s.h } else { s.h.max(0.0) };
                 let (hl, hu) = (if i == 0 { h } else { left }, if j == 0 { h } else { self.prev[i] });
                 left = h;
                 self.prev[i] = h;
@@ -119,7 +122,10 @@ impl MapImage {
                 } else {
                     // light from the north-west; the scale keeps the giants readable
                     let slope = ((h - hl) + (h - hu)) / step;
-                    let shade = (1.0 + slope.clamp(-4.0, 4.0) * 0.45).clamp(0.5, 1.45) as f32;
+                    let mut shade = (1.0 + slope.clamp(-4.0, 4.0) * 0.45).clamp(0.5, 1.45) as f32;
+                    if s.canyon {
+                        shade *= 1.0 - 0.45 * (-s.h / 45_000.0).clamp(0.0, 1.0) as f32;
+                    }
                     c = [c[0] * shade, c[1] * shade, c[2] * shade];
                 }
                 let o = (j * n + i) * 4;
@@ -130,6 +136,42 @@ impl MapImage {
             }
         }
         self.rows_done = end;
+        if self.done() {
+            self.overlay(t);
+        }
+    }
+
+    /// Lines too fine to show up pixel by pixel: the rivers and the bridge.
+    fn overlay(&mut self, t: &Terrain) {
+        for rv in &t.rivers {
+            let p = &rv.path;
+            for k in 1..p.pts.len() {
+                if p.s[k] > p.coast_s {
+                    break;
+                }
+                self.line(p.pts[k - 1], p.pts[k], [0.22, 0.46, 0.66], 0.85);
+            }
+        }
+        let [a, b] = t.bridge.ends();
+        self.line(a, b, [0.95, 0.92, 0.84], 1.0);
+    }
+
+    fn line(&mut self, a: (f64, f64), b: (f64, f64), c: [f32; 3], alpha: f32) {
+        let step = 2.0 * self.half / self.size as f64;
+        let n = ((b.0 - a.0).hypot(b.1 - a.1) / (step * 0.4)).ceil().max(1.0) as usize;
+        for i in 0..=n {
+            let f = i as f64 / n as f64;
+            let (x, z) = (a.0 + (b.0 - a.0) * f, a.1 + (b.1 - a.1) * f);
+            let (pi, pj) = (((x + self.half) / step).floor(), ((z + self.half) / step).floor());
+            if pi < 0.0 || pj < 0.0 || pi >= self.size as f64 || pj >= self.size as f64 {
+                continue;
+            }
+            let o = (pj as usize * self.size + pi as usize) * 4;
+            for k in 0..3 {
+                let old = self.rgba[o + k] as f32 / 255.0;
+                self.rgba[o + k] = ((old + (c[k] - old) * alpha).clamp(0.0, 1.0) * 255.0) as u8;
+            }
+        }
     }
 }
 
@@ -141,7 +183,7 @@ mod tests {
     fn every_region_has_a_place_on_dry_land() {
         let t = Terrain::new();
         let ps = places(&t);
-        assert_eq!(ps.len(), 1 + REGIONS.len() + 2, "{:?}", ps.iter().map(|p| &p.name).collect::<Vec<_>>());
+        assert_eq!(ps.len(), 1 + REGIONS.len() + 3, "{:?}", ps.iter().map(|p| &p.name).collect::<Vec<_>>());
         for p in &ps[1..1 + REGIONS.len()] {
             let s = t.sample(p.x, p.z);
             assert!(s.water.is_none() && s.h > 0.0, "{} at {:.0},{:.0}", p.name, p.x, p.z);
