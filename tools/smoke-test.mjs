@@ -188,7 +188,7 @@ try {
     ["35-ruined-outpost", { x: 1101138, z: 3721, yaw: 3.13, pitch: 0.02, hours: 17 }, ["Bridge City"]],
     ["36-the-needles", { x: 279997, z: 1428115, yaw: -1.571, pitch: 0.12, hours: 18 }],
     ["37-north-pass", { x: 395148, z: -698385, fly: 1, y: 4630, yaw: 0.515, pitch: -0.12, hours: 11 }],
-    ["38-headland-cliffs", { x: -673062, z: 1570372, fly: 1, y: 160, yaw: 1.663, pitch: -0.02, hours: 16 }],
+    ["38-headland-cliffs", { x: -575013, z: 1595389, fly: 1, y: 90, yaw: 0.75, pitch: 0.0, hours: 16 }],
     ["39-tableland-escarpment", { x: -572326, z: 806442, yaw: 1.571, pitch: 0.06, hours: 15 }],
   ];
   for (const [name, v, mustHave, mustNot] of jumps) {
