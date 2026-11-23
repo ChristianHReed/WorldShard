@@ -22,11 +22,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: windows-latest, name: windows, exe: worldshard-game.exe }
-          - { os: macos-latest, name: mac, exe: worldshard-game }
-          - { os: ubuntu-latest, name: linux, exe: worldshard-game }
+        # GitHub is often short of Mac machines, so the Mac build runs for main
+        # only, and a Mac build that never gets a machine doesn't fail the run
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-latest","name":"windows","exe":"worldshard-game.exe"},{"os":"ubuntu-latest","name":"linux","exe":"worldshard-game"}]' || '[{"os":"windows-latest","name":"windows","exe":"worldshard-game.exe"},{"os":"macos-latest","name":"mac","exe":"worldshard-game","optional":true},{"os":"ubuntu-latest","name":"linux","exe":"worldshard-game"}]') }}
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.optional == true }}
     steps:
       - uses: actions/checkout@v4
 

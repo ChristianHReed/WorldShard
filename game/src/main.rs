@@ -982,7 +982,7 @@ fn stream_world(
     // single frame, its burst of memory and uploads to the graphics chip was
     // more than an iPhone 11 allows a page, and Safari closed it.
     let want = lod::select_kv([pl.x, pl.y, pl.z], above, q.split_k, q.view);
-    let budget = if first { FIRST_BATCH } else { 3 };
+    let budget = if first { first_batch(&q) } else { 3 };
     let mut built = 0;
     let mut missing = false;
     for k in &want {
@@ -1026,7 +1026,7 @@ fn stream_world(
 
     // grass tufts close to the player (not when flying)
     let grass_wanted = if above < 60.0 && q.grass_radius > 0.0 { cells_near(pl.x, pl.z, GRASS_CELL, q.grass_radius) } else { Vec::new() };
-    let mut gb = if first { FIRST_BATCH } else { 4 };
+    let mut gb = if first { first_batch(&q) } else { 4 };
     for &(i, j) in &grass_wanted {
         if gb == 0 {
             break;
@@ -1055,8 +1055,12 @@ fn stream_world(
 }
 
 /// Terrain chunks (and grass cells) built per frame while the first view is
-/// put together behind the loading screen.
-const FIRST_BATCH: usize = 24;
+/// put together behind the loading screen: in batches on phones (lite and
+/// phone quality); all at once at full quality, which iPads and computers
+/// take in their stride (and software rendering in the tests needs).
+fn first_batch(q: &Quality) -> usize {
+    if q.name == "full" { usize::MAX } else { 24 }
+}
 
 /// Grid cells of side `cell` whose centres are within `radius` of (x, z), nearest first.
 fn cells_near(x: f64, z: f64, cell: f64, radius: f64) -> Vec<(i64, i64)> {
@@ -1410,7 +1414,7 @@ fn stream_plants(
         budget -= 1;
     }
     // far cells: one merged mesh of stand-in shapes each
-    let mut budget = if first { 16 } else { 4 };
+    let mut budget = if first { if q.name == "full" { 60 } else { 16 } } else { 4 };
     for &c in &far_want {
         if budget == 0 {
             break;
