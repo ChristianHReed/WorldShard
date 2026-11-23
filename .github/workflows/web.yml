@@ -11,8 +11,11 @@ permissions:
   contents: write # to publish build logs to the ci-logs branch
   actions: write # to ask the Publish site workflow to publish
 
+# A newer push cancels the older build on the same branch or pull request.
+# (A merged pull request's "closed" event carries main's ref, so it gets a
+# group of its own: it must never cancel the build of main.)
 concurrency:
-  group: web-${{ github.ref }}
+  group: web-${{ github.event.action == 'closed' && format('closed-{0}', github.event.number) || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -138,12 +141,10 @@ jobs:
           git add -A && git commit -qm "Build logs for ${{ github.sha }}"
           git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" ci-logs
 
-  # a closed pull request: publish again, without its preview
-  forget-preview:
-    if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+  # a closed pull request: nothing to build. When this run finishes, the
+  # Publish site workflow runs again and leaves the closed preview out.
+  closed:
+    if: github.event.action == 'closed'
     runs-on: ubuntu-latest
     steps:
-      - name: Take down this change's preview
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run pages.yml --ref main -R "${{ github.repository }}" -f why="closed #${{ github.event.number }}"
+      - run: echo "Pull request closed; its preview comes down at the next publish."
