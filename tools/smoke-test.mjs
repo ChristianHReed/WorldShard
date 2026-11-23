@@ -53,6 +53,26 @@ try {
       ok = false;
       note(`phone map: ${e.message}`);
     }
+    // the problem log: an error brings up the Problems button, and the
+    // panel shows it, ready to copy or send as a GitHub issue
+    try {
+      await phone.evaluate(() => { document.getElementById("map-panel").hidden = true; console.error("smoke test: a pretend problem"); });
+      await phone.waitForFunction(() => !document.getElementById("log-btn").hidden, { timeout: 30000, polling: 250 });
+      await phone.click("#log-btn");
+      await new Promise((r) => setTimeout(r, 1000));
+      await phone.screenshot({ path: `${out}/0c-phone-problem-log.png` });
+      const r = await phone.evaluate(() => ({
+        text: document.getElementById("log-text").textContent,
+        href: document.getElementById("log-send").href,
+        sum: document.getElementById("log-sum").textContent,
+      }));
+      const good = r.text.includes("smoke test: a pretend problem") && r.href.startsWith("https://github.com/") && r.href.length <= 7000;
+      if (!good) ok = false;
+      note(`phone problem log: ${good ? "ok" : "PROBLEM"} (${r.text.split("\n").length} lines, send link ${r.href.length} chars; ${r.sum})`);
+    } catch (e) {
+      ok = false;
+      note(`phone problem log: ${e.message}`);
+    }
     await phone.close();
   }
 
@@ -124,6 +144,12 @@ try {
     await new Promise((r) => setTimeout(r, 8000));
     await page.screenshot({ path: `${out}/${name}.png` });
     note(`screenshot ${name}.png`);
+  }
+  // reloading isn't a crash, and the last session's log is kept
+  {
+    const c = await page.evaluate(() => ({ crashed: window.wsDebug.prevCrashed, kept: (window.wsDebug.prev?.lines || []).length, errors: window.wsDebug.errors }));
+    note(`problem log after reloads: last session's log kept (${c.kept} lines), crash flagged: ${c.crashed}, errors this session: ${c.errors}`);
+    if (!c.kept || c.crashed) ok = false;
   }
 
   // the map, fast travel to a place, and the settings sliders
