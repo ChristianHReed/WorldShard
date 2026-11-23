@@ -13,7 +13,7 @@
 use std::collections::{HashMap, HashSet};
 
 use bevy::asset::{AssetId, AssetMetaCheck, RenderAssetUsages};
-use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+use bevy::image::{ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor};
 use bevy::input::mouse::MouseMotion;
 use bevy::pbr::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, DistanceFog, ExtendedMaterial, FogFalloff, MaterialExtension, NotShadowCaster};
 use bevy::render::render_resource::{AsBindGroup, ShaderRef, ShaderType};
@@ -1127,7 +1127,11 @@ fn ensure_model(server: &AssetServer, ma: &mut ModelAssets, m: u16) {
     }
     for file in meshgen::model_textures(m) {
         if !ma.textures.contains_key(file) {
-            let h: Handle<Image> = server.load(format!("textures/{file}"));
+            // kept on the CPU side only until its mipmaps are made (see add_mipmaps);
+            // then it moves to the graphics chip once, without a second copy
+            let h: Handle<Image> = server.load_with_settings(format!("textures/{file}"), |s: &mut ImageLoaderSettings| {
+                s.asset_usage = RenderAssetUsages::MAIN_WORLD;
+            });
             if TEXTURES.iter().any(|&(f, mask)| f == file && mask) {
                 ma.masked.insert(h.id());
             }
@@ -1137,9 +1141,9 @@ fn ensure_model(server: &AssetServer, ma: &mut ModelAssets, m: u16) {
 }
 
 /// A model whose parts and textures have all arrived.
-fn model_ready(ma: &ModelAssets, meshes: &Assets<Mesh>, images: &Assets<Image>, m: u16) -> bool {
+fn model_ready(ma: &ModelAssets, meshes: &Assets<Mesh>, mips: &MipDone, m: u16) -> bool {
     let Some(parts) = &ma.parts[m as usize] else { return false };
-    parts.iter().all(|h| meshes.contains(h.id())) && meshgen::model_textures(m).iter().all(|f| ma.textures.get(f).is_some_and(|h| images.contains(h.id())))
+    parts.iter().all(|h| meshes.contains(h.id())) && meshgen::model_textures(m).iter().all(|f| ma.textures.get(f).is_some_and(|h| mips.done.contains(&h.id())))
 }
 
 /// Which model sets are loaded (each region's plants and rocks, and the
@@ -1355,7 +1359,7 @@ fn stream_plants(
     q: Res<Quality>,
     mut pt: ResMut<Plants>,
     server: Res<AssetServer>,
-    images: Res<Assets<Image>>,
+    mips: Res<MipDone>,
 ) {
     let t = &w.0;
     let first = !pt.ready;
@@ -1388,7 +1392,7 @@ fn stream_plants(
         let mut seen = HashSet::new();
         let mut waiting = false;
         for p in pl_list.iter() {
-            if p.model != model::MINE && seen.insert(p.model) && !model_ready(&ma, &meshes, &images, p.model) {
+            if p.model != model::MINE && seen.insert(p.model) && !model_ready(&ma, &meshes, &mips, p.model) {
                 waiting = true;
                 if ma.parts[p.model as usize].is_none() {
                     ensure_model(&server, &mut ma, p.model);
@@ -1455,7 +1459,7 @@ fn stream_plants(
         let mut seen = HashSet::new();
         let mut waiting = false;
         for p in &list {
-            if seen.insert(p.model) && !model_ready(&ma, &meshes, &images, p.model) {
+            if seen.insert(p.model) && !model_ready(&ma, &meshes, &mips, p.model) {
                 waiting = true;
                 if ma.parts[p.model as usize].is_none() {
                     ensure_model(&server, &mut ma, p.model);
@@ -1504,21 +1508,36 @@ fn show_city_pieces(pl: Res<Player>, w: Res<GameWorld>, q: Res<Quality>, mut pie
 /// Builds mipmaps for the plant textures as they arrive, so leaves and bark
 /// stay smooth in the distance instead of shimmering. Cut-out leaf textures
 /// keep the same amount of leaf in every mipmap.
+///
+/// Model textures load into the main world only. A couple a frame get their
+/// mipmaps here and are then handed to the render world, which takes them
+/// over: one upload each, and no second copy left behind. (All at once, a
+/// region's textures and their copies were more memory than an iPhone 11
+/// allows a page while the game starts.)
 #[derive(Resource, Default)]
-struct MipDone(HashSet<AssetId<Image>>);
+struct MipDone {
+    done: HashSet<AssetId<Image>>,
+    queue: std::collections::VecDeque<AssetId<Image>>,
+}
 
-fn add_mipmaps(mut events: EventReader<AssetEvent<Image>>, mut images: ResMut<Assets<Image>>, mut done: ResMut<MipDone>, ma: Option<Res<ModelAssets>>) {
+const MIPS_PER_FRAME: usize = 2;
+
+fn add_mipmaps(mut events: EventReader<AssetEvent<Image>>, mut images: ResMut<Assets<Image>>, mut mips: ResMut<MipDone>, ma: Option<Res<ModelAssets>>) {
     let Some(ma) = ma else { return };
     for ev in events.read() {
         let AssetEvent::LoadedWithDependencies { id } = ev else { continue };
-        if done.0.contains(id) || !ma.textures.values().any(|h| h.id() == *id) {
+        if mips.done.contains(id) || mips.queue.contains(id) || !ma.textures.values().any(|h| h.id() == *id) {
             continue;
         }
-        let masked = ma.masked.contains(id);
-        if let Some(img) = images.get_mut(*id) {
-            make_mips(img, masked);
+        mips.queue.push_back(*id);
+    }
+    for _ in 0..MIPS_PER_FRAME {
+        let Some(id) = mips.queue.pop_front() else { break };
+        if let Some(img) = images.get_mut(id) {
+            make_mips(img, ma.masked.contains(&id));
+            img.asset_usage = RenderAssetUsages::RENDER_WORLD;
         }
-        done.0.insert(*id);
+        mips.done.insert(id);
     }
 }
 
