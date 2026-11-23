@@ -44,7 +44,7 @@ struct HazeU {
     // 4,096 m, y seconds, w detail strength
     detail: vec4<f32>,
 }
-@group(2) @binding(100) var<uniform> hz: HazeU;
+@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> hz: HazeU;
 
 const SHADOW_STEPS: i32 = 14;
 

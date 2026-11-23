@@ -15,11 +15,13 @@ use std::collections::{HashMap, HashSet};
 use bevy::asset::{AssetId, AssetMetaCheck, RenderAssetUsages};
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor};
 use bevy::input::mouse::MouseMotion;
-use bevy::pbr::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, DistanceFog, ExtendedMaterial, FogFalloff, MaterialExtension, NotShadowCaster};
-use bevy::render::render_resource::{AsBindGroup, ShaderRef, ShaderType};
+use bevy::camera::primitives::Aabb;
+use bevy::light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, NotShadowCaster};
+use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::pbr::{DistanceFog, ExtendedMaterial, FogFalloff, MaterialExtension};
 use bevy::prelude::*;
-use bevy::render::mesh::{Indices, PrimitiveTopology};
-use bevy::render::primitives::Aabb;
+use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::shader::ShaderRef;
 use bevy::render::render_resource::TextureFormat;
 use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
 use bevy::window::WindowResolution;
@@ -733,7 +735,7 @@ fn move_player(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
-    mut motion: EventReader<MouseMotion>,
+    mut motion: MessageReader<MouseMotion>,
     touches: Res<Touches>,
     windows: Query<&Window>,
     buttons: Query<(&Interaction, &FlyButton)>,
@@ -1526,7 +1528,7 @@ struct MipDone {
 
 const MIPS_PER_FRAME: usize = 2;
 
-fn add_mipmaps(mut events: EventReader<AssetEvent<Image>>, mut images: ResMut<Assets<Image>>, mut mips: ResMut<MipDone>, ma: Option<Res<ModelAssets>>) {
+fn add_mipmaps(mut events: MessageReader<AssetEvent<Image>>, mut images: ResMut<Assets<Image>>, mut mips: ResMut<MipDone>, ma: Option<Res<ModelAssets>>) {
     let Some(ma) = ma else { return };
     for ev in events.read() {
         let AssetEvent::LoadedWithDependencies { id } = ev else { continue };

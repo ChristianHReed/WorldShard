@@ -43,7 +43,7 @@ struct SkyU {
     // x: haze scale height (m); y: cloud cover 0..1
     misc: vec4<f32>,
 }
-@group(2) @binding(100) var<uniform> sky: SkyU;
+@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> sky: SkyU;
 
 // ---- noise (integer hashing, so it stays clean far from the centre) ----
 fn hash_u(v: u32) -> u32 {
