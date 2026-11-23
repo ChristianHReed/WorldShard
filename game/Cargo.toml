@@ -33,10 +33,17 @@ bevy = { version = "0.16", default-features = false, features = [
     "tonemapping_luts",
     "ktx2",
     "zstd",
-    "webgl2",
     "web",
     "x11",
 ] }
+
+[features]
+default = ["webgl2"]
+# The graphics system on the web, one per build: WebGL 2 works everywhere;
+# WebGPU (newer browsers) prepares shaders without freezing the page. The
+# web page loads the WebGPU build when the browser has WebGPU.
+webgl2 = ["bevy/webgl2"]
+webgpu = ["bevy/webgpu"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { version = "0.3", features = ["Window", "Storage", "Document", "Element"] }

@@ -55,6 +55,20 @@ pub fn sun_state(hours: f64) -> SunState {
     SunState { sun_dir: sun, moon_dir: moon, day, sun_col, moon_col, sky_amb, sky_col, fog_col }
 }
 
+/// A game day lasts one real hour: 40 minutes of daylight (6:00 to 18:00)
+/// and 20 minutes of night (18:00 to 6:00).
+pub const DAYLIGHT_SECS: f64 = 40.0 * 60.0;
+pub const NIGHT_SECS: f64 = 20.0 * 60.0;
+
+/// Game hours that pass in one real second, at game time `hours`.
+pub fn clock_rate(hours: f64) -> f64 {
+    if (6.0..18.0).contains(&hours.rem_euclid(24.0)) {
+        12.0 / DAYLIGHT_SECS
+    } else {
+        12.0 / NIGHT_SECS
+    }
+}
+
 /// "09:05" style clock text.
 pub fn clock_text(hours: f64) -> String {
     let h = hours.rem_euclid(24.0);
@@ -64,6 +78,19 @@ pub fn clock_text(hours: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_day_lasts_an_hour_with_a_short_night() {
+        // run the clock from midnight for one real hour, a quarter second at a time
+        let (mut h, mut light) = (0.0f64, 0.0f64);
+        for _ in 0..(3600 * 4) {
+            if (6.0..18.0).contains(&h) {
+                light += 0.25;
+            }
+            h += 0.25 * clock_rate(h);
+        }
+        assert!((h - 24.0).abs() < 0.05, "one real hour made {h} game hours");
+        assert!((light - DAYLIGHT_SECS).abs() < 5.0, "daylight lasted {light} s");
+    }
     #[test]
     fn noon_is_bright_midnight_is_dark() {
         let noon = sun_state(12.0);

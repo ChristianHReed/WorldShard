@@ -7,10 +7,13 @@
 //! its meshes, the day/night maths and the save format all come from the
 //! engine-independent `worldshard` library.
 
+// a Windows release build opens as a game window only, without a console
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use std::collections::{HashMap, HashSet};
 
 use bevy::asset::{AssetId, AssetMetaCheck, RenderAssetUsages};
-use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+use bevy::image::{ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor};
 use bevy::input::mouse::MouseMotion;
 use bevy::pbr::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, DistanceFog, ExtendedMaterial, FogFalloff, MaterialExtension, NotShadowCaster};
 use bevy::render::render_resource::{AsBindGroup, ShaderRef, ShaderType};
@@ -27,7 +30,7 @@ use worldshard::landmarks;
 use worldshard::meshgen::{self, model, MeshData, Placement, PropKinds, Tint, DETAIL_CELL, GRASS_CELL, MODELS, PROP_CELL};
 use worldshard::places::{places, MapImage};
 use worldshard::save::{SaveData, STORAGE_KEY};
-use worldshard::sky::{clock_text, sun_state};
+use worldshard::sky::{clock_rate, clock_text, sun_state};
 use worldshard::worldgen::terrain::WALL_R;
 use worldshard::worldgen::Terrain;
 
@@ -901,9 +904,9 @@ fn move_player(
         }
     }
 
-    // clock: a game day is a real day
+    // clock: a game day lasts a real hour (40 minutes of daylight, 20 of night)
     pl.play_sec += dt;
-    pl.hours += dt / 3600.0;
+    pl.hours += dt * clock_rate(pl.hours);
     if pl.hours >= 24.0 {
         pl.hours -= 24.0;
         pl.day += 1;
@@ -974,16 +977,21 @@ fn stream_world(
     let ground = meshgen::ground_under(t, pl.x, pl.z, pl.y);
     let above = pl.y - ground;
 
-    // terrain: build missing chunks nearest first, a few per frame
+    // terrain: build missing chunks nearest first, a few per frame. The
+    // first view is built in batches behind the loading screen: built in a
+    // single frame, its burst of memory and uploads to the graphics chip was
+    // more than an iPhone 11 allows a page, and Safari closed it.
     let want = lod::select_kv([pl.x, pl.y, pl.z], above, q.split_k, q.view);
-    let budget = if first { usize::MAX } else { 3 };
+    let budget = if first { FIRST_BATCH } else { 3 };
     let mut built = 0;
+    let mut missing = false;
     for k in &want {
-        if built >= budget {
-            break;
-        }
         if st.chunks.contains_key(k) {
             continue;
+        }
+        if built >= budget {
+            missing = true;
+            break;
         }
         let c = meshgen::build_chunk(t, *k);
         let mut parts = Vec::new();
@@ -1018,7 +1026,7 @@ fn stream_world(
 
     // grass tufts close to the player (not when flying)
     let grass_wanted = if above < 60.0 && q.grass_radius > 0.0 { cells_near(pl.x, pl.z, GRASS_CELL, q.grass_radius) } else { Vec::new() };
-    let mut gb = if first { usize::MAX } else { 4 };
+    let mut gb = if first { FIRST_BATCH } else { 4 };
     for &(i, j) in &grass_wanted {
         if gb == 0 {
             break;
@@ -1040,8 +1048,15 @@ fn stream_world(
             commands.entity(e).despawn();
         }
     }
-    st.ready = true;
+    // the first view is ready once every chunk it wants is built
+    if !missing {
+        st.ready = true;
+    }
 }
+
+/// Terrain chunks (and grass cells) built per frame while the first view is
+/// put together behind the loading screen.
+const FIRST_BATCH: usize = 24;
 
 /// Grid cells of side `cell` whose centres are within `radius` of (x, z), nearest first.
 fn cells_near(x: f64, z: f64, cell: f64, radius: f64) -> Vec<(i64, i64)> {
@@ -1112,7 +1127,11 @@ fn ensure_model(server: &AssetServer, ma: &mut ModelAssets, m: u16) {
     }
     for file in meshgen::model_textures(m) {
         if !ma.textures.contains_key(file) {
-            let h: Handle<Image> = server.load(format!("textures/{file}"));
+            // kept on the CPU side only until its mipmaps are made (see add_mipmaps);
+            // then it moves to the graphics chip once, without a second copy
+            let h: Handle<Image> = server.load_with_settings(format!("textures/{file}"), |s: &mut ImageLoaderSettings| {
+                s.asset_usage = RenderAssetUsages::MAIN_WORLD;
+            });
             if TEXTURES.iter().any(|&(f, mask)| f == file && mask) {
                 ma.masked.insert(h.id());
             }
@@ -1122,9 +1141,9 @@ fn ensure_model(server: &AssetServer, ma: &mut ModelAssets, m: u16) {
 }
 
 /// A model whose parts and textures have all arrived.
-fn model_ready(ma: &ModelAssets, meshes: &Assets<Mesh>, images: &Assets<Image>, m: u16) -> bool {
+fn model_ready(ma: &ModelAssets, meshes: &Assets<Mesh>, mips: &MipDone, m: u16) -> bool {
     let Some(parts) = &ma.parts[m as usize] else { return false };
-    parts.iter().all(|h| meshes.contains(h.id())) && meshgen::model_textures(m).iter().all(|f| ma.textures.get(f).is_some_and(|h| images.contains(h.id())))
+    parts.iter().all(|h| meshes.contains(h.id())) && meshgen::model_textures(m).iter().all(|f| ma.textures.get(f).is_some_and(|h| mips.done.contains(&h.id())))
 }
 
 /// Which model sets are loaded (each region's plants and rocks, and the
@@ -1184,6 +1203,7 @@ fn load_regions(
     ma.textures.retain(|f, _| tex.contains(f));
     pt.materials.retain(|(part, tint), _| meshgen::part_texture(part, *tint).is_none_or(|f| tex.contains(f)));
     let names: Vec<&str> = (0..7).filter(|&k| rl.loaded[k]).map(|k| meshgen::LOAD_SETS[k]).collect();
+    info!("WorldShard models for: {}", names.join(", "));
     page_set_text("wsLoaded", &names.join(","));
 }
 
@@ -1339,7 +1359,7 @@ fn stream_plants(
     q: Res<Quality>,
     mut pt: ResMut<Plants>,
     server: Res<AssetServer>,
-    images: Res<Assets<Image>>,
+    mips: Res<MipDone>,
 ) {
     let t = &w.0;
     let first = !pt.ready;
@@ -1372,7 +1392,7 @@ fn stream_plants(
         let mut seen = HashSet::new();
         let mut waiting = false;
         for p in pl_list.iter() {
-            if p.model != model::MINE && seen.insert(p.model) && !model_ready(&ma, &meshes, &images, p.model) {
+            if p.model != model::MINE && seen.insert(p.model) && !model_ready(&ma, &meshes, &mips, p.model) {
                 waiting = true;
                 if ma.parts[p.model as usize].is_none() {
                     ensure_model(&server, &mut ma, p.model);
@@ -1390,7 +1410,7 @@ fn stream_plants(
         budget -= 1;
     }
     // far cells: one merged mesh of stand-in shapes each
-    let mut budget = if first { 60 } else { 4 };
+    let mut budget = if first { 16 } else { 4 };
     for &c in &far_want {
         if budget == 0 {
             break;
@@ -1439,7 +1459,7 @@ fn stream_plants(
         let mut seen = HashSet::new();
         let mut waiting = false;
         for p in &list {
-            if seen.insert(p.model) && !model_ready(&ma, &meshes, &images, p.model) {
+            if seen.insert(p.model) && !model_ready(&ma, &meshes, &mips, p.model) {
                 waiting = true;
                 if ma.parts[p.model as usize].is_none() {
                     ensure_model(&server, &mut ma, p.model);
@@ -1488,21 +1508,36 @@ fn show_city_pieces(pl: Res<Player>, w: Res<GameWorld>, q: Res<Quality>, mut pie
 /// Builds mipmaps for the plant textures as they arrive, so leaves and bark
 /// stay smooth in the distance instead of shimmering. Cut-out leaf textures
 /// keep the same amount of leaf in every mipmap.
+///
+/// Model textures load into the main world only. A couple a frame get their
+/// mipmaps here and are then handed to the render world, which takes them
+/// over: one upload each, and no second copy left behind. (All at once, a
+/// region's textures and their copies were more memory than an iPhone 11
+/// allows a page while the game starts.)
 #[derive(Resource, Default)]
-struct MipDone(HashSet<AssetId<Image>>);
+struct MipDone {
+    done: HashSet<AssetId<Image>>,
+    queue: std::collections::VecDeque<AssetId<Image>>,
+}
 
-fn add_mipmaps(mut events: EventReader<AssetEvent<Image>>, mut images: ResMut<Assets<Image>>, mut done: ResMut<MipDone>, ma: Option<Res<ModelAssets>>) {
+const MIPS_PER_FRAME: usize = 2;
+
+fn add_mipmaps(mut events: EventReader<AssetEvent<Image>>, mut images: ResMut<Assets<Image>>, mut mips: ResMut<MipDone>, ma: Option<Res<ModelAssets>>) {
     let Some(ma) = ma else { return };
     for ev in events.read() {
         let AssetEvent::LoadedWithDependencies { id } = ev else { continue };
-        if done.0.contains(id) || !ma.textures.values().any(|h| h.id() == *id) {
+        if mips.done.contains(id) || mips.queue.contains(id) || !ma.textures.values().any(|h| h.id() == *id) {
             continue;
         }
-        let masked = ma.masked.contains(id);
-        if let Some(img) = images.get_mut(*id) {
-            make_mips(img, masked);
+        mips.queue.push_back(*id);
+    }
+    for _ in 0..MIPS_PER_FRAME {
+        let Some(id) = mips.queue.pop_front() else { break };
+        if let Some(img) = images.get_mut(id) {
+            make_mips(img, ma.masked.contains(&id));
+            img.asset_usage = RenderAssetUsages::RENDER_WORLD;
         }
-        done.0.insert(*id);
+        mips.done.insert(id);
     }
 }
 
@@ -1706,7 +1741,9 @@ fn sky_and_light(
     let horizon = (sky_lin * 1.12) * 0.65 + haze_lin * 0.35;
     let cover_region = (wr[5] * 0.18 + wr[3] * 0.1 + wr[2] * 0.05 - wr[1] * 0.25 - wr[4] * 0.05) as f32;
     let cover = (0.45 + 0.22 * ((pl.day as f32) * 1.7 + pl.hours as f32 / 9.0).sin() + cover_region).clamp(0.05, 0.95);
-    let secs = (pl.hours * 3600.0) as f32;
+    // clouds drift and stars twinkle in real seconds (the game clock runs
+    // 24 to 36 times faster than real time)
+    let secs = pl.play_sec.rem_euclid(86400.0) as f32;
     for (handle, mode) in [(&sky_mats.dome, 0.0f32), (&sky_mats.wall, 1.0f32)] {
         if let Some(m) = sky_materials.get_mut(handle) {
             m.extension.u = SkyUniform {
@@ -1849,7 +1886,9 @@ fn log_memory(time: Res<Time>, mut next: Local<f32>) {
     if time.elapsed_secs() < *next {
         return;
     }
-    *next = time.elapsed_secs() + 20.0;
+    // every 2 seconds while the world is first built (when a phone is most
+    // likely to run short), then every 20
+    *next = time.elapsed_secs() + if time.elapsed_secs() < 90.0 { 2.0 } else { 20.0 };
     #[cfg(target_arch = "wasm32")]
     {
         let mb = core::arch::wasm32::memory_size::<0>() as f64 * 65536.0 / 1_048_576.0;

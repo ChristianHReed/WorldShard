@@ -4,7 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>WorldShard</title>
-<link rel="icon" href="data:,">
+<link rel="icon" href="icons/icon-192.png">
+<!-- added to the Home Screen, it opens full screen like an app -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="WorldShard">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#0b1020">
 <meta name="ws-build" content="__BUILD__">
 <script>
   // --- a preview of a change (…/WorldShard/pr/<number>/) shares the live
@@ -73,6 +81,9 @@
           if (m) { lvl = m[1] === "ERROR" ? "error" : m[1] === "WARN" ? "warn" : "log"; s = s.slice(m[0].length); }
         }
         if (s.includes("Using exceptions for control flow")) return; // Bevy's normal start-up
+        // errors from what a browser adds to every page (Brave's wallet, extensions):
+        // kept, but not counted as the game's problems
+        if (lvl === "error" && /^Script error\.|window\.ethereum/.test(s)) { lvl = "warn"; s = "from the browser, not the game: " + s; }
         // engine file paths: keep the crate and file, drop the build machine's folders
         s = s.replace(/\S*?\/\.cargo\/(?:registry\/src|git\/checkouts)\/[^/\s]+\//g, "").replace(/\/rustc\/[0-9a-f]{8,}\//g, "rustc/");
         // the first 20 errors are pinned: they stay however much follows
@@ -82,6 +93,7 @@
         if (lines.length > MAX) lines.splice(lines.findIndex((l) => !l[3]), 1);
         if (lvl === "error") D.errors++;
         D.dirty = true;
+        if (lvl === "error" && D.save) D.save();
         if (D.onchange) D.onchange(lvl);
       } catch {} finally { busy = false; }
     };
@@ -140,11 +152,15 @@
       try { localStorage.setItem(LKEY, JSON.stringify({ build: D.build, at: T0, mb: D.peakMb, lines: keep })); } catch {}
     };
     D.forget = () => { try { localStorage.removeItem(LKEY); } catch {} };
+    D.flush = () => { D.dirty = true; D.save(); };
+    let ticks = 0;
     setInterval(() => {
       const mb = D.memMb();
       if (mb > D.peakMb) { D.peakMb = mb; D.dirty = true; }
-      D.save();
-    }, 4000);
+      // every second while starting up (when a phone is most likely to shut
+      // the page down), then every 4 seconds
+      if (performance.now() < 120000 || ++ticks % 4 === 0) D.save();
+    }, 1000);
     addEventListener("pagehide", () => { D.dirty = true; D.save(); try { sessionStorage.removeItem(AKEY); } catch {} });
     addEventListener("pageshow", (e) => { if (e.persisted) try { sessionStorage.setItem(AKEY, "1"); } catch {} });
     document.addEventListener("visibilitychange", () => { if (document.hidden) { D.dirty = true; D.save(); } });
@@ -313,7 +329,7 @@
         `build: ${D.build}   time: ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC   running: ${ago(Date.now() - D.T0)}`,
         `device: ${navigator.userAgent}`,
         `screen: ${s.width}x${s.height} @${devicePixelRatio || 1}x, window ${innerWidth}x${innerHeight}, touch ${navigator.maxTouchPoints || 0}`,
-        `graphics: ${gpu()}; WebGPU in this browser: ${"gpu" in navigator ? "yes" : "no"}`,
+        `graphics: ${gpu()}; WebGPU in this browser: ${"gpu" in navigator ? "yes" : "no"}; game using: ${window.wsGraphics || "not started"}`,
         `quality: ${ls("worldshard-quality") || "auto"}; settings: ${set}`,
         `where: ${window.wsPlayer || "?"} (x, z, facing, flying); models loaded: ${window.wsLoaded || "none yet"}`,
         `memory: ${mb ? mb + " MB now, " + Math.max(mb, D.peakMb) + " MB peak" : "?"}; frame rate: ${D.fps} fps; errors: ${D.errors}`,
@@ -419,7 +435,44 @@
   })();
 </script>
 <script type="module">
-  import init from "./worldshard.js";
+  // --- graphics: two builds of the game, WebGL 2 and WebGPU. WebGL is the
+  // default: on an iPad it starts faster and runs smoother. Phones use WebGPU,
+  // since starting with WebGL was more than an iPhone 11 could take, and so
+  // does any device where a WebGL start never finished. If WebGPU fails to
+  // start, the device goes back to WebGL. "?gfx=webgl" / "?gfx=webgpu" picks one. ---
+  const GKEY = "worldshard-graphics"; // what this device should use, once a start has gone wrong
+  const LAST = "worldshard-graphics-last";
+  const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  let bootCrashed = false;
+  try { bootCrashed = sessionStorage.getItem("worldshard-booting") === "1"; } catch {}
+  async function hasWebgpu() {
+    if (!navigator.gpu) return false;
+    try { return !!(await navigator.gpu.requestAdapter()); } catch { return false; }
+  }
+  async function pickGraphics() {
+    const asked = new URLSearchParams(location.search).get("gfx");
+    if (asked === "webgl" || asked === "webgpu") return asked;
+    let saved = lsGet(GKEY);
+    if (bootCrashed && lsGet(LAST) === "webgl" && saved !== "webgl" && (await hasWebgpu())) {
+      lsSet(GKEY, "webgpu");
+      saved = "webgpu";
+    }
+    if (saved === "webgl") return "webgl";
+    if (saved === "webgpu") return (await hasWebgpu()) ? "webgpu" : "webgl";
+    const phone = navigator.maxTouchPoints > 0 && Math.max(screen.width, screen.height) < 1000;
+    return phone && (await hasWebgpu()) ? "webgpu" : "webgl";
+  }
+  const gfx = await pickGraphics();
+  lsSet(LAST, gfx);
+  window.wsGraphics = gfx === "webgpu" ? "WebGPU" : "WebGL 2";
+  const gameName = gfx === "webgpu" ? "worldshard_webgpu" : "worldshard";
+  const useWebgl = () => {
+    // a switch, not a crash: don't let the reload count as a failed start
+    try { localStorage.setItem(GKEY, "webgl"); sessionStorage.removeItem("worldshard-booting"); } catch {}
+    const u = new URL(location.href);
+    if (u.searchParams.has("gfx")) { u.searchParams.set("gfx", "webgl"); location.replace(u); } else location.reload();
+  };
 
   const KEY = "worldshard-save-v1";
   const inClaude = !!window.claude;
@@ -466,8 +519,15 @@
   }
 
   // --- download the game (one file, compiled while it downloads) and start it ---
+  // each step of the start-up goes in the problem log, saved at once, so a
+  // report shows how far a start got if the device shuts the page down
+  const T0 = performance.now();
+  const step = (t) => { console.info(`start-up: ${t} (${((performance.now() - T0) / 1000).toFixed(1)} s)`); if (window.wsDebug && wsDebug.flush) wsDebug.flush(); };
+  step(`page open, quality ${getQ()}, graphics ${window.wsGraphics}${window.wsPreview ? ", preview #" + window.wsPreview : ""}`);
+
   async function gameModule() {
-    const res = await fetch("worldshard_bg.wasm");
+    step("downloading the game");
+    const res = await fetch(`${gameName}_bg.wasm`);
     if (res.ok && res.body) {
       const total = Number(res.headers.get("content-length")) || 0;
       let got = 0;
@@ -480,7 +540,8 @@
       }));
       return new Response(counted, { headers: { "Content-Type": "application/wasm" } });
     }
-    // hosts with a file-size limit get the game in pieces
+    // hosts with a file-size limit get the game in pieces (WebGL 2 only)
+    if (gfx === "webgpu") { useWebgl(); await new Promise(() => {}); }
     const parts = await (await fetch("wasm-parts.json")).json();
     const totalP = parts.reduce((a, p) => a + p.size, 0);
     const bytes = new Uint8Array(totalP);
@@ -512,13 +573,30 @@
       const mod = await gameModule();
       msg("Building the world…");
       await new Promise((r) => setTimeout(r, 30)); // let the message show
+      step("compiling and starting the game (the download finishes as it compiles)");
+      const started = setInterval(() => {
+        if (window.wsDebug && wsDebug.mem) { clearInterval(started); step(`game compiled, memory ${wsDebug.memMb()} MB`); }
+      }, 100);
+      const drawn = setInterval(() => {
+        if (!document.getElementById("loading")) { clearInterval(drawn); step(`world drawn, memory ${window.wsDebug ? wsDebug.memMb() : "?"} MB`); }
+        // WebGPU that fails to start (the game stops with a panic) → WebGL
+        else if (gfx === "webgpu" && window.wsDebug && wsDebug.lines.some((l) => l[1] === "error" && /panicked|WebGPU|wgpu/i.test(l[2]))) {
+          clearInterval(drawn);
+          step("WebGPU failed to start; switching to WebGL");
+          useWebgl();
+        }
+      }, 250);
+      const { default: init } = await import(`./${gameName}.js`);
       await init({ module_or_path: mod });
     } catch (e) {
       const text = String((e && e.message) || e);
       if (!text.includes("Using exceptions for control flow")) { // Bevy's normal start-up
-        const l = document.getElementById("loading");
-        if (l) { l.classList.add("error"); msg("Could not start: " + text); }
         console.error(e);
+        if (gfx === "webgpu") useWebgl(); // try WebGL instead
+        else {
+          const l = document.getElementById("loading");
+          if (l) { l.classList.add("error"); msg("Could not start: " + text); }
+        }
       }
     }
   }
