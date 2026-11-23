@@ -1187,6 +1187,7 @@ fn load_regions(
     ma.textures.retain(|f, _| tex.contains(f));
     pt.materials.retain(|(part, tint), _| meshgen::part_texture(part, *tint).is_none_or(|f| tex.contains(f)));
     let names: Vec<&str> = (0..7).filter(|&k| rl.loaded[k]).map(|k| meshgen::LOAD_SETS[k]).collect();
+    info!("WorldShard models for: {}", names.join(", "));
     page_set_text("wsLoaded", &names.join(","));
 }
 
@@ -1854,7 +1855,9 @@ fn log_memory(time: Res<Time>, mut next: Local<f32>) {
     if time.elapsed_secs() < *next {
         return;
     }
-    *next = time.elapsed_secs() + 20.0;
+    // every 2 seconds while the world is first built (when a phone is most
+    // likely to run short), then every 20
+    *next = time.elapsed_secs() + if time.elapsed_secs() < 90.0 { 2.0 } else { 20.0 };
     #[cfg(target_arch = "wasm32")]
     {
         let mb = core::arch::wasm32::memory_size::<0>() as f64 * 65536.0 / 1_048_576.0;
