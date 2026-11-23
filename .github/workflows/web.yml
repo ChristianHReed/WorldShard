@@ -4,12 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
 
 permissions:
   contents: write # to publish build logs to the ci-logs branch
-  pages: write
-  id-token: write
+  actions: write # to ask the Publish site workflow to publish
 
 concurrency:
   group: web-${{ github.ref }}
@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -78,11 +79,39 @@ jobs:
             && python3 -c "import json,os,glob; print(json.dumps([{'file':f,'size':os.path.getsize(f)} for f in sorted(glob.glob('worldshard_bg.part*.wasm'))]))" > wasm-parts.json \
             && cat wasm-parts.json)
           cp game/web/index.html dist/index.html
-          sed -i "s/__BUILD__/${GITHUB_SHA::7}/" dist/index.html # the build, for problem reports
+          # the build, for problem reports: a commit, or "pr<number>-<commit>" for a preview
+          B="${GITHUB_SHA::7}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            B="pr${{ github.event.number }}-$(echo "${{ github.event.pull_request.head.sha }}" | cut -c1-7)"
+          fi
+          sed -i "s/__BUILD__/$B/" dist/index.html
           cp -r game/assets dist/assets
           cp web-prototype/index.html dist/prototype/index.html
           touch dist/.nojekyll
           ls -la dist | tee -a build.log
+
+      - name: Keep the site for publishing
+        uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: dist
+          retention-days: 90
+          include-hidden-files: true
+
+      # Publishing runs in its own workflow (pages.yml, from main), so a pull
+      # request can get a preview link without waiting for the smoke test:
+      # main -> the live game; a pull request -> .../WorldShard/pr/<number>/
+      - name: Publish it (main → the live game; a pull request → its preview link)
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WHY: ${{ github.event_name }} ${{ github.head_ref || github.ref_name }}
+        run: |
+          gh workflow run pages.yml --ref main -R "${{ github.repository }}" -f why="$WHY"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "Preview, in a few minutes: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/pr/${{ github.event.number }}/" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Smoke test in headless Chrome
         continue-on-error: true
@@ -108,20 +137,12 @@ jobs:
           git add -A && git commit -qm "Build logs for ${{ github.sha }}"
           git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" ci-logs
 
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
-  deploy:
-    if: github.ref == 'refs/heads/main'
-    needs: build
+  # a closed pull request: publish again, without its preview
+  forget-preview:
+    if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - id: deployment
-        # GitHub Pages needs a public repo (or a paid plan for a private one);
-        # until then this step is skipped over instead of failing the run.
-        continue-on-error: true
-        uses: actions/deploy-pages@v4
+      - name: Take down this change's preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main -R "${{ github.repository }}" -f why="closed #${{ github.event.number }}"

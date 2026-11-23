@@ -152,9 +152,12 @@ try {
     if (!c.kept || c.crashed) ok = false;
   }
 
-  // the map, fast travel to a place, and the settings sliders
+  // the map's places, fast travel to a place, and the settings sliders. (The
+  // map picture itself is drawn a little each frame, which takes many minutes
+  // at full quality in software rendering: it's checked on the phone above,
+  // and again at the end of this run.)
   try {
-    await page.waitForFunction(() => !!window.wsMap && !!window.wsPlaces, { timeout: 300000, polling: 500 });
+    await page.waitForFunction(() => !!window.wsPlaces, { timeout: 300000, polling: 500 });
     await page.click("#map-btn");
     await new Promise((r) => setTimeout(r, 1500));
     await page.screenshot({ path: `${out}/11-map.png` });
@@ -240,6 +243,18 @@ try {
       ok = false;
       note(`${name}: ${e.message}`);
     }
+  }
+
+  // by now the map picture has had the whole run to draw at full quality
+  try {
+    await page.waitForFunction(() => !!window.wsMap, { timeout: 120000, polling: 1000 });
+    await page.evaluate(() => { for (const p of document.querySelectorAll(".panel")) p.hidden = true; });
+    await page.click("#map-btn");
+    await new Promise((r) => setTimeout(r, 2000));
+    await page.screenshot({ path: `${out}/40-map-picture.png` });
+    note("screenshot 40-map-picture.png (the map picture, drawn at full quality)");
+  } catch (e) {
+    note(`map picture at full quality: not drawn yet (${e.message}); the phone check covers it`);
   }
 
 } catch (e) {

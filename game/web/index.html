@@ -7,6 +7,30 @@
 <link rel="icon" href="data:,">
 <meta name="ws-build" content="__BUILD__">
 <script>
+  // --- a preview of a change (…/WorldShard/pr/<number>/) shares the live
+  // game's web address, so give it its own saves and settings: every stored
+  // key gets a prefix. The live game's saves are never touched. ---
+  (() => {
+    const m = /\/pr\/(\d+)\//.exec(location.pathname);
+    if (!m) return;
+    window.wsPreview = m[1];
+    const pre = `worldshard-pr${m[1]}:`, P = Storage.prototype;
+    const get = P.getItem, set = P.setItem, del = P.removeItem;
+    P.getItem = function (k) { return get.call(this, pre + k); };
+    P.setItem = function (k, v) { return set.call(this, pre + k, v); };
+    P.removeItem = function (k) { return del.call(this, pre + k); };
+    P.clear = function () {
+      for (let i = this.length - 1; i >= 0; i--) { const k = P.key.call(this, i); if (k && k.startsWith(pre)) del.call(this, k); }
+    };
+    document.addEventListener("DOMContentLoaded", () => {
+      const tag = document.createElement("div");
+      tag.id = "preview-tag";
+      tag.textContent = `Preview of change #${m[1]} · separate saves`;
+      document.body.appendChild(tag);
+    });
+  })();
+</script>
+<script>
   // --- problem log: keeps what the game and page print (errors, crashes,
   // warnings) so it can be copied or sent in from a phone or tablet. Runs
   // first, so it also catches problems while the game downloads and starts.
@@ -49,6 +73,8 @@
           if (m) { lvl = m[1] === "ERROR" ? "error" : m[1] === "WARN" ? "warn" : "log"; s = s.slice(m[0].length); }
         }
         if (s.includes("Using exceptions for control flow")) return; // Bevy's normal start-up
+        // engine file paths: keep the crate and file, drop the build machine's folders
+        s = s.replace(/\S*?\/\.cargo\/(?:registry\/src|git\/checkouts)\/[^/\s]+\//g, "").replace(/\/rustc\/[0-9a-f]{8,}\//g, "rustc/");
         // the first 20 errors are pinned: they stay however much follows
         const pin = lvl === "error" && pinned < 20;
         if (pin) pinned++;
@@ -190,6 +216,9 @@
   #log-text .e { color: #ff9c8a; }
   #log-text .w { color: #f2d27a; }
   #log-text .h { color: #8fb4d0; }
+  #preview-tag { position: fixed; top: calc(8px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 6;
+    pointer-events: none; font: 12px Georgia, serif; letter-spacing: .04em; color: #fff4d8; background: rgba(150,90,20,.85);
+    border: 1px solid rgba(255,220,150,.6); border-radius: 12px; padding: 3px 10px; white-space: nowrap; }
   #toast { position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%); background: rgba(12,16,30,.8); padding: 8px 14px;
     border-radius: 6px; font-size: 14px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 6; }
 </style>

@@ -1,0 +1,87 @@
+name: Publish site
+
+# Puts together the whole site and publishes it to GitHub Pages:
+#   /            the live game, from the newest build of main
+#   /pr/<n>/     a preview of each open pull request, from its newest build
+# The Web build workflow asks for this as soon as a build is packaged (and
+# when a pull request closes, to take its preview down); it runs once more
+# when each Web build run finishes, as a backstop. It always runs from main.
+
+on:
+  workflow_dispatch:
+    inputs:
+      why:
+        description: What asked for this publish
+        required: false
+  workflow_run:
+    workflows: ["Web build"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Gather the live game and the previews
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WHY: ${{ inputs.why || format('a web build of {0} finished', github.event.workflow_run.head_branch) }}
+        run: |
+          set -eu
+          echo "asked by: $WHY"
+          # the newest unexpired "site" kept by a Web build run on a branch
+          site_artifact() {
+            local ids id aid
+            ids=$(gh api "repos/$REPO/actions/workflows/web.yml/runs?branch=$1&event=$2&per_page=20" --jq '.workflow_runs[].id')
+            for id in $ids; do
+              aid=$(gh api "repos/$REPO/actions/runs/$id/artifacts" --jq '[.artifacts[] | select(.name == "site" and (.expired | not))][0].id // empty')
+              if [ -n "$aid" ]; then echo "$id $aid"; return; fi
+            done
+          }
+          fetch() { # artifact id, folder
+            gh api "repos/$REPO/actions/artifacts/$1/zip" > /tmp/site.zip
+            mkdir -p "$2" && unzip -q -o /tmp/site.zip -d "$2" && rm /tmp/site.zip
+          }
+          live=$(site_artifact main push)
+          if [ -z "$live" ]; then
+            echo "No build of main to publish (none kept); leaving the site as it is." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          fetch "${live#* }" site
+          touch site/.nojekyll
+          base="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
+          echo "Live game: $base/ (run ${live% *})" | tee -a "$GITHUB_STEP_SUMMARY"
+          # previews: open pull requests from this repository (never from forks)
+          prs=$(gh api "repos/$REPO/pulls?state=open&per_page=30" \
+            --jq ".[] | select(.head.repo.full_name == \"$REPO\") | \"\\(.number) \\(.head.ref)\"")
+          while read -r num ref; do
+            [ -n "${num:-}" ] || continue
+            found=$(site_artifact "$ref" pull_request)
+            if [ -n "$found" ]; then
+              fetch "${found#* }" "site/pr/$num"
+              echo "Preview of #$num: $base/pr/$num/ (run ${found% *})" | tee -a "$GITHUB_STEP_SUMMARY"
+            fi
+          done <<< "$prs"
+          du -sh site | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
