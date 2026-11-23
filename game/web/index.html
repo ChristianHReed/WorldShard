@@ -90,6 +90,7 @@
         if (lines.length > MAX) lines.splice(lines.findIndex((l) => !l[3]), 1);
         if (lvl === "error") D.errors++;
         D.dirty = true;
+        if (lvl === "error" && D.save) D.save();
         if (D.onchange) D.onchange(lvl);
       } catch {} finally { busy = false; }
     };
@@ -148,11 +149,15 @@
       try { localStorage.setItem(LKEY, JSON.stringify({ build: D.build, at: T0, mb: D.peakMb, lines: keep })); } catch {}
     };
     D.forget = () => { try { localStorage.removeItem(LKEY); } catch {} };
+    D.flush = () => { D.dirty = true; D.save(); };
+    let ticks = 0;
     setInterval(() => {
       const mb = D.memMb();
       if (mb > D.peakMb) { D.peakMb = mb; D.dirty = true; }
-      D.save();
-    }, 4000);
+      // every second while starting up (when a phone is most likely to shut
+      // the page down), then every 4 seconds
+      if (performance.now() < 120000 || ++ticks % 4 === 0) D.save();
+    }, 1000);
     addEventListener("pagehide", () => { D.dirty = true; D.save(); try { sessionStorage.removeItem(AKEY); } catch {} });
     addEventListener("pageshow", (e) => { if (e.persisted) try { sessionStorage.setItem(AKEY, "1"); } catch {} });
     document.addEventListener("visibilitychange", () => { if (document.hidden) { D.dirty = true; D.save(); } });
@@ -474,7 +479,14 @@
   }
 
   // --- download the game (one file, compiled while it downloads) and start it ---
+  // each step of the start-up goes in the problem log, saved at once, so a
+  // report shows how far a start got if the device shuts the page down
+  const T0 = performance.now();
+  const step = (t) => { console.info(`start-up: ${t} (${((performance.now() - T0) / 1000).toFixed(1)} s)`); if (window.wsDebug && wsDebug.flush) wsDebug.flush(); };
+  step(`page open, quality ${getQ()}${window.wsPreview ? ", preview #" + window.wsPreview : ""}`);
+
   async function gameModule() {
+    step("downloading the game");
     const res = await fetch("worldshard_bg.wasm");
     if (res.ok && res.body) {
       const total = Number(res.headers.get("content-length")) || 0;
@@ -520,6 +532,13 @@
       const mod = await gameModule();
       msg("Building the world…");
       await new Promise((r) => setTimeout(r, 30)); // let the message show
+      step("compiling and starting the game (the download finishes as it compiles)");
+      const started = setInterval(() => {
+        if (window.wsDebug && wsDebug.mem) { clearInterval(started); step(`game compiled, memory ${wsDebug.memMb()} MB`); }
+      }, 100);
+      const drawn = setInterval(() => {
+        if (!document.getElementById("loading")) { clearInterval(drawn); step(`world drawn, memory ${window.wsDebug ? wsDebug.memMb() : "?"} MB`); }
+      }, 250);
       await init({ module_or_path: mod });
     } catch (e) {
       const text = String((e && e.message) || e);
