@@ -696,7 +696,10 @@ fn setup(
     for (kind, label) in [(FlyButton::Toggle, "Fly"), (FlyButton::Up, "Up"), (FlyButton::Down, "Down"), (FlyButton::Speed, "x300")] {
         let b = commands
             .spawn((
-                Button,
+                // (0.20 turned the old Button into a type alias, so it needs
+                // ::default(); it and Interaction are on their way out, see
+                // the 0.20 migration guide)
+                Button::default(),
                 kind,
                 Node {
                     width: Val::Px(66.0),
