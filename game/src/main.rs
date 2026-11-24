@@ -15,11 +15,13 @@ use std::collections::{HashMap, HashSet};
 use bevy::asset::{AssetId, AssetMetaCheck, RenderAssetUsages};
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor};
 use bevy::input::mouse::MouseMotion;
-use bevy::pbr::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, DistanceFog, ExtendedMaterial, FogFalloff, MaterialExtension, NotShadowCaster};
-use bevy::render::render_resource::{AsBindGroup, ShaderRef, ShaderType};
+use bevy::camera::primitives::Aabb;
+use bevy::light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, NotShadowCaster};
+use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::pbr::{DistanceFog, ExtendedMaterial, FogFalloff, MaterialExtension};
 use bevy::prelude::*;
-use bevy::render::mesh::{Indices, PrimitiveTopology};
-use bevy::render::primitives::Aabb;
+use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::shader::ShaderRef;
 use bevy::render::render_resource::TextureFormat;
 use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
 use bevy::window::WindowResolution;
@@ -533,7 +535,7 @@ fn setup(
         );
     }
     commands.insert_resource(DirectionalLightShadowMap { size: quality.shadow_map });
-    commands.insert_resource(AmbientLight { color: Color::WHITE, brightness: 1200.0, ..default() });
+    commands.insert_resource(GlobalAmbientLight { color: Color::WHITE, brightness: 1200.0, ..default() });
 
     // ---- the bridge city across the canyon ----
     let bm = bridge::bridge_meshes(&world);
@@ -696,9 +698,15 @@ fn setup(
             .spawn((
                 Button,
                 kind,
-                Node { width: Val::Px(66.0), height: Val::Px(44.0), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() },
+                Node {
+                    width: Val::Px(66.0),
+                    height: Val::Px(44.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border_radius: BorderRadius::all(Val::Px(8.0)),
+                    ..default()
+                },
                 BackgroundColor(Color::srgba(0.05, 0.07, 0.12, 0.55)),
-                BorderRadius::all(Val::Px(8.0)),
                 ChildOf(panel),
             ))
             .id();
@@ -733,7 +741,7 @@ fn move_player(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
-    mut motion: EventReader<MouseMotion>,
+    mut motion: MessageReader<MouseMotion>,
     touches: Res<Touches>,
     windows: Query<&Window>,
     buttons: Query<(&Interaction, &FlyButton)>,
@@ -982,7 +990,7 @@ fn stream_world(
     // single frame, its burst of memory and uploads to the graphics chip was
     // more than an iPhone 11 allows a page, and Safari closed it.
     let want = lod::select_kv([pl.x, pl.y, pl.z], above, q.split_k, q.view);
-    let budget = if first { FIRST_BATCH } else { 3 };
+    let budget = if first { first_batch(&q) } else { 3 };
     let mut built = 0;
     let mut missing = false;
     for k in &want {
@@ -1026,7 +1034,7 @@ fn stream_world(
 
     // grass tufts close to the player (not when flying)
     let grass_wanted = if above < 60.0 && q.grass_radius > 0.0 { cells_near(pl.x, pl.z, GRASS_CELL, q.grass_radius) } else { Vec::new() };
-    let mut gb = if first { FIRST_BATCH } else { 4 };
+    let mut gb = if first { first_batch(&q) } else { 4 };
     for &(i, j) in &grass_wanted {
         if gb == 0 {
             break;
@@ -1055,8 +1063,12 @@ fn stream_world(
 }
 
 /// Terrain chunks (and grass cells) built per frame while the first view is
-/// put together behind the loading screen.
-const FIRST_BATCH: usize = 24;
+/// put together behind the loading screen: in batches on phones (lite and
+/// phone quality); all at once at full quality, which iPads and computers
+/// take in their stride (and software rendering in the tests needs).
+fn first_batch(q: &Quality) -> usize {
+    if q.name == "full" { usize::MAX } else { 24 }
+}
 
 /// Grid cells of side `cell` whose centres are within `radius` of (x, z), nearest first.
 fn cells_near(x: f64, z: f64, cell: f64, radius: f64) -> Vec<(i64, i64)> {
@@ -1410,7 +1422,7 @@ fn stream_plants(
         budget -= 1;
     }
     // far cells: one merged mesh of stand-in shapes each
-    let mut budget = if first { 16 } else { 4 };
+    let mut budget = if first { if q.name == "full" { 60 } else { 16 } } else { 4 };
     for &c in &far_want {
         if budget == 0 {
             break;
@@ -1522,7 +1534,7 @@ struct MipDone {
 
 const MIPS_PER_FRAME: usize = 2;
 
-fn add_mipmaps(mut events: EventReader<AssetEvent<Image>>, mut images: ResMut<Assets<Image>>, mut mips: ResMut<MipDone>, ma: Option<Res<ModelAssets>>) {
+fn add_mipmaps(mut events: MessageReader<AssetEvent<Image>>, mut images: ResMut<Assets<Image>>, mut mips: ResMut<MipDone>, ma: Option<Res<ModelAssets>>) {
     let Some(ma) = ma else { return };
     for ev in events.read() {
         let AssetEvent::LoadedWithDependencies { id } = ev else { continue };
@@ -1649,7 +1661,7 @@ fn sky_and_light(
     pl: Res<Player>,
     w: Res<GameWorld>,
     mut clear: ResMut<ClearColor>,
-    mut ambient: ResMut<AmbientLight>,
+    mut ambient: ResMut<GlobalAmbientLight>,
     mut sky_light: Query<(&mut DirectionalLight, &mut Transform), With<Sun>>,
     mut fogs: Query<&mut DistanceFog>,
     mut ground_materials: ResMut<Assets<GroundMaterial>>,
