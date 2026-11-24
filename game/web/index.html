@@ -83,7 +83,10 @@
         if (s.includes("Using exceptions for control flow")) return; // Bevy's normal start-up
         // errors from what a browser adds to every page (Brave's wallet, extensions):
         // kept, but not counted as the game's problems
-        if (lvl === "error" && /^Script error\.|window\.ethereum/.test(s)) { lvl = "warn"; s = "from the browser, not the game: " + s; }
+        // (the page's own first line holds no script, so "global code@…:1:" is a script the browser added)
+        if (lvl === "error" && (/^Script error\.|window\.ethereum|__firefox__|DarkReader/.test(s) || /global code@\S+:1:\d+\s*$/.test(s))) {
+          lvl = "warn"; s = "from the browser, not the game: " + s;
+        }
         // engine file paths: keep the crate and file, drop the build machine's folders
         s = s.replace(/\S*?\/\.cargo\/(?:registry\/src|git\/checkouts)\/[^/\s]+\//g, "").replace(/\/rustc\/[0-9a-f]{8,}\//g, "rustc/");
         // the first 20 errors are pinned: they stay however much follows

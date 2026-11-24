@@ -535,7 +535,7 @@ fn setup(
         );
     }
     commands.insert_resource(DirectionalLightShadowMap { size: quality.shadow_map });
-    commands.insert_resource(AmbientLight { color: Color::WHITE, brightness: 1200.0, ..default() });
+    commands.insert_resource(GlobalAmbientLight { color: Color::WHITE, brightness: 1200.0, ..default() });
 
     // ---- the bridge city across the canyon ----
     let bm = bridge::bridge_meshes(&world);
@@ -698,9 +698,15 @@ fn setup(
             .spawn((
                 Button,
                 kind,
-                Node { width: Val::Px(66.0), height: Val::Px(44.0), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() },
+                Node {
+                    width: Val::Px(66.0),
+                    height: Val::Px(44.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border_radius: BorderRadius::all(Val::Px(8.0)),
+                    ..default()
+                },
                 BackgroundColor(Color::srgba(0.05, 0.07, 0.12, 0.55)),
-                BorderRadius::all(Val::Px(8.0)),
                 ChildOf(panel),
             ))
             .id();
@@ -1655,7 +1661,7 @@ fn sky_and_light(
     pl: Res<Player>,
     w: Res<GameWorld>,
     mut clear: ResMut<ClearColor>,
-    mut ambient: ResMut<AmbientLight>,
+    mut ambient: ResMut<GlobalAmbientLight>,
     mut sky_light: Query<(&mut DirectionalLight, &mut Transform), With<Sun>>,
     mut fogs: Query<&mut DistanceFog>,
     mut ground_materials: ResMut<Assets<GroundMaterial>>,
