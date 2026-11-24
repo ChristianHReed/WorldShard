@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment_retry.outputs.page_url }}
     steps:
       - name: Gather the live game and the previews
         shell: bash
@@ -83,5 +83,16 @@ jobs:
         with:
           path: site
 
+      # GitHub Pages sometimes refuses a deployment ("try again later", or it
+      # can't find the upload yet); a second try a minute later goes through
       - id: deployment
+        continue-on-error: true
+        uses: actions/deploy-pages@v4
+
+      - name: Wait a minute before trying again
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 60
+
+      - id: deployment_retry
+        if: steps.deployment.outcome == 'failure'
         uses: actions/deploy-pages@v4
