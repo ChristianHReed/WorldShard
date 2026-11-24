@@ -126,6 +126,26 @@ jobs:
             echo "Preview, in a few minutes: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/pr/${{ github.event.number }}/" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: WebGPU check in headless Chrome (phone size, software WebGPU)
+        continue-on-error: true
+        shell: bash
+        run: |
+          (cd dist && python3 -m http.server 8080 >/dev/null 2>&1 &)
+          mkdir -p /tmp/smoke-tool && cd /tmp/smoke-tool && npm init -y >/dev/null && npm install --silent puppeteer-core@24
+          cp "$GITHUB_WORKSPACE/tools/webgpu-check.mjs" /tmp/smoke-tool/
+          timeout 1800 node /tmp/smoke-tool/webgpu-check.mjs http://localhost:8080/ "$GITHUB_WORKSPACE/webgpu-check"
+
+      # kept straight away, so the pictures can be seen before the long smoke test ends
+      - name: Keep the WebGPU check's pictures
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: webgpu-check
+          path: webgpu-check
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Smoke test in headless Chrome
         continue-on-error: true
         shell: bash
@@ -142,6 +162,7 @@ jobs:
           mkdir -p /tmp/logs
           cp build.log test.log /tmp/logs/ 2>/dev/null || true
           cp -r smoke /tmp/logs/ 2>/dev/null || true
+          cp -r webgpu-check /tmp/logs/ 2>/dev/null || true
           cp -r dist /tmp/logs/site 2>/dev/null || true
           cd /tmp/logs
           echo "${{ github.sha }} ${{ job.status }}" > run.txt

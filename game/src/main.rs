@@ -99,6 +99,24 @@ impl Quality {
         full
     }
 }
+/// Test switches in the page address, for tracking down a graphics problem on
+/// one device: `?msaa=0` turns off edge smoothing, `?tonemap=0` the colour
+/// pass, `?indirect=0` drawing driven by the graphics chip. (`&` joins them.)
+fn switched_off(name: &str) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let want = format!("{name}=0");
+        return web_sys::window()
+            .and_then(|w| w.location().search().ok())
+            .map_or(false, |s| s.trim_start_matches('?').split('&').any(|kv| kv == want));
+    }
+    #[allow(unreachable_code)]
+    {
+        let _ = name;
+        false
+    }
+}
+
 /// Fly-through speeds (metres per second).
 const FLY_SPEEDS: [f64; 4] = [30.0, 300.0, 3000.0, 30000.0];
 
@@ -612,9 +630,9 @@ fn setup(
     };
 
     // ---- camera: hazy distance, a little extra colour ----
-    commands.spawn((
+    let mut cam = commands.spawn((
         Camera3d::default(),
-        if quality.msaa { Msaa::Sample4 } else { Msaa::Off },
+        if quality.msaa && !switched_off("msaa") { Msaa::Sample4 } else { Msaa::Off },
         Projection::Perspective(PerspectiveProjection { fov: 55f32.to_radians(), near: 0.3, far: 30_000_000.0, ..default() }),
         Transform::from_xyz(0.0, player.y as f32, 0.0),
         DistanceFog {
@@ -628,6 +646,16 @@ fn setup(
             ColorGradingSection { saturation: 1.08, contrast: 1.04, ..default() },
         ),
     ));
+    if switched_off("tonemap") {
+        cam.insert(bevy::render::view::Tonemapping::None);
+    }
+    if switched_off("indirect") {
+        cam.insert(bevy::render::view::NoIndirectDrawing);
+    }
+    let switches: Vec<&str> = ["msaa", "tonemap", "indirect"].into_iter().filter(|n| switched_off(n)).collect();
+    if !switches.is_empty() {
+        info!("WorldShard test switches off: {}", switches.join(", "));
+    }
 
     // ---- HUD ----
     let ink = Color::srgb(0.97, 0.94, 0.86);
