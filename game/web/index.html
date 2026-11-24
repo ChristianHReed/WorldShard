@@ -449,22 +449,44 @@
   const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
   let bootCrashed = false;
   try { bootCrashed = sessionStorage.getItem("worldshard-booting") === "1"; } catch {}
+  // does WebGPU work here? A browser can have it and still give no adapter
+  // now and then (seen in Brave on an iPhone), so ask up to three times
+  let gpuSays = null;
   async function hasWebgpu() {
-    if (!navigator.gpu) return false;
-    try { return !!(await navigator.gpu.requestAdapter()); } catch { return false; }
+    if (gpuSays) return gpuSays === "yes";
+    if (!navigator.gpu) { gpuSays = "not in this browser"; return false; }
+    for (let i = 0; i < 3; i++) {
+      try {
+        if (await navigator.gpu.requestAdapter()) { gpuSays = "yes"; return true; }
+        gpuSays = "no adapter";
+      } catch (e) { gpuSays = "adapter request failed: " + e.message; }
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    return false;
   }
+  let gfxWhy = "";
   async function pickGraphics() {
     const asked = new URLSearchParams(location.search).get("gfx");
-    if (asked === "webgl" || asked === "webgpu") return asked;
+    if (asked === "webgl" || asked === "webgpu") { gfxWhy = "asked in the address"; return asked; }
     let saved = lsGet(GKEY);
-    if (bootCrashed && lsGet(LAST) === "webgl" && saved !== "webgl" && (await hasWebgpu())) {
-      lsSet(GKEY, "webgpu");
-      saved = "webgpu";
+    if (bootCrashed && lsGet(LAST) === "webgl" && saved !== "webgl") {
+      if (await hasWebgpu()) {
+        lsSet(GKEY, "webgpu");
+        saved = "webgpu";
+        gfxWhy = "the last WebGL start crashed";
+      } else gfxWhy = `the last WebGL start crashed, but WebGPU isn't available (${gpuSays})`;
     }
-    if (saved === "webgl") return "webgl";
-    if (saved === "webgpu") return (await hasWebgpu()) ? "webgpu" : "webgl";
+    if (saved === "webgl") { gfxWhy ||= "WebGPU failed to start here before"; return "webgl"; }
+    if (saved === "webgpu") {
+      if (await hasWebgpu()) { gfxWhy ||= "chosen for this device after a crash"; return "webgpu"; }
+      gfxWhy = `WebGPU wanted but not available (${gpuSays})`;
+      return "webgl";
+    }
     const phone = navigator.maxTouchPoints > 0 && Math.max(screen.width, screen.height) < 1000;
-    return phone && (await hasWebgpu()) ? "webgpu" : "webgl";
+    if (!phone) { gfxWhy ||= "default for tablets and computers"; return "webgl"; }
+    if (await hasWebgpu()) { gfxWhy ||= "phone"; return "webgpu"; }
+    gfxWhy ||= `phone, but WebGPU isn't available (${gpuSays})`;
+    return "webgl";
   }
   const gfx = await pickGraphics();
   lsSet(LAST, gfx);
@@ -526,7 +548,7 @@
   // report shows how far a start got if the device shuts the page down
   const T0 = performance.now();
   const step = (t) => { console.info(`start-up: ${t} (${((performance.now() - T0) / 1000).toFixed(1)} s)`); if (window.wsDebug && wsDebug.flush) wsDebug.flush(); };
-  step(`page open, quality ${getQ()}, graphics ${window.wsGraphics}${window.wsPreview ? ", preview #" + window.wsPreview : ""}`);
+  step(`page open, quality ${getQ()}, graphics ${window.wsGraphics} (${gfxWhy})${window.wsPreview ? ", preview #" + window.wsPreview : ""}`);
 
   async function gameModule() {
     step("downloading the game");
