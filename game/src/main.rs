@@ -696,10 +696,12 @@ fn setup(
     for (kind, label) in [(FlyButton::Toggle, "Fly"), (FlyButton::Up, "Up"), (FlyButton::Down, "Down"), (FlyButton::Speed, "x300")] {
         let b = commands
             .spawn((
-                // (0.20 turned the old Button into a type alias, so it needs
-                // ::default(); it and Interaction are on their way out, see
-                // the 0.20 migration guide)
-                Button::default(),
+                // what the old Button brought along (0.20 deprecated it, and
+                // its type can no longer be named): presses and hovers, and
+                // it keeps taps from reaching the game behind it. Moving to
+                // 0.20's new button widget is for later.
+                Interaction::None,
+                bevy::ui::FocusPolicy::Block,
                 kind,
                 Node {
                     width: Val::Px(66.0),
