@@ -68,6 +68,9 @@ try {
     await new Promise((r) => setTimeout(r, 15000));
     await page.screenshot({ path: `${out}/${name}.png` });
     note(`screenshot ${name}.png`);
+    // the problem log's WebGPU lines (shader and pipeline errors, and its count)
+    const gpuLines = await page.evaluate(() => (window.wsDebug?.lines || []).filter((l) => l[1] === "error" || /WebGPU/.test(l[2])).map((l) => `${l[0]}s ${l[1]} ${l[2]}`));
+    for (const l of gpuLines) note(`${name} problem log: ${l.slice(0, 600)}`);
     await page.close();
   }
 } catch (e) {

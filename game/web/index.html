@@ -122,6 +122,65 @@
       if (e.target && e.target.id === "bevy") add("warn", "graphics context restored");
     }, true);
 
+    // WebGPU problems: Safari doesn't hand shader and pipeline errors to the
+    // game (a black world can show "errors: 0"), so ask the graphics chip
+    // directly: each shader's compile messages, each pipeline's errors, and
+    // anything else the device reports
+    if (window.GPUAdapter && window.GPUDevice) {
+      const gp = GPUDevice.prototype;
+      const W = (D.gpu = { shaders: 0, pipelines: 0, shown: 0 });
+      const report = (s) => { if (W.shown++ < 12) add("error", s); };
+      const rd = GPUAdapter.prototype.requestDevice;
+      GPUAdapter.prototype.requestDevice = async function (...a) {
+        const dev = await rd.apply(this, a);
+        try {
+          dev.addEventListener("uncapturederror", (e) => report("WebGPU: " + clip(text(e.error), 600)));
+          dev.lost.then((i) => { if (i.reason !== "destroyed") add("error", `WebGPU device lost: ${i.reason} ${i.message}`); });
+          setTimeout(() => add("log", `WebGPU check: ${W.shaders} shaders and ${W.pipelines} pipelines made`), 45000);
+        } catch {}
+        return dev;
+      };
+      const sm = gp.createShaderModule;
+      gp.createShaderModule = function (desc) {
+        const m = sm.call(this, desc);
+        W.shaders++;
+        try {
+          m.getCompilationInfo().then((info) => {
+            const code = String((desc && desc.code) || "").split("\n");
+            for (const msg of info.messages) {
+              if (msg.type !== "error") continue;
+              const at = clip((code[msg.lineNum - 1] || "").trim(), 200);
+              report(`WebGPU shader error (${(desc && desc.label) || "unnamed"}, line ${msg.lineNum}:${msg.linePos}): ${clip(msg.message, 400)} | ${at}`);
+            }
+          }).catch(() => {});
+        } catch {}
+        return m;
+      };
+      for (const k of ["createRenderPipeline", "createComputePipeline"]) {
+        const f = gp[k];
+        if (typeof f !== "function") continue;
+        const kind = k === "createRenderPipeline" ? "render" : "compute";
+        gp[k] = function (desc) {
+          W.pipelines++;
+          let scoped = false;
+          try { this.pushErrorScope("validation"); scoped = true; } catch {}
+          const p = f.call(this, desc);
+          if (scoped) this.popErrorScope().then((e) => {
+            if (e) report(`WebGPU ${kind} pipeline error (${(desc && desc.label) || "unnamed"}): ${clip(e.message, 600)}`);
+          }).catch(() => {});
+          return p;
+        };
+        const fa = gp[k + "Async"];
+        if (typeof fa === "function") gp[k + "Async"] = function (desc) {
+          W.pipelines++;
+          return fa.call(this, desc).catch((e) => {
+            report(`WebGPU ${kind} pipeline error (${(desc && desc.label) || "unnamed"}): ${clip(text(e), 600)}`);
+            throw e;
+          });
+        };
+      }
+    }
+
     // the game's memory, for the report (the game also prints it every 20 s)
     for (const k of ["instantiate", "instantiateStreaming"]) {
       const f = window.WebAssembly && WebAssembly[k];
