@@ -332,7 +332,9 @@
         `build: ${D.build}   time: ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC   running: ${ago(Date.now() - D.T0)}`,
         `device: ${navigator.userAgent}`,
         `screen: ${s.width}x${s.height} @${devicePixelRatio || 1}x, window ${innerWidth}x${innerHeight}, touch ${navigator.maxTouchPoints || 0}`,
-        `graphics: ${gpu()}; WebGPU in this browser: ${"gpu" in navigator ? "yes" : "no"}; game using: ${window.wsGraphics || "not started"}`,
+        `graphics: ${gpu()}; WebGPU in this browser: ${"gpu" in navigator ? "yes" : "no"}; game using: ${window.wsGraphics || "not started"}${(() => {
+          try { const f = JSON.parse(localStorage.getItem("worldshard-webgpu-failure") || "null"); return f ? `; WebGPU failed here before (build ${f.build}, ${ago(Date.now() - f.at)} ago): ${f.why}` : ""; } catch { return ""; }
+        })()}`,
         `quality: ${ls("worldshard-quality") || "auto"}; settings: ${set}`,
         `where: ${window.wsPlayer || "?"} (x, z, facing, flying); models loaded: ${window.wsLoaded || "none yet"}`,
         `memory: ${mb ? mb + " MB now, " + Math.max(mb, D.peakMb) + " MB peak" : "?"}; frame rate: ${D.fps} fps; errors: ${D.errors}`,
@@ -469,7 +471,12 @@
     const asked = new URLSearchParams(location.search).get("gfx");
     if (asked === "webgl" || asked === "webgpu") { gfxWhy = "asked in the address"; return asked; }
     let saved = lsGet(GKEY);
-    if (bootCrashed && lsGet(LAST) === "webgl" && saved !== "webgl") {
+    // a WebGL start that never finished: WebGPU is the way left, even if it
+    // failed here once before (that is retried once per tab)
+    let retried = false;
+    try { retried = sessionStorage.getItem("worldshard-webgpu-retried") === "1"; } catch {}
+    if (bootCrashed && lsGet(LAST) === "webgl" && (saved !== "webgl" || !retried)) {
+      try { sessionStorage.setItem("worldshard-webgpu-retried", "1"); } catch {}
       if (await hasWebgpu()) {
         lsSet(GKEY, "webgpu");
         saved = "webgpu";
@@ -492,11 +499,21 @@
   lsSet(LAST, gfx);
   window.wsGraphics = gfx === "webgpu" ? "WebGPU" : "WebGL 2";
   const gameName = gfx === "webgpu" ? "worldshard_webgpu" : "worldshard";
-  const useWebgl = () => {
+  // WebGPU didn't start: note why (the report shows it later), and go to
+  // WebGL for good on this device, unless WebGPU was asked for by address
+  const useWebgl = (why) => {
+    const fail = { at: Date.now(), build: window.wsDebug ? wsDebug.build : "?", why: String(why).slice(0, 400) };
+    lsSet("worldshard-webgpu-failure", JSON.stringify(fail));
+    console.error("WebGPU failed to start: " + fail.why);
+    if (new URLSearchParams(location.search).get("gfx") === "webgpu") {
+      msg("WebGPU failed to start: " + fail.why);
+      const l = document.getElementById("loading");
+      if (l) l.classList.add("error");
+      return;
+    }
     // a switch, not a crash: don't let the reload count as a failed start
     try { localStorage.setItem(GKEY, "webgl"); sessionStorage.removeItem("worldshard-booting"); } catch {}
-    const u = new URL(location.href);
-    if (u.searchParams.has("gfx")) { u.searchParams.set("gfx", "webgl"); location.replace(u); } else location.reload();
+    location.reload();
   };
 
   const KEY = "worldshard-save-v1";
@@ -566,7 +583,7 @@
       return new Response(counted, { headers: { "Content-Type": "application/wasm" } });
     }
     // hosts with a file-size limit get the game in pieces (WebGL 2 only)
-    if (gfx === "webgpu") { useWebgl(); await new Promise(() => {}); }
+    if (gfx === "webgpu") { useWebgl("the WebGPU build couldn't be downloaded"); await new Promise(() => {}); }
     const parts = await (await fetch("wasm-parts.json")).json();
     const totalP = parts.reduce((a, p) => a + p.size, 0);
     const bytes = new Uint8Array(totalP);
@@ -604,11 +621,15 @@
       }, 100);
       const drawn = setInterval(() => {
         if (!document.getElementById("loading")) { clearInterval(drawn); step(`world drawn, memory ${window.wsDebug ? wsDebug.memMb() : "?"} MB`); }
-        // WebGPU that fails to start (the game stops with a panic) → WebGL
-        else if (gfx === "webgpu" && window.wsDebug && wsDebug.lines.some((l) => l[1] === "error" && /panicked|WebGPU|wgpu/i.test(l[2]))) {
-          clearInterval(drawn);
-          step("WebGPU failed to start; switching to WebGL");
-          useWebgl();
+        // WebGPU that fails to start: the game stops (a panic, or the wasm
+        // traps). Errors the engine logs and carries on from don't count.
+        else if (gfx === "webgpu" && window.wsDebug) {
+          const dead = wsDebug.lines.find((l) => l[1] === "error" && /panicked at|RuntimeError|unreachable executed/i.test(l[2]));
+          if (dead) {
+            clearInterval(drawn);
+            step("WebGPU failed to start; switching to WebGL");
+            useWebgl(dead[2].split("\n")[0]);
+          }
         }
       }, 250);
       const { default: init } = await import(`./${gameName}.js`);
@@ -617,7 +638,7 @@
       const text = String((e && e.message) || e);
       if (!text.includes("Using exceptions for control flow")) { // Bevy's normal start-up
         console.error(e);
-        if (gfx === "webgpu") useWebgl(); // try WebGL instead
+        if (gfx === "webgpu") useWebgl(text); // try WebGL instead
         else {
           const l = document.getElementById("loading");
           if (l) { l.classList.add("error"); msg("Could not start: " + text); }
