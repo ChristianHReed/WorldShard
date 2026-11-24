@@ -521,7 +521,7 @@ fn setup(
 
     // ---- sunlight (WebGL2 allows one directional light: sun by day, moon by night) ----
     let shadows = quality.shadow_distance > 0.0;
-    let mut sun = commands.spawn((DirectionalLight { illuminance: 6000.0, shadows_enabled: shadows, ..default() }, Transform::default(), Sun));
+    let mut sun = commands.spawn((DirectionalLight { illuminance: 6000.0, shadow_maps_enabled: shadows, ..default() }, Transform::default(), Sun));
     if shadows {
         sun.insert(
             CascadeShadowConfigBuilder {
@@ -633,14 +633,14 @@ fn setup(
     let ink = Color::srgb(0.97, 0.94, 0.86);
     commands.spawn((
         Text::new("Day 1  09:00"),
-        TextFont { font_size: 18.0, ..default() },
+        TextFont { font_size: FontSize::Px(18.0), ..default() },
         TextColor(ink),
         Node { position_type: PositionType::Absolute, top: Val::Px(10.0), left: Val::Px(12.0), ..default() },
         ClockText,
     ));
     commands.spawn((
         Text::new(status.clone()),
-        TextFont { font_size: 13.0, ..default() },
+        TextFont { font_size: FontSize::Px(13.0), ..default() },
         TextColor(ink.with_alpha(0.85)),
         Node { position_type: PositionType::Absolute, top: Val::Px(56.0), left: Val::Px(12.0), ..default() },
         StatusText,
@@ -655,7 +655,7 @@ fn setup(
             ..default()
         })
         .id();
-    commands.spawn((Text::new("N"), TextFont { font_size: 18.0, ..default() }, TextColor(ink), CompassText, ChildOf(compass_row)));
+    commands.spawn((Text::new("N"), TextFont { font_size: FontSize::Px(18.0), ..default() }, TextColor(ink), CompassText, ChildOf(compass_row)));
     let banner = commands
         .spawn(Node {
             position_type: PositionType::Absolute,
@@ -666,8 +666,8 @@ fn setup(
             ..default()
         })
         .id();
-    commands.spawn((Text::new(""), TextFont { font_size: 40.0, ..default() }, TextColor(ink.with_alpha(0.0)), BannerTitle, ChildOf(banner)));
-    commands.spawn((Text::new(""), TextFont { font_size: 18.0, ..default() }, TextColor(ink.with_alpha(0.0)), BannerSub, ChildOf(banner)));
+    commands.spawn((Text::new(""), TextFont { font_size: FontSize::Px(40.0), ..default() }, TextColor(ink.with_alpha(0.0)), BannerTitle, ChildOf(banner)));
+    commands.spawn((Text::new(""), TextFont { font_size: FontSize::Px(18.0), ..default() }, TextColor(ink.with_alpha(0.0)), BannerSub, ChildOf(banner)));
     let help = if quality.name == "full" {
         "WASD / arrows move | hold mouse button and drag to look | Shift run | Space jump\n\
          Fly (testing): F or the Fly button | E / Q up and down | R changes speed\n\
@@ -677,7 +677,7 @@ fn setup(
     };
     commands.spawn((
         Text::new(help),
-        TextFont { font_size: 12.0, ..default() },
+        TextFont { font_size: FontSize::Px(12.0), ..default() },
         TextColor(ink.with_alpha(0.75)),
         Node { position_type: PositionType::Absolute, bottom: Val::Px(10.0), left: Val::Px(12.0), ..default() },
     ));
@@ -710,7 +710,7 @@ fn setup(
                 ChildOf(panel),
             ))
             .id();
-        let text = commands.spawn((Text::new(label), TextFont { font_size: 15.0, ..default() }, TextColor(ink), ChildOf(b))).id();
+        let text = commands.spawn((Text::new(label), TextFont { font_size: FontSize::Px(15.0), ..default() }, TextColor(ink), ChildOf(b))).id();
         if kind == FlyButton::Speed {
             commands.entity(text).insert(SpeedLabel);
         }
@@ -1545,8 +1545,8 @@ fn add_mipmaps(mut events: MessageReader<AssetEvent<Image>>, mut images: ResMut<
     }
     for _ in 0..MIPS_PER_FRAME {
         let Some(id) = mips.queue.pop_front() else { break };
-        if let Some(img) = images.get_mut(id) {
-            make_mips(img, ma.masked.contains(&id));
+        if let Some(mut img) = images.get_mut(id) {
+            make_mips(&mut img, ma.masked.contains(&id));
             img.asset_usage = RenderAssetUsages::RENDER_WORLD;
         }
         mips.done.insert(id);
@@ -1727,7 +1727,7 @@ fn sky_and_light(
         fog.falloff = FogFalloff::Exponential { density: cam_density + mist_here };
         fog.directional_light_color = Color::srgba(1.0, 0.9, 0.7, 0.45 * day);
     }
-    if let Some(g) = ground_materials.get_mut(&mats.ground) {
+    if let Some(mut g) = ground_materials.get_mut(&mats.ground) {
         let u = &mut g.extension.u;
         u.color = haze_lin;
         u.sun_dir = Vec4::new(light_dir[0], light_dir[1], light_dir[2], strength);
@@ -1757,7 +1757,7 @@ fn sky_and_light(
     // 24 to 36 times faster than real time)
     let secs = pl.play_sec.rem_euclid(86400.0) as f32;
     for (handle, mode) in [(&sky_mats.dome, 0.0f32), (&sky_mats.wall, 1.0f32)] {
-        if let Some(m) = sky_materials.get_mut(handle) {
+        if let Some(mut m) = sky_materials.get_mut(handle) {
             m.extension.u = SkyUniform {
                 sun: Vec4::new(s.sun_dir[0], s.sun_dir[1], s.sun_dir[2], day),
                 sun_col: Vec4::new(sun_lin.x, sun_lin.y, sun_lin.z, secs),
@@ -1988,7 +1988,7 @@ fn apply_settings(
     }
     *q = nq;
     if let Ok((e, mut light)) = sun.single_mut() {
-        light.shadows_enabled = nq.shadow_distance > 0.0;
+        light.shadow_maps_enabled = nq.shadow_distance > 0.0;
         if nq.shadow_distance > 0.0 {
             commands.entity(e).insert(
                 CascadeShadowConfigBuilder {
