@@ -13,7 +13,7 @@ publish = false
 worldshard = { path = ".." }
 # Only the parts of Bevy the game uses (no audio, animation, picking...)
 # to keep the web download small.
-bevy = { version = "0.18", default-features = false, features = [
+bevy = { version = "0.19", default-features = false, features = [
     "std",
     "async_executor",
     "multi_threaded",
