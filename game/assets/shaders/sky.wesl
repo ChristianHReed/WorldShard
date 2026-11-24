@@ -8,22 +8,22 @@
 // with billows lit by the sun, darker bases and storm sections, fading into
 // the haze near the sea.
 
-#import bevy_pbr::{
+// (WESL, Bevy 0.20: `@if` replaces #ifdef, imports end with `;`.)
+import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
     mesh_view_bindings::view,
-}
+};
 
-#ifdef PREPASS_PIPELINE
-#import bevy_pbr::{
-    prepass_io::{VertexOutput, FragmentOutput},
-    pbr_deferred_functions::deferred_output,
-}
-#else
-#import bevy_pbr::{
+@if(PREPASS_PIPELINE)
+import bevy_pbr::{
+    prepass::io::{VertexOutput, FragmentOutput},
+    deferred::functions::deferred_output,
+};
+@else
+import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_functions::main_pass_post_lighting_processing,
-}
-#endif
+};
 
 // One uniform block (WebGL2 allows only 14 per shader).
 struct SkyU {
@@ -43,7 +43,7 @@ struct SkyU {
     // x: haze scale height (m); y: cloud cover 0..1
     misc: vec4<f32>,
 }
-@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> sky: SkyU;
+@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> sky: SkyU;
 
 // ---- noise (integer hashing, so it stays clean far from the centre) ----
 fn hash_u(v: u32) -> u32 {
@@ -217,10 +217,10 @@ fn fragment(
 ) -> FragmentOutput {
     var pbr_input = pbr_input_from_standard_material(in, is_front);
 
-#ifdef PREPASS_PIPELINE
-    let out = deferred_output(in, pbr_input);
-#else
     var out: FragmentOutput;
+@if(PREPASS_PIPELINE) {
+    out = deferred_output(in, pbr_input);
+} @else {
     let rel = in.world_position.xyz - view.world_position.xyz;
     var c = vec3<f32>(0.0);
     if (sky.horizon.w > 0.5) {
@@ -230,6 +230,6 @@ fn fragment(
     }
     out.color = vec4<f32>(c, 1.0);
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
-#endif
+}
     return out;
 }

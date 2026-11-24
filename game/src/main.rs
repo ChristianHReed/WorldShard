@@ -117,7 +117,7 @@ struct Kinds(PropKinds);
 const HAZE_DENSITY: f32 = 2.8e-6;
 const HAZE_SCALE_HEIGHT: f32 = 8000.0;
 
-/// Terrain material: standard lighting plus the height haze (haze.wgsl).
+/// Terrain material: standard lighting plus the height haze (haze.wesl).
 /// All in one uniform block: WebGL2 allows only 14 per shader and Bevy's
 /// standard lighting already uses most of them.
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
@@ -137,14 +137,14 @@ struct HazeUniform {
     /// the region's ground mist: density, thickness, ground height
     mist: Vec4,
     mist_col: Vec4,
-    /// the big peaks, two entries each (see haze.wgsl)
+    /// the big peaks, two entries each (see haze.wesl)
     peaks: [Vec4; 24],
     /// ground detail and surf: x, z the camera's position (wrapped every
     /// 4,096 m), y seconds (wrapped), w detail strength
     detail: Vec4,
 }
 
-/// The sky dome and the Cloudwall: their own shader (sky.wgsl).
+/// The sky dome and the Cloudwall: their own shader (sky.wesl).
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 struct SkyExt {
     #[uniform(100)]
@@ -165,7 +165,7 @@ struct SkyUniform {
 
 impl MaterialExtension for SkyExt {
     fn fragment_shader() -> ShaderRef {
-        "shaders/sky.wgsl".into()
+        "shaders/sky.wesl".into()
     }
 }
 
@@ -191,10 +191,10 @@ const MIST: [(f32, f32, [f32; 3]); 6] = [
 
 impl MaterialExtension for Haze {
     fn fragment_shader() -> ShaderRef {
-        "shaders/haze.wgsl".into()
+        "shaders/haze.wesl".into()
     }
     fn deferred_fragment_shader() -> ShaderRef {
-        "shaders/haze.wgsl".into()
+        "shaders/haze.wesl".into()
     }
 }
 
@@ -501,7 +501,7 @@ fn setup(
         }),
     };
 
-    // ---- the sky and the Cloudwall: one shader (sky.wgsl), two modes ----
+    // ---- the sky and the Cloudwall: one shader (sky.wesl), two modes ----
     let sky_base = StandardMaterial { base_color: Color::WHITE, unlit: true, fog_enabled: false, double_sided: true, cull_mode: None, ..default() };
     let sky_mats = SkyMats {
         dome: sky_materials.add(SkyMaterial { base: sky_base.clone(), extension: SkyExt { u: SkyUniform::default() } }),
@@ -1141,9 +1141,12 @@ fn ensure_model(server: &AssetServer, ma: &mut ModelAssets, m: u16) {
         if !ma.textures.contains_key(file) {
             // kept on the CPU side only until its mipmaps are made (see add_mipmaps);
             // then it moves to the graphics chip once, without a second copy
-            let h: Handle<Image> = server.load_with_settings(format!("textures/{file}"), |s: &mut ImageLoaderSettings| {
-                s.asset_usage = RenderAssetUsages::MAIN_WORLD;
-            });
+            let h: Handle<Image> = server
+                .load_builder()
+                .with_settings(|s: &mut ImageLoaderSettings| {
+                    s.asset_usage = RenderAssetUsages::MAIN_WORLD;
+                })
+                .load(format!("textures/{file}"));
             if TEXTURES.iter().any(|&(f, mask)| f == file && mask) {
                 ma.masked.insert(h.id());
             }
