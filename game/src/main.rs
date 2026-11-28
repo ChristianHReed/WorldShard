@@ -99,6 +99,24 @@ impl Quality {
         full
     }
 }
+/// Test switches in the page address, for tracking down a graphics problem on
+/// one device: `?msaa=0` turns off edge smoothing, `?tonemap=0` the colour
+/// pass, `?indirect=0` drawing driven by the graphics chip. (`&` joins them.)
+fn switched_off(name: &str) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let want = format!("{name}=0");
+        return web_sys::window()
+            .and_then(|w| w.location().search().ok())
+            .map_or(false, |s| s.trim_start_matches('?').split('&').any(|kv| kv == want));
+    }
+    #[allow(unreachable_code)]
+    {
+        let _ = name;
+        false
+    }
+}
+
 /// Fly-through speeds (metres per second).
 const FLY_SPEEDS: [f64; 4] = [30.0, 300.0, 3000.0, 30000.0];
 
@@ -117,7 +135,7 @@ struct Kinds(PropKinds);
 const HAZE_DENSITY: f32 = 2.8e-6;
 const HAZE_SCALE_HEIGHT: f32 = 8000.0;
 
-/// Terrain material: standard lighting plus the height haze (haze.wgsl).
+/// Terrain material: standard lighting plus the height haze (haze.wesl).
 /// All in one uniform block: WebGL2 allows only 14 per shader and Bevy's
 /// standard lighting already uses most of them.
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
@@ -137,14 +155,14 @@ struct HazeUniform {
     /// the region's ground mist: density, thickness, ground height
     mist: Vec4,
     mist_col: Vec4,
-    /// the big peaks, two entries each (see haze.wgsl)
+    /// the big peaks, two entries each (see haze.wesl)
     peaks: [Vec4; 24],
     /// ground detail and surf: x, z the camera's position (wrapped every
     /// 4,096 m), y seconds (wrapped), w detail strength
     detail: Vec4,
 }
 
-/// The sky dome and the Cloudwall: their own shader (sky.wgsl).
+/// The sky dome and the Cloudwall: their own shader (sky.wesl).
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 struct SkyExt {
     #[uniform(100)]
@@ -165,7 +183,7 @@ struct SkyUniform {
 
 impl MaterialExtension for SkyExt {
     fn fragment_shader() -> ShaderRef {
-        "shaders/sky.wgsl".into()
+        "shaders/sky.wesl".into()
     }
 }
 
@@ -191,10 +209,10 @@ const MIST: [(f32, f32, [f32; 3]); 6] = [
 
 impl MaterialExtension for Haze {
     fn fragment_shader() -> ShaderRef {
-        "shaders/haze.wgsl".into()
+        "shaders/haze.wesl".into()
     }
     fn deferred_fragment_shader() -> ShaderRef {
-        "shaders/haze.wgsl".into()
+        "shaders/haze.wesl".into()
     }
 }
 
@@ -501,7 +519,7 @@ fn setup(
         }),
     };
 
-    // ---- the sky and the Cloudwall: one shader (sky.wgsl), two modes ----
+    // ---- the sky and the Cloudwall: one shader (sky.wesl), two modes ----
     let sky_base = StandardMaterial { base_color: Color::WHITE, unlit: true, fog_enabled: false, double_sided: true, cull_mode: None, ..default() };
     let sky_mats = SkyMats {
         dome: sky_materials.add(SkyMaterial { base: sky_base.clone(), extension: SkyExt { u: SkyUniform::default() } }),
@@ -612,9 +630,9 @@ fn setup(
     };
 
     // ---- camera: hazy distance, a little extra colour ----
-    commands.spawn((
+    let mut cam = commands.spawn((
         Camera3d::default(),
-        if quality.msaa { Msaa::Sample4 } else { Msaa::Off },
+        if quality.msaa && !switched_off("msaa") { Msaa::Sample4 } else { Msaa::Off },
         Projection::Perspective(PerspectiveProjection { fov: 55f32.to_radians(), near: 0.3, far: 30_000_000.0, ..default() }),
         Transform::from_xyz(0.0, player.y as f32, 0.0),
         DistanceFog {
@@ -628,6 +646,16 @@ fn setup(
             ColorGradingSection { saturation: 1.08, contrast: 1.04, ..default() },
         ),
     ));
+    if switched_off("tonemap") {
+        cam.insert(bevy::render::view::Tonemapping::None);
+    }
+    if switched_off("indirect") {
+        cam.insert(bevy::render::view::NoIndirectDrawing);
+    }
+    let switches: Vec<&str> = ["msaa", "tonemap", "indirect"].into_iter().filter(|n| switched_off(n)).collect();
+    if !switches.is_empty() {
+        info!("WorldShard test switches off: {}", switches.join(", "));
+    }
 
     // ---- HUD ----
     let ink = Color::srgb(0.97, 0.94, 0.86);
@@ -696,7 +724,12 @@ fn setup(
     for (kind, label) in [(FlyButton::Toggle, "Fly"), (FlyButton::Up, "Up"), (FlyButton::Down, "Down"), (FlyButton::Speed, "x300")] {
         let b = commands
             .spawn((
-                Button,
+                // what the old Button brought along (0.20 deprecated it, and
+                // its type can no longer be named): presses and hovers, and
+                // it keeps taps from reaching the game behind it. Moving to
+                // 0.20's new button widget is for later.
+                Interaction::None,
+                bevy::ui::FocusPolicy::Block,
                 kind,
                 Node {
                     width: Val::Px(66.0),
@@ -1141,9 +1174,12 @@ fn ensure_model(server: &AssetServer, ma: &mut ModelAssets, m: u16) {
         if !ma.textures.contains_key(file) {
             // kept on the CPU side only until its mipmaps are made (see add_mipmaps);
             // then it moves to the graphics chip once, without a second copy
-            let h: Handle<Image> = server.load_with_settings(format!("textures/{file}"), |s: &mut ImageLoaderSettings| {
-                s.asset_usage = RenderAssetUsages::MAIN_WORLD;
-            });
+            let h: Handle<Image> = server
+                .load_builder()
+                .with_settings(|s: &mut ImageLoaderSettings| {
+                    s.asset_usage = RenderAssetUsages::MAIN_WORLD;
+                })
+                .load(format!("textures/{file}"));
             if TEXTURES.iter().any(|&(f, mask)| f == file && mask) {
                 ma.masked.insert(h.id());
             }

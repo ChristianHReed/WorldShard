@@ -2,23 +2,23 @@
 // the ground and thins with height (like a real atmosphere). Distant
 // lowlands fade into the sky while far, tall summits stay visible.
 
-#import bevy_pbr::{
+// (WESL, Bevy 0.20: `@if` replaces #ifdef, imports end with `;`.)
+import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::alpha_discard,
     mesh_view_bindings::view,
-}
+};
 
-#ifdef PREPASS_PIPELINE
-#import bevy_pbr::{
-    prepass_io::{VertexOutput, FragmentOutput},
-    pbr_deferred_functions::deferred_output,
-}
-#else
-#import bevy_pbr::{
+@if(PREPASS_PIPELINE)
+import bevy_pbr::{
+    prepass::io::{VertexOutput, FragmentOutput},
+    deferred::functions::deferred_output,
+};
+@else
+import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-}
-#endif
+};
 
 // One uniform block (WebGL2 allows only 14 per shader).
 struct HazeU {
@@ -44,7 +44,7 @@ struct HazeU {
     // 4,096 m, y seconds, w detail strength
     detail: vec4<f32>,
 }
-@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> hz: HazeU;
+@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> hz: HazeU;
 
 const SHADOW_STEPS: i32 = 14;
 
@@ -202,13 +202,17 @@ fn fragment(
     @builtin(front_facing) is_front: bool,
 ) -> FragmentOutput {
     var pbr_input = pbr_input_from_standard_material(in, is_front);
-    pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
+    pbr_input.material.base_color = alpha_discard(
+        pbr_input.material.flags,
+        pbr_input.material.alpha_cutoff,
+        pbr_input.material.base_color,
+    );
 
-#ifdef PREPASS_PIPELINE
-    let out = deferred_output(in, pbr_input);
-#else
     var out: FragmentOutput;
-#ifdef VERTEX_UVS_A
+@if(PREPASS_PIPELINE) {
+    out = deferred_output(in, pbr_input);
+} @else {
+@if(VERTEX_UVS_A) {
     // uv: x how sandy (below 0: the Great Canyon; 2: the bridge's dressed
     // stone), y how rocky
     let wp = in.world_position.xyz;
@@ -271,15 +275,14 @@ fn fragment(
         col = mix(col, vec3<f32>(0.9, 0.94, 0.96), a);
     }
     pbr_input.material.base_color = vec4<f32>(col, pbr_input.material.base_color.a);
-#endif
+}
     out.color = apply_pbr_lighting(pbr_input);
     // where this point's light is worked out: the skirts that hide the
     // seams between chunks hang below their edge (the vertex colour's alpha
     // says how far), and are lit as if they were at the edge
     var p = in.world_position.xyz;
-#ifdef VERTEX_COLORS
+@if(VERTEX_COLORS)
     p.y = p.y + (1.0 - in.color.a) * 100000.0;
-#endif
     // the big peaks' shadows across the land. The light is already dimmed
     // by the shade where the player stands, so only the difference is applied.
     if (hz.sun_dir.w > 0.0) {
@@ -304,6 +307,6 @@ fn fragment(
     }
 
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
-#endif
+}
     return out;
 }

@@ -122,6 +122,110 @@
       if (e.target && e.target.id === "bevy") add("warn", "graphics context restored");
     }, true);
 
+    // WebGPU problems: Safari doesn't hand shader and pipeline errors to the
+    // game (a black world can show "errors: 0"), so ask the graphics chip
+    // directly: each shader's compile messages, each pipeline's errors, and
+    // anything else the device reports
+    if (window.GPUAdapter && window.GPUDevice) {
+      const gp = GPUDevice.prototype;
+      const W = (D.webgpu = { shaders: 0, pipelines: 0, shown: 0 }); // (D.gpu is the chip's name, for the report)
+      const report = (s) => { if (W.shown++ < 12) add("error", s); };
+      const rd = GPUAdapter.prototype.requestDevice;
+      GPUAdapter.prototype.requestDevice = async function (...a) {
+        const dev = await rd.apply(this, a);
+        try {
+          dev.addEventListener("uncapturederror", (e) => report("WebGPU: " + clip(text(e.error), 600)));
+          dev.lost.then((i) => { if (i.reason !== "destroyed") add("error", `WebGPU device lost: ${i.reason} ${i.message}`); });
+          setTimeout(() => add("log", `WebGPU check: ${W.shaders} shaders and ${W.pipelines} pipelines made` +
+            (W.letFix ? `; Safari let fix: ${W.lets} in ${W.letShaders} shaders` : "")), 45000);
+        } catch {}
+        return dev;
+      };
+      // Safari's WebGPU can't yet put a texture or sampler in a `let` (the
+      // "texture_and_sampler_let" language feature), and Bevy 0.20's
+      // standard material does (`let texture = …base_color_texture;`), so the
+      // world fails to draw. Where the browser lacks the feature, each such
+      // `let` is taken out and its uses get the texture or sampler itself.
+      // (?letfix=1 forces it, to test it in a browser that has the feature.)
+      const lf = navigator.gpu && navigator.gpu.wgslLanguageFeatures;
+      const letFix = /[?&]letfix=1\b/.test(location.search) || !(lf && lf.has && lf.has("texture_and_sampler_let"));
+      W.letFix = letFix; W.lets = 0; W.letShaders = 0;
+      const fixLets = (code) => {
+        const binds = new Set();
+        for (const b of code.matchAll(/\bvar\s+([A-Za-z_]\w*)\s*:\s*(?:texture_\w+|sampler_comparison|sampler)\b/g)) binds.add(b[1]);
+        if (!binds.size) return code;
+        const let_ = /\blet\s+([A-Za-z_]\w*)\s*(?::[^=;]*)?=\s*([A-Za-z_]\w*)\s*;/g;
+        let out = code, n = 0;
+        for (let guard = 0; guard < 2000; guard++) {
+          let found = null, m;
+          let_.lastIndex = 0;
+          while ((m = let_.exec(out))) if (binds.has(m[2])) { found = m; break; }
+          if (!found) break;
+          const [stmt, name, bind] = found;
+          const start = found.index, after = start + stmt.length;
+          // the rest of the block the `let` is in…
+          let end = out.length;
+          for (let i = after, depth = 0; i < out.length; i++) {
+            const c = out[i];
+            if (c === "{") depth++;
+            else if (c === "}") { if (depth === 0) { end = i; break; } depth--; }
+          }
+          // …up to where the same name is declared again, if it is
+          const again = new RegExp(`\\b(?:let|var|const)\\s+${name}\\b`, "g");
+          again.lastIndex = after;
+          const a2 = again.exec(out);
+          if (a2 && a2.index < end) end = a2.index;
+          const use = new RegExp(`(?<![\\w.])${name}(?!\\w)`, "g");
+          out = out.slice(0, start) + out.slice(after, end).replace(use, bind) + out.slice(end);
+          n++;
+        }
+        if (n) { W.lets += n; W.letShaders++; }
+        return out;
+      };
+      const sm = gp.createShaderModule;
+      gp.createShaderModule = function (desc) {
+        if (letFix && desc && typeof desc.code === "string" && desc.code.includes("let ")) {
+          try { desc = Object.assign({}, desc, { code: fixLets(desc.code) }); } catch (e) { report("WebGPU let fix failed: " + text(e)); }
+        }
+        const m = sm.call(this, desc);
+        W.shaders++;
+        try {
+          m.getCompilationInfo().then((info) => {
+            const code = String((desc && desc.code) || "").split("\n");
+            for (const msg of info.messages) {
+              if (msg.type !== "error") continue;
+              const at = clip((code[msg.lineNum - 1] || "").trim(), 200);
+              report(`WebGPU shader error (${(desc && desc.label) || "unnamed"}, line ${msg.lineNum}:${msg.linePos}): ${clip(msg.message, 400)} | ${at}`);
+            }
+          }).catch(() => {});
+        } catch {}
+        return m;
+      };
+      for (const k of ["createRenderPipeline", "createComputePipeline"]) {
+        const f = gp[k];
+        if (typeof f !== "function") continue;
+        const kind = k === "createRenderPipeline" ? "render" : "compute";
+        gp[k] = function (desc) {
+          W.pipelines++;
+          let scoped = false;
+          try { this.pushErrorScope("validation"); scoped = true; } catch {}
+          const p = f.call(this, desc);
+          if (scoped) this.popErrorScope().then((e) => {
+            if (e) report(`WebGPU ${kind} pipeline error (${(desc && desc.label) || "unnamed"}): ${clip(e.message, 600)}`);
+          }).catch(() => {});
+          return p;
+        };
+        const fa = gp[k + "Async"];
+        if (typeof fa === "function") gp[k + "Async"] = function (desc) {
+          W.pipelines++;
+          return fa.call(this, desc).catch((e) => {
+            report(`WebGPU ${kind} pipeline error (${(desc && desc.label) || "unnamed"}): ${clip(text(e), 600)}`);
+            throw e;
+          });
+        };
+      }
+    }
+
     // the game's memory, for the report (the game also prints it every 20 s)
     for (const k of ["instantiate", "instantiateStreaming"]) {
       const f = window.WebAssembly && WebAssembly[k];
