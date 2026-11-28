@@ -128,7 +128,7 @@
     // anything else the device reports
     if (window.GPUAdapter && window.GPUDevice) {
       const gp = GPUDevice.prototype;
-      const W = (D.gpu = { shaders: 0, pipelines: 0, shown: 0 });
+      const W = (D.webgpu = { shaders: 0, pipelines: 0, shown: 0 }); // (D.gpu is the chip's name, for the report)
       const report = (s) => { if (W.shown++ < 12) add("error", s); };
       const rd = GPUAdapter.prototype.requestDevice;
       GPUAdapter.prototype.requestDevice = async function (...a) {
