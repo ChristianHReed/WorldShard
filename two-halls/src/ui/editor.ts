@@ -1,6 +1,6 @@
 import { COLS, ROWS, SEATS, SIZE, fitSize, setSize } from "../game/content";
 import { setMap } from "../game/map";
-import { SUB, classify, clampBase, evenBases, finishMap, lead, mirrorSpot, resample, scaleBases, suggestBases, type Bases, type Spot, type Tile } from "../game/mapgen";
+import { FIVE_MIN, SUB, classify, clampBase, evenBases, finishMap, layoutFor, lead, mirrorSpot, resample, scaleBases, suggestBases, type Bases, type Spot, type Tile } from "../game/mapgen";
 
 /** `bases` are for two players; `quad` for three or four. */
 type Saved = { raw: string; bases: Bases; quad?: Bases; mirror: boolean; w?: number; h?: number };
@@ -9,6 +9,8 @@ const KEY = "two-halls-map";
 
 const SIZE_KEY = "two-halls-size";
 let current: Saved | null = null;
+/** the size picked on the home page (five players may need to stretch it for a game) */
+let chosen = { w: SIZE.w, h: SIZE.h };
 
 const stored = (key: string) => {
   try {
@@ -33,27 +35,33 @@ function fitted(s: Saved) {
   const original = [...s.raw] as Tile[];
   const same = w === COLS && h === ROWS;
   const raw = same ? original : resample(original, w, h, COLS, ROWS);
-  const saved = players > 2 ? s.quad : s.bases;
-  const bases = !saved ? suggestBases(raw, s.mirror, players > 2 ? 4 : 2) : same ? saved : scaleBases(saved, w, h, COLS, ROWS);
-  return { raw, bases };
+  const layout = layoutFor(players);
+  // five halls are placed automatically; their picture cannot be mirrored
+  const saved = layout === 5 ? undefined : layout === 4 ? s.quad : s.bases;
+  const mirror = s.mirror && layout !== 5;
+  const bases = !saved ? suggestBases(raw, mirror, layout) : same ? saved : scaleBases(saved, w, h, COLS, ROWS);
+  return { raw, bases, mirror };
 }
 
 function apply() {
   if (!current) return setMap(null, players);
   const f = fitted(current);
-  setMap(finishMap(f.raw, f.bases, current.mirror));
+  setMap(finishMap(f.raw, f.bases, f.mirror));
 }
 
 /** Load the current map laid out for this many players. */
 export function loadPlayers(n: number) {
   players = n;
+  const grow = n > 4;
+  setSize(grow ? Math.max(chosen.w, FIVE_MIN.w) : chosen.w, grow ? Math.max(chosen.h, FIVE_MIN.h) : chosen.h);
   apply();
 }
 
-export const mapSize = () => ({ w: COLS, h: ROWS });
+export const mapSize = () => chosen;
 
 export function chooseSize(w: number, h: number) {
   const s = fitSize(w, h);
+  chosen = s;
   setSize(s.w, s.h);
   apply();
   store(SIZE_KEY, s);
@@ -69,6 +77,7 @@ export function chooseSize(w: number, h: number) {
     if (old.north && old.south) s.bases = [old.south, old.north];
     current = s;
   }
+  chosen = { w: COLS, h: ROWS };
   if (size || current) apply();
 }
 
@@ -97,7 +106,7 @@ export function mapEditor({ button, close, bigScreen }: Ui) {
   let image: HTMLImageElement | null = null;
   let turns = 0;
   let mirror = current?.mirror ?? false;
-  if (!bigScreen) players = 2;
+  if (!bigScreen || players > 4) loadPlayers(2);
   const begun = current ? fitted(current) : null;
   let raw: Tile[] | null = begun?.raw ?? null;
   let bases: Bases | null = begun?.bases ?? null;

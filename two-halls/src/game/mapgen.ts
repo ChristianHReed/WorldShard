@@ -3,7 +3,7 @@ import { COLS, ROWS, isLeft, isNorth } from "./content";
 /** Tile letters: "." grass, "D" dirt, "~" water, "T" trees, "B" berries, "G" gold, "S" stone. */
 export type Tile = "." | "D" | "~" | "T" | "B" | "G" | "S";
 export type Spot = { x: number; y: number };
-/** Top-left tile of each town hall, by seat: two entries for a duel, four for bigger games. */
+/** Top-left tile of each town hall, by seat: two entries for a duel, four or five for bigger games. */
 export type Bases = Spot[];
 
 /** Size of the picture sample: SUB x SUB pixels for every map tile. */
@@ -94,12 +94,28 @@ export function scaleBases(b: Bases, w: number, h: number, toW: number, toH: num
   );
 }
 
+/** How many bases a map is laid out with for this many players. */
+export const layoutFor = (players: number) => (players <= 2 ? 2 : players <= 4 ? 4 : 5);
+
+/** The smallest map five halls fit on. */
+export const FIVE_MIN = { w: 80, h: 96 };
+
+/** With five, three share the top of the map and two the bottom. */
+function column(seat: number): [number, number] {
+  const [i, n] = isNorth(seat) ? [[2, 4, 1].indexOf(seat), 3] : [[0, 3].indexOf(seat), 2];
+  return [Math.floor((i * COLS) / n), Math.floor(((i + 1) * COLS) / n)];
+}
+
 export function clampBase(s: Spot, seat: number, count: number): Spot {
   const HALF = ROWS / 2;
   let x0 = 5;
   let x1 = COLS - 8;
-  // with more than two players each seat keeps to its own side of the map
-  if (count > 2) {
+  // with more than two players each seat keeps to its own part of the map
+  if (count > 4) {
+    const [a, b] = column(seat);
+    x0 = a + 5;
+    x1 = b - 8;
+  } else if (count > 2) {
     if (isLeft(seat)) x1 = COLS / 2 - 9;
     else x0 = COLS / 2 + 6;
   }
@@ -124,6 +140,11 @@ export function evenBases(one: Spot, count: number): Bases {
 
 /** Default hall positions for a map of the current size. */
 export function startSpots(count: number): Bases {
+  if (count > 4)
+    return Array.from({ length: count }, (_, seat) => {
+      const [a, b] = column(seat);
+      return clampBase({ x: Math.round((a + b) / 2) - 1, y: isNorth(seat) ? 9 : ROWS - 12 }, seat, count);
+    });
   const x = count > 2 ? Math.round(COLS * 0.22) - 1 : COLS / 2 - 1;
   const first = clampBase({ x, y: 9 }, lead(count), count);
   return evenBases(first, count);
@@ -168,6 +189,7 @@ export function finishMap(raw: Tile[], wanted: Bases, mirror: boolean): { grid: 
   const MIDX = COLS / 2;
   const count = wanted.length;
   const four = count > 2;
+  const five = count > 4;
   const t = raw.slice();
   const clamped = wanted.map((s, seat) => clampBase(s, seat, count));
   const bases = mirror ? evenBases(clamped[lead(count)]!, count) : clamped;
@@ -175,8 +197,8 @@ export function finishMap(raw: Tile[], wanted: Bases, mirror: boolean): { grid: 
   const areas = bases.map((base, seat) => ({
     base,
     f: isNorth(seat) ? 1 : -1,
-    x0: four && !isLeft(seat) ? MIDX : 0,
-    x1: four && isLeft(seat) ? MIDX : COLS,
+    x0: five ? column(seat)[0] : four && !isLeft(seat) ? MIDX : 0,
+    x1: five ? column(seat)[1] : four && isLeft(seat) ? MIDX : COLS,
     y0: isNorth(seat) ? 0 : HALF,
     y1: isNorth(seat) ? HALF : ROWS,
   }));

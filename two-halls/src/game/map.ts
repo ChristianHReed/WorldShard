@@ -1,5 +1,5 @@
 import { COLS, ROWS, SIZE } from "./content";
-import { finishMap, resample, startSpots, type Bases, type Tile } from "./mapgen";
+import { finishMap, layoutFor, resample, startSpots, type Bases, type Tile } from "./mapgen";
 
 export type Terrain = "grass" | "dirt" | "water";
 export type NodeKind = "wood" | "food" | "gold" | "stone";
@@ -85,7 +85,9 @@ const DESIGN = {
 function builtIn(players: number) {
   if (players === 2 && COLS === SIZE.w && ROWS === SIZE.h) return DESIGN;
   const raw = resample([...DESIGN.grid.join("")] as Tile[], SIZE.w, SIZE.h, COLS, ROWS);
-  return finishMap(raw, startSpots(players > 2 ? 4 : 2), true);
+  const layout = layoutFor(players);
+  // five cannot be mirrored, so each of their areas is stocked on its own
+  return finishMap(raw, startSpots(layout), layout !== 5);
 }
 
 /** The map in play: the built-in one, or one made from a picture. */
@@ -120,7 +122,10 @@ function fishSpawns(): NodeSpawn[] {
     out.push({ kind: "food", x, y, amount: FISH, sea: true });
     taken.add(y * COLS + x);
   };
-  const crowded = (x: number, y: number) => out.some((f) => Math.abs(f.x - x) <= 2 && Math.abs(f.y - y) <= 2);
+  const crowded = (x: number, y: number) => {
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (x + dx >= 0 && x + dx < COLS && taken.has((y + dy) * COLS + x + dx)) return true;
+    return false;
+  };
   const spots: { x: number; y: number; r: number }[] = [];
   for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) if (wet(x, y)) spots.push({ x, y, r: roll(x, y) });
   for (const s of spots) if (s.r < 0.16 && !crowded(s.x, s.y)) add(s.x, s.y);

@@ -1,13 +1,18 @@
 import { playSfx, resumeAudio, setMuted, unlockAudio } from "../game/audio";
-import { AGES, BUILDINGS, BUILD_MENU, COLS, ROWS, SEATS, SIZE, TECHS, isNorth, UNITS, canAfford, type Cost, type TechKind, type UnitKind, type BuildingKind } from "../game/content";
+import { AGES, BUILDINGS, BUILD_MENU, COLS, LEVELS, ROWS, SEATS, SIZE, TECHS, isNorth, UNITS, canAfford, type Cost, type TechKind, type UnitKind, type BuildingKind } from "../game/content";
+import { act, type Cmd, type Group } from "../game/commands";
 import {
-  IDS, begin, commandTap, techBlock, unitStats, createSim, demolish, research, focusHall, hasComplete, panCam, clampCam, selectGroup,
-  setPlace, step, takeSnap, toggleHunt, togglePause, trainUnit,
-  type Mode, type PlayerId, type SideSnap,
+  IDS, allied, begin, techBlock, unitCost, unitStats, createSim, focusHall, hasComplete, panCam, clampCam,
+  step, takeSnap, togglePause,
+  type Mode, type PlayerId, type Setup, type SideSnap,
 } from "../game/sim";
 import { render, renderMini } from "./draw";
 import { chooseSize, loadPlayers, mapEditor, mapSize, savedMap } from "./editor";
 import { sizePicker } from "./sizes";
+import { hostLobby, joinLobby, type HostPlan } from "./lobby";
+import type { Link } from "./net";
+import { applySnapshot, applyStart, guestTick, memory, snapshot, startMessage, type Memory } from "./sync";
+import { chips, stylePicker } from "./widgets";
 
 const sim = createSim();
 (window as unknown as { __game: unknown }).__game = sim;
@@ -15,8 +20,33 @@ const $ = <T extends HTMLElement = HTMLElement>(q: string) => document.querySele
 const stage = $("#stage");
 const overlay = $("#overlay");
 
-/** Three and four players need room for four sets of controls. */
-const bigScreen = () => Math.min(window.innerWidth, window.innerHeight) >= 600 && Math.max(window.innerWidth, window.innerHeight) >= 800;
+/**
+ * Three and four players need room for four sets of controls. Every iPad counts, the mini
+ * included, even when the browser's bars take a slice of the screen.
+ */
+const bigScreen = () => {
+  const room = (a: number, b: number, short: number, long: number) => Math.min(a, b) >= short && Math.max(a, b) >= long;
+  return room(window.innerWidth, window.innerHeight, 600, 740) || (room(screen.width, screen.height, 740, 1000) && room(window.innerWidth, window.innerHeight, 540, 700));
+};
+
+/** the seat played on this device, when only one person is using it */
+let me: PlayerId = 0;
+/** the other devices in an online game: the host keeps a list, a guest has one link */
+type Remote = { link: Link; seat: PlayerId; memory: Memory };
+let remotes: Remote[] = [];
+let hostLink: Link | null = null;
+
+/** several people around one screen */
+const shared = () => sim.mode === "duel";
+/** whether this seat's panel is turned to face the far side of a shared screen */
+const turnedSeat = (p: PlayerId) => shared() && isNorth(p);
+
+/** Do something as player p: here, or by asking the host to. */
+function send(p: PlayerId, c: Cmd) {
+  if (hostLink) hostLink.send({ t: "cmd", c });
+  else act(sim, p, c);
+  sim.uiDirty = true;
+}
 
 // every seat gets a copy of the same panel
 const template = $<HTMLTemplateElement>("#seat");
@@ -25,7 +55,6 @@ for (const p of IDS) {
   panel.id = `p${p}`;
   panel.setAttribute("aria-label", `${SEATS[p].name} player`);
   panel.style.setProperty("--team", SEATS[p].main);
-  panel.classList.toggle("north", isNorth(p));
   stage.insertBefore(panel, overlay);
 }
 
@@ -35,6 +64,8 @@ const panels = IDS.map((p) => {
   const canvas = q<HTMLCanvasElement>("canvas");
   return {
     p, root, canvas, g: canvas.getContext("2d")!,
+    /** choosing allies */
+    diplo: false,
     mini: q<HTMLCanvasElement>(".mini"), zoomBtn: q<HTMLButtonElement>(".zoom"), far: false, cat: -1,
     /** showing the upgrades of a building that also trains */
     ups: 0,
@@ -47,17 +78,20 @@ const panels = IDS.map((p) => {
 const handlers = new WeakMap<Element, () => void>();
 let turned = false; // whole stage rotated 90° so the players sit at the left and right ends
 
-const seated = (p: PlayerId) => (sim.mode === "solo" ? p === 0 : p < sim.count);
+const seated = (p: PlayerId) => (shared() ? p < sim.count : p === me);
 
 function layout() {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  const quad = sim.mode === "duel" && sim.count > 2;
-  turned = sim.mode === "duel" && !quad && vw > vh && matchMedia("(pointer: coarse)").matches;
-  document.body.classList.toggle("solo", sim.mode === "solo");
+  const quad = shared() && sim.count > 2;
+  turned = shared() && !quad && vw > vh && matchMedia("(pointer: coarse)").matches;
+  document.body.classList.toggle("solo", !!sim.mode && !shared());
   document.body.classList.toggle("quad", quad);
   document.body.classList.toggle("three", quad && sim.count === 3);
-  for (const p of IDS) $(`#p${p}`).hidden = !seated(p);
+  for (const p of IDS) {
+    $(`#p${p}`).hidden = !seated(p);
+    $(`#p${p}`).classList.toggle("north", turnedSeat(p));
+  }
   document.body.classList.toggle("turned", turned);
   stage.style.width = `${turned ? vh : vw}px`;
   stage.style.height = `${turned ? vw : vh}px`;
@@ -88,13 +122,12 @@ function local(q: (typeof panels)[number], e: PointerEvent) {
   const r = q.canvas.getBoundingClientRect();
   const dx = e.clientX - (r.left + r.width / 2);
   const dy = e.clientY - (r.top + r.height / 2);
-  const a = ((turned ? 90 : 0) + (isNorth(q.p) ? 180 : 0)) * (Math.PI / 180);
+  const a = ((turned ? 90 : 0) + (turnedSeat(q.p) ? 180 : 0)) * (Math.PI / 180);
   return { x: dx * Math.cos(a) + dy * Math.sin(a), y: -dx * Math.sin(a) + dy * Math.cos(a) };
 }
 
 for (const q of panels) {
   const touches = new Map<number, { sx: number; sy: number; x: number; y: number; moved: boolean }>();
-  const dir = isNorth(q.p) ? -1 : 1;
   q.canvas.addEventListener("pointerdown", (e) => {
     e.preventDefault();
     try { q.canvas.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
@@ -107,7 +140,8 @@ for (const q of panels) {
     const at = local(q, e);
     if (!t.moved && Math.hypot(at.x - t.sx, at.y - t.sy) > 10) t.moved = true;
     if (t.moved) {
-      const k = (dir * 1) / (q.zoom * 32);
+      // a northern player sees the map turned around, with their own base nearest
+      const k = (isNorth(q.p) ? -1 : 1) / (q.zoom * 32);
       panCam(sim, q.p, -(at.x - t.x) * k, -(at.y - t.y) * k);
       sim.uiDirty = true;
     }
@@ -118,9 +152,10 @@ for (const q of panels) {
     const t = touches.get(e.pointerId);
     touches.delete(e.pointerId);
     if (!t || t.moved) return;
+    const dir = isNorth(q.p) ? -1 : 1;
     const wx = sim.cam[q.p].x + (dir * t.x) / (q.zoom * 32);
     const wy = sim.cam[q.p].y + (dir * t.y) / (q.zoom * 32);
-    commandTap(sim, q.p, wx, wy);
+    send(q.p, { t: "tap", x: wx, y: wy });
   });
   q.canvas.addEventListener("pointercancel", (e) => touches.delete(e.pointerId));
 }
@@ -131,7 +166,7 @@ for (const q of panels) {
     const r = q.mini.getBoundingClientRect();
     const dx = e.clientX - (r.left + r.width / 2);
     const dy = e.clientY - (r.top + r.height / 2);
-    const a = ((turned ? 90 : 0) + (isNorth(q.p) ? 180 : 0)) * (Math.PI / 180);
+    const a = ((turned ? 90 : 0) + (turnedSeat(q.p) ? 180 : 0)) * (Math.PI / 180);
     const lx = (dx * Math.cos(a) + dy * Math.sin(a)) / q.mini.offsetWidth;
     const ly = (-dx * Math.sin(a) + dy * Math.cos(a)) / q.mini.offsetHeight;
     const dir = isNorth(q.p) ? -1 : 1;
@@ -168,7 +203,8 @@ document.addEventListener("pointerdown", (e) => {
   sim.uiDirty = true;
 });
 document.addEventListener("pointerup", () => resumeAudio());
-document.addEventListener("contextmenu", (e) => e.preventDefault());
+// no long-press menus, except where codes are pasted
+document.addEventListener("contextmenu", (e) => { if (!(e.target as Element).closest("input,textarea")) e.preventDefault(); });
 
 function button(label: string, fn: () => void, sub = "", cls = "") {
   const b = document.createElement("button");
@@ -201,6 +237,8 @@ function hud(p: PlayerId, s: SideSnap) {
   const b = sim.buildings.find((o) => o.id === sim.sel[p].building);
   const folkPicked = !s.place && (s.sel === "folk" || s.sel === "mix");
   if (!folkPicked && !s.place) q.cat = -1;
+  // picking something on the map closes the list of allies
+  if (s.place || s.selCount || b) q.diplo = false;
   if (q.ups !== (b?.id ?? 0)) q.ups = 0;
   // each building offers the first upgrade of every chain that is not finished yet
   const upgrades = b && b.owner === p
@@ -228,9 +266,12 @@ function hud(p: PlayerId, s: SideSnap) {
       } else info = `Castle age · health ${s.hp}`;
     } else if (b.kind === "gate") info += " · only your people pass";
   } else if (s.selCount) {
-    const todo = { folk: "tap a resource, a damaged building or the ground", boats: "tap fish or water", host: "tap an enemy or where to go", mix: "tap where to go", none: "", hall: "" };
-    info = `${s.selName} · ${todo[s.sel]}`;
-  }
+    const todo = {
+      folk: "tap a resource, a damaged building or the ground", boats: "tap fish or water", host: "tap an enemy or where to go", mix: "tap where to go", none: "", hall: "",
+      carrier: s.load ? "tap a shore to land them" : "pick your people, then tap this boat to board",
+    };
+    info = s.hold ? `${s.selName} · ${s.load}/${s.hold} aboard · ${s.load ? "tap a shore to land them" : todo[s.sel]}` : `${s.selName} · ${todo[s.sel]}`;
+  } else if (q.diplo) info = "Allies don't fight, share what they see and can win together.";
   // upgrade effects and age advice may need a second line
   const tall = !!b && !s.place && (upsView || b.kind === "town") && !b.research && !b.queue.length && b.progress >= 1;
   q.info.classList.toggle("tall", tall);
@@ -241,15 +282,25 @@ function hud(p: PlayerId, s: SideSnap) {
   const can = (c: Cost) => (canAfford(sim.res[p], c) ? "" : "poor");
   const open = (k: BuildingKind) => { const n = BUILDINGS[k].need; return BUILDINGS[k].age <= s.age && (!n || hasComplete(sim, p, n)); };
   const lockedWhy = (k: BuildingKind) => (BUILDINGS[k].age > s.age ? `${AGES[BUILDINGS[k].age]} age` : `needs ${BUILDINGS[BUILDINGS[k].need!].name}`);
-  const say = (text: string) => (sim.note[p] = { text, t: 2.4 });
   const shown: Cost[] = [
     ...(q.cat >= 0 ? BUILD_MENU[q.cat]!.kinds.map((k) => BUILDINGS[k].cost) : []),
-    ...s.train.map((k) => UNITS[k].cost),
+    ...s.train.map((k) => unitCost(sim, p, k)),
     ...upgrades.map((k) => TECHS[k].cost),
     ...(s.place ? [BUILDINGS[s.place].cost] : []),
   ];
+  const others = IDS.slice(0, sim.count).filter((o) => o !== p && !sim.out[o]);
+  /** where things stand with another player: the button's second line and its look */
+  const relation = (o: PlayerId): [string, string] => {
+    const ending = sim.breaks.find((k) => (k.a === p && k.b === o) || (k.a === o && k.b === p));
+    if (ending) return [`ends in ${Math.ceil(ending.t)}s`, "danger"];
+    if (allied(sim, p, o)) return ["allied · end?", "go"];
+    if (sim.offers[o] & (1 << p)) return ["accept?", "alert"];
+    if (sim.offers[p] & (1 << o)) return ["asked · undo", ""];
+    return ["ask to ally", ""];
+  };
   const key = [
-    s.place, s.anchored, s.sel, s.building, sim.sel[p].building, s.train.join(), s.hunt, q.cat, q.ups, s.age,
+    q.diplo, q.diplo ? others.map((o) => `${o}${relation(o)[0]}${sim.ai[o]}`).join() : "",
+    s.load > 0, s.place, s.anchored, s.sel, s.building, sim.sel[p].building, s.train.join(), s.hunt, q.cat, q.ups, s.age,
     upgrades.map((k) => `${k}${techBlock(sim, p, k)}`).join(), shown.map(can).join(),
     q.cat >= 0 ? BUILD_MENU[q.cat]!.kinds.map(open).join() : "", b && b.progress >= 1, sim.tech[p].join(),
   ].join("|");
@@ -260,15 +311,15 @@ function hud(p: PlayerId, s: SideSnap) {
     if (s.place) {
       const spec = BUILDINGS[s.place];
       list.push(button(`${spec.name}`, () => {}, `${cost(spec.cost)}${spec.wall && s.place !== "gate" ? " each" : ""}`, `label ${can(spec.cost)}`));
-      if (s.anchored) list.push(button("New line", () => { sim.anchor[p] = null; redo(); }, "start elsewhere"));
-      list.push(button("Done", () => setPlace(sim, p, null), "", "go"));
+      if (s.anchored) list.push(button("New line", () => { send(p, { t: "newline" }); redo(); }, "start elsewhere"));
+      list.push(button("Done", () => send(p, { t: "build", kind: null }), "", "go"));
     } else if (b && b.owner === p) {
       const upgradeButton = (k: TechKind) => {
         const t = TECHS[k];
         const no = techBlock(sim, p, k);
         const sub = no === "Done" ? "done ✓" : no === "Under way" ? "working…" : t.age > s.age ? `${AGES[t.age]} age` : cost(t.cost);
         const aging = k === "age2" || k === "age3";
-        return button(aging ? `▲ ${t.name}` : t.name, () => research(sim, p, k), sub, no ? "poor" : can(t.cost) || (aging ? "go" : ""));
+        return button(aging ? `▲ ${t.name}` : t.name, () => send(p, { t: "research", tech: k }), sub, no ? "poor" : can(t.cost) || (aging ? "go" : ""));
       };
       if (b.progress >= 1) {
         if (upsView) {
@@ -279,14 +330,15 @@ function hud(p: PlayerId, s: SideSnap) {
             const spec = UNITS[k];
             const locked = spec.age > s.age;
             const name = b.kind === "dock" ? spec.name.replace(/ (boat|ship)$/i, "") : `Train ${spec.name}`;
-            list.push(button(name, () => trainUnit(sim, p, k), locked ? `${AGES[spec.age]} age` : cost(spec.cost), locked ? "poor" : can(spec.cost)));
+            const price = unitCost(sim, p, k);
+            list.push(button(name, () => send(p, { t: "train", kind: k }), locked ? `${AGES[spec.age]} age` : cost(price), locked ? "poor" : can(price)));
           }
           if (b.kind === "town") list.push(...upgrades.map(upgradeButton));
           else if (upgrades.length) list.push(button("Upgrades", () => { q.ups = b.id; redo(); }, "▸", upgrades.some((k) => !techBlock(sim, p, k) && canAfford(sim.res[p], TECHS[k].cost)) ? "alert" : ""));
         }
       }
       if (b.kind !== "town" && !(upsView && s.train.length))
-        list.push(button(b.progress < 1 ? "Cancel build" : "Remove", () => demolish(sim, p), b.progress < 1 ? "refund" : "", "danger"));
+        list.push(button(b.progress < 1 ? "Cancel build" : "Remove", () => send(p, { t: "demolish" }), b.progress < 1 ? "refund" : "", "danger"));
     } else if (folkPicked) {
       if (q.cat < 0) {
         BUILD_MENU.forEach((m, i) => list.push(button(`${m.name} ▸`, () => { q.cat = i; redo(); }, m.hint)));
@@ -296,58 +348,174 @@ function hud(p: PlayerId, s: SideSnap) {
           const spec = BUILDINGS[k];
           const ok = open(k);
           list.push(button(spec.name, () => {
-            if (ok) setPlace(sim, p, k);
-            else say(spec.age > s.age ? `Reach the ${AGES[spec.age]} age at your Hall first` : `Build a ${BUILDINGS[spec.need!].name} first`);
+            send(p, ok ? { t: "build", kind: k } : { t: "locked", kind: k });
           }, ok ? cost(spec.cost) : lockedWhy(k), ok ? can(spec.cost) : "poor"));
         }
       }
     } else if (s.sel === "host") {
-      list.push(button(`Attack-move: ${s.hunt ? "ON" : "OFF"}`, () => toggleHunt(sim, p), "fight enemies met on the way", s.hunt ? "go" : ""));
+      list.push(button(`Attack-move: ${s.hunt ? "ON" : "OFF"}`, () => send(p, { t: "hunt" }), "fight enemies met on the way", s.hunt ? "go" : ""));
+    } else if (s.load) {
+      list.push(button("Land everyone", () => send(p, { t: "unload" }), "at the nearest shore", "go"));
+    } else if (q.diplo && !s.selCount) {
+      list.push(button("◂", () => { q.diplo = false; redo(); }, "", "x"));
+      for (const o of others) {
+        const [text, cls] = relation(o);
+        const them = button(SEATS[o].name, () => { send(p, { t: "ally", who: o }); redo(); }, text, cls);
+        them.style.borderBottom = `4px solid ${SEATS[o].main}`;
+        list.push(them);
+      }
     }
     q.actions.classList.toggle("many", list.length > 4);
     q.actions.replaceChildren(...list);
   }
-  const groupKey = `${idle}|${s.ships > 0}`;
+  const asking = others.some((o) => sim.offers[o] & (1 << p));
+  const allying = sim.count > 2 && !sim.out[p];
+  const groupKey = `${idle}|${s.ships > 0}|${allying}|${asking}`;
   if (groupKey !== q.groupKey) {
     q.groupKey = groupKey;
+    const group = (which: Group) => () => { q.cat = -1; q.diplo = false; q.actionKey = ""; send(p, { t: "group", which }); };
+    q.groups.classList.toggle("many", allying && s.ships > 0);
     q.groups.replaceChildren(
-      button("All Folk", () => { q.cat = -1; q.actionKey = ""; setPlace(sim, p, null); selectGroup(sim, p, "folk"); }),
-      button(`Idle ${idle}`, () => { setPlace(sim, p, null); selectGroup(sim, p, "idle"); }, "", idle ? "alert" : ""),
-      button("Army", () => { setPlace(sim, p, null); selectGroup(sim, p, "host"); }),
-      ...(s.ships ? [button("Fleet", () => { setPlace(sim, p, null); selectGroup(sim, p, "fleet"); })] : []),
+      button("All Folk", group("folk")),
+      button(`Idle ${idle}`, group("idle"), "", idle ? "alert" : ""),
+      button("Army", group("host")),
+      ...(s.ships ? [button("Fleet", group("fleet"))] : []),
       button("Hall", () => {
-        const h = sim.buildings.find((o) => o.owner === p && o.kind === "town");
-        if (!h) return;
-        if (!sim.place[p]) sim.sel[p] = { units: [], building: h.id };
+        send(p, { t: "hall" });
         focusHall(sim, p);
       }),
-      button("✕", () => { setPlace(sim, p, null); sim.sel[p] = { units: [], building: null }; }, "", "x"),
+      ...(allying ? [button("Allies", () => { send(p, { t: "clear" }); q.cat = -1; q.diplo = !q.diplo; q.actionKey = ""; }, "", asking ? "alert" : "")] : []),
+      button("✕", () => { q.diplo = false; q.actionKey = ""; send(p, { t: "clear" }); }, "", "x"),
     );
   }
 }
 
-function start(mode: Mode, players = sim.count) {
-  const count = mode === "solo" ? 2 : players;
-  loadPlayers(count);
-  begin(sim, mode, count);
+/** how the last game was set up, so Rematch can repeat it */
+let lastGame: { mode: Mode; count: number; setup: Setup } = { mode: "duel", count: 2, setup: {} };
+
+function resetPanels() {
   for (const q of panels) {
     q.actionKey = q.resKey = q.groupKey = "";
     q.cat = -1;
     q.ups = 0;
+    q.diplo = false;
     q.far = false;
     q.zoomBtn.textContent = "−";
   }
-  screen = "";
+  screenKey = "";
+  page = "home";
+  lobbyCard = null;
   layout();
   for (const p of IDS) if (seated(p)) focusHall(sim, p);
-  needFocusDone();
+  sim.needFocus = false;
+  sim.uiDirty = true;
 }
-function needFocusDone() { sim.needFocus = false; sim.uiDirty = true; }
 
-function toMenu() {
+function start(mode: Mode, count: number, setup: Setup = {}) {
+  lastGame = { mode, count, setup };
+  if (mode !== "online") me = 0;
+  loadPlayers(count);
+  begin(sim, mode, count, setup);
+  resetPanels();
+  for (const r of remotes) {
+    r.memory = memory(sim);
+    r.link.send(startMessage(sim, r.seat));
+  }
+}
+
+/** The computers take peoples nobody picked, then repeat. */
+function stylesFor(count: number, mine: number[]) {
+  const out = mine.slice();
+  const spare = [0, 1, 2, 3].filter((s) => !mine.includes(s));
+  for (let i = out.length; i < count; i++) out.push(spare[i - mine.length] ?? i % 4);
+  return out;
+}
+
+function leaveOnline() {
+  for (const r of remotes) {
+    r.link.send({ t: "bye" });
+    r.link.onClose = () => {};
+    // give the goodbye a moment to leave
+    setTimeout(() => r.link.close(), 300);
+  }
+  remotes = [];
+  if (hostLink) {
+    hostLink.onClose = () => {};
+    hostLink.close();
+    hostLink = null;
+  }
+}
+
+function toMenu(message = "") {
+  leaveOnline();
   sim.phase = "menu";
   sim.mode = null;
+  me = 0;
+  // a joined or five-player game may have changed the map: bring back our own
+  loadPlayers(2);
+  notice = message;
+  page = "home";
+  lobbyCard = null;
+  screenKey = "";
   layout();
+}
+
+function hostStart(plan: HostPlan) {
+  const people = 1 + plan.guests.length;
+  const count = people + plan.computers;
+  me = 0;
+  remotes = plan.guests.map((g, i) => ({ link: g.link, seat: (i + 1) as PlayerId, memory: memory(sim) }));
+  for (const r of remotes) {
+    r.link.onMessage = (m) => {
+      if (m.t !== "cmd" || !m.c) return;
+      if (m.c.t === "pause") { togglePause(sim); flush(); }
+      else act(sim, r.seat, m.c);
+    };
+    r.link.onClose = () => {
+      remotes = remotes.filter((o) => o !== r);
+      if (sim.phase === "menu" || r.seat >= sim.count) return;
+      sim.ai[r.seat] = true;
+      lastGame.setup.ai![r.seat] = true;
+      for (const p of IDS) sim.note[p] = { text: `${SEATS[r.seat].name} left. The computer takes over.`, t: 5 };
+    };
+  }
+  const ai = Array.from({ length: count }, (_, p) => p >= people);
+  const styles = stylesFor(count, [plan.style, ...plan.guests.map((g) => g.style)]);
+  start("online", count, { ai, styles, level: plan.level });
+}
+
+function guestStart(link: Link, first: any) {
+  hostLink = link;
+  const open = (m: any) => {
+    me = (Number(m.you) | 0) as PlayerId;
+    applyStart(sim, m);
+    resetPanels();
+    needFocus = true;
+  };
+  link.onMessage = (m) => {
+    if (m.t === "s") {
+      applySnapshot(sim, m, me);
+      // the view can only be centred once our hall has arrived
+      if (needFocus && sim.buildings.some((b) => b.owner === me)) {
+        needFocus = false;
+        focusHall(sim, me);
+      }
+    } else if (m.t === "start") open(m);
+    else if (m.t === "bye") toMenu("The host ended the game.");
+  };
+  link.onClose = () => toMenu("The connection to the host was lost.");
+  open(first);
+}
+let needFocus = false;
+
+/** sounds made since the last update to the other devices */
+let heard: string[] = [];
+function flush() {
+  for (const r of remotes) {
+    // a slow connection skips an update; the next one carries everything that changed
+    if (r.link.backlog() < 250_000) r.link.send(snapshot(sim, r.seat, r.memory, heard));
+  }
+  heard = [];
 }
 
 const HELP = `
@@ -359,60 +527,160 @@ const HELP = `
 <li><b>Ages.</b> Tap your Hall to move from the <b>Village</b> to the <b>Town</b> age (needs a Barracks or Dock), then the <b>Castle</b> age (needs a Smithy). Each unlocks new buildings, units and upgrades.</li>
 <li><b>Army.</b> Barracks (Levy). Town age: Range (Archer), Stable (fast Rider). Castle age: Workshop (Ram, to break walls and buildings).</li>
 <li><b>Ships.</b> Build a <b>Dock</b> on any shore. Fishing boats gather fish and bring it to your Dock. <b>Galleys</b> (Town age) fight ships and shore targets. <b>Bombard ships</b> (Castle age) smash coastal buildings from far off.</li>
+<li><b>Transports.</b> Build one at a Dock. Pick your people or army, then tap the Transport to board (10 places; a Ram takes 3). Pick the Transport and tap a far shore to land them, or press <b>Land everyone</b>.</li>
 <li><b>Upgrades.</b> Tap a Storehouse, Smithy, Barracks, Range, Stable or Dock.</li>
 <li><b>Repair</b> by picking Folk and tapping a damaged building.</li>
-<li><b>Win</b> by having the last Hall standing. With 3 or 4 players it is everyone for themselves.</li>
+<li><b>Allies.</b> With 3 or more players, press <b>Allies</b> to ask, accept or end an alliance (ending one takes 10 seconds). Allies don't fight, share what they see, can pass each other's gates and can win together. You each need someone left to fight when you join up.</li>
+<li><b>Win</b> by being the last side with a Hall standing.</li>
 </ol>`;
 
-let screen = "";
+let screenKey = "";
 let editing = false;
+type Page = "home" | "computer" | "shared" | "online" | "host" | "join";
+let page: Page = "home";
+let notice = "";
+/** a lobby keeps its own screen while friends come and go */
+let lobbyCard: HTMLElement | null = null;
+const KEEP = "two-halls-choices";
+const choices = { computers: 1, level: 1, style: 0, players: 2, seats: [0, 1, 2, 3] };
+try { Object.assign(choices, JSON.parse(localStorage.getItem(KEEP) ?? "{}")); } catch { /* start fresh */ }
+const remember = () => { try { localStorage.setItem(KEEP, JSON.stringify(choices)); } catch { /* not saved */ } };
+
+function go(to: Page) {
+  page = to;
+  notice = "";
+  lobbyCard = null;
+  remember();
+  screenKey = "";
+  overlay.scrollTop = 0;
+}
+const redraw = () => { remember(); screenKey = ""; };
+
+function menuCard(): HTMLElement {
+  if (page === "host") return (lobbyCard ??= hostLobby(button, hostStart, () => go("online")));
+  if (page === "join") return (lobbyCard ??= joinLobby(button, guestStart, () => go("online")));
+  const card = document.createElement("div");
+  card.className = "card";
+  const heading = (text: string) => {
+    const h = document.createElement("h2");
+    h.textContent = text;
+    card.append(h);
+  };
+  const para = (text: string) => {
+    const el = document.createElement("p");
+    el.textContent = text;
+    card.append(el);
+  };
+  if (page === "computer") {
+    heading("Play the computer");
+    card.append(
+      chips(button, "Computers", ["1", "2", "3", "4"], choices.computers - 1, (i) => { choices.computers = i + 1; redraw(); }),
+      chips(button, "Difficulty", [...LEVELS], choices.level, (i) => { choices.level = i; redraw(); }),
+    );
+    para(["Slow to act and gathers less. Says yes to alliances.", "A fair fight.", "Quick, builds a big army and gathers 30% faster than you."][choices.level]!);
+    card.append(stylePicker(button, choices.style, (i) => { choices.style = i; redraw(); }));
+    if (choices.computers > 3) para("Five halls need a map at least 80×96. A smaller map is stretched for this game.");
+    card.append(button("Start", () => {
+      const count = choices.computers + 1;
+      start("solo", count, { styles: stylesFor(count, [choices.style]), level: choices.level });
+    }, "", "go"), button("Back", () => go("home")));
+    return card;
+  }
+  if (page === "shared") {
+    const big = bigScreen();
+    if (!big) choices.players = 2;
+    heading("Share one screen");
+    card.append(chips(button, "Players", ["2", "3", "4"], choices.players - 2, (i) => {
+      if (i === 0 || big) { choices.players = i + 2; redraw(); }
+    }));
+    para(big ? "Two sit at each end of the screen." : "3 and 4 players need an iPad or another screen that size.");
+    for (let seat = 0; seat < choices.players; seat++) {
+      const pickStyle = stylePicker(button, choices.seats[seat]!, (i) => { choices.seats[seat] = i; redraw(); }, `${SEATS[seat]!.name}'s people`);
+      pickStyle.style.borderColor = SEATS[seat]!.main;
+      card.append(pickStyle);
+    }
+    card.append(button("Start", () => start("duel", choices.players, { styles: choices.seats.slice(0, choices.players) }), "", "go"), button("Back", () => go("home")));
+    return card;
+  }
+  if (page === "online") {
+    heading("Play on your own devices");
+    para("One device hosts and runs the game. Everyone else joins from theirs, up to 5 players counting computers. Best with all devices on the same Wi-Fi or hotspot.");
+    card.append(button("Host a game", () => go("host"), "", "go"), button("Join a game", () => go("join")), button("Back", () => go("home")));
+    return card;
+  }
+  card.innerHTML = `<h1>Two Halls</h1><p>Gather, build and march to war.</p>`;
+  if (notice) para(notice);
+  card.append(
+    button("Play the computer", () => go("computer"), "against 1 to 4", "go"),
+    button("Share one screen", () => go("shared"), "2 to 4 players", "go"),
+    button("Play on your own devices", () => go("online"), "local online, up to 5", "go"),
+    button("Make a map from a picture", () => { editing = true; redraw(); }, savedMap() ? "now playing on: your picture map" : "now playing on: built-in map"),
+    sizePicker({ button, limits: SIZE, current: mapSize, choose: chooseSize }), soundButton(),
+  );
+  const how = document.createElement("div");
+  how.innerHTML = HELP;
+  card.append(how);
+  return card;
+}
+
+const soundButton = () => button(`Sound: ${sim.sound ? "on" : "off"}`, () => { sim.sound = !sim.sound; setMuted(!sim.sound); screenKey = ""; });
+
 function drawOverlay() {
   const want = sim.phase === "play" ? "" : sim.phase;
-  const key = `${want}|${sim.sound}|${sim.winner}|${editing}`;
-  if (key === screen) return;
-  screen = key;
+  const key = `${want}|${sim.sound}|${sim.winner}|${editing}|${page}`;
+  if (key === screenKey) return;
+  screenKey = key;
+  const scroll = overlay.scrollTop;
   overlay.hidden = !want;
   overlay.className = want;
   overlay.replaceChildren();
   if (!want) return;
-  const card = document.createElement("div");
-  card.className = "card";
-  const sound = () => button(`Sound: ${sim.sound ? "on" : "off"}`, () => { sim.sound = !sim.sound; setMuted(!sim.sound); drawOverlay(); });
   if (want === "menu" && editing) {
-    overlay.append(mapEditor({ button, bigScreen: bigScreen(), close: () => { editing = false; sim.uiDirty = true; } }));
+    overlay.append(mapEditor({ button, bigScreen: bigScreen(), close: () => { editing = false; screenKey = ""; } }));
     return;
   }
   if (want === "menu") {
-    card.innerHTML = `<h1>Two Halls</h1><p>Gather, build and march to war.<br>Share one screen with up to four players.</p>`;
-    const big = bigScreen();
-    const more = document.createElement("div");
-    more.className = "more";
-    for (const n of [3, 4])
-      more.append(button(`${n} players`, () => (big ? start("duel", n) : undefined), big ? "two at each end" : "needs a tablet or bigger", big ? "go" : "poor"));
-    card.append(button("Two players", () => start("duel", 2), "one at each end", "go"), more, button("Play the computer", () => start("solo")),
-      button("Make a map from a picture", () => { editing = true; }, savedMap() ? "now playing on: your picture map" : "now playing on: built-in map"),
-      sizePicker({ button, limits: SIZE, current: mapSize, choose: chooseSize }), sound());
-    const how = document.createElement("div");
-    how.innerHTML = HELP;
-    card.append(how);
-  } else if (want === "pause") {
+    overlay.append(menuCard());
+    overlay.scrollTop = scroll;
+    return;
+  }
+  const card = document.createElement("div");
+  card.className = "card";
+  if (want === "pause") {
     card.innerHTML = `<h2>Paused</h2>`;
-    card.append(button("Resume", () => togglePause(sim), "", "go"), button("Restart", () => start(sim.mode!)), button("Main menu", toMenu), sound());
+    card.append(button("Resume", () => pause(), "", "go"));
+    if (!hostLink) card.append(button("Restart", () => start(lastGame.mode, lastGame.count, lastGame.setup)));
+    card.append(button(sim.mode === "online" ? (hostLink ? "Leave the game" : "End the game for everyone") : "Main menu", () => toMenu()), soundButton());
   } else {
-    const verdict = (p: PlayerId) => (sim.winner === -1 ? "Draw" : sim.winner === p ? "Victory!" : "Defeat");
-    if (sim.mode === "solo") card.innerHTML = `<h2>${verdict(0)}</h2>`;
+    const won = (p: PlayerId) => !!(sim.winners & (1 << p));
+    const verdict = (p: PlayerId) => (won(p) ? "Victory!" : sim.winner === -1 && sim.mode !== "solo" && !sim.ai.some(Boolean) ? "Draw" : "Defeat");
+    const names = IDS.filter(won).map((p) => SEATS[p].name);
+    const line = names.length ? `${names.join(" & ")} ${names.length > 1 ? "win" : "wins"}!` : "Nobody wins";
+    if (!shared()) card.innerHTML = `<h2>${verdict(me)}</h2>${names.length > 1 || !won(me) ? `<p>${line}</p>` : ""}`;
     else if (sim.count === 2) card.innerHTML = `<h2 class="flip">${verdict(1)}</h2><h2>${verdict(0)}</h2>`;
-    else {
-      const line = sim.winner === -1 || sim.winner === null ? "Draw" : `${SEATS[sim.winner].name} wins!`;
-      card.innerHTML = `<h2 class="flip">${line}</h2><h2>${line}</h2>`;
-    }
-    card.append(button("Rematch", () => start(sim.mode!), "", "go"), button("Main menu", toMenu));
+    else card.innerHTML = `<h2 class="flip">${line}</h2><h2>${line}</h2>`;
+    if (hostLink) {
+      const wait = document.createElement("p");
+      wait.textContent = "The host can start a rematch.";
+      card.append(wait);
+    } else card.append(button("Rematch", () => start(lastGame.mode, lastGame.count, lastGame.setup), "", "go"));
+    card.append(button("Main menu", () => toMenu()));
   }
   overlay.append(card);
 }
 
-handlers.set($("#pause"), () => togglePause(sim));
-document.addEventListener("visibilitychange", () => { if (document.hidden && sim.phase === "play") togglePause(sim); });
+function pause() {
+  if (hostLink) hostLink.send({ t: "cmd", c: { t: "pause" } });
+  else {
+    togglePause(sim);
+    flush();
+  }
+}
+
+handlers.set($("#pause"), pause);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && sim.phase === "play" && !hostLink) pause();
+});
 let resizeQueued = false;
 window.addEventListener("resize", () => {
   if (resizeQueued) return;
@@ -429,14 +697,23 @@ if (typeof ResizeObserver !== "undefined") {
 
 let last = performance.now();
 let hudAt = 0;
+let netAt = 0;
 let miniAt = 0;
 let was = sim.phase;
 function frame(now: number) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
-  for (let left = dt; left > 0; left -= 1 / 30) step(sim, Math.min(left, 1 / 30));
-  for (const name of sim.fxQueue.splice(0)) if (sim.sound) playSfx(name);
-  if (sim.phase === "end" && was !== "end" && sim.sound) playSfx(sim.mode === "solo" && sim.winner !== 0 ? "lose" : "win");
+  if (hostLink) guestTick(sim, dt);
+  else for (let left = dt; left > 0; left -= 1 / 30) step(sim, Math.min(left, 1 / 30));
+  for (const name of sim.fxQueue.splice(0)) {
+    if (remotes.length && heard.length < 6) heard.push(name);
+    if (sim.sound) playSfx(name);
+  }
+  if (remotes.length && sim.phase !== "menu" && now - netAt > 100) {
+    netAt = now;
+    flush();
+  }
+  if (sim.phase === "end" && was !== "end" && sim.sound) playSfx(!shared() && !(sim.winners & (1 << me)) ? "lose" : "win");
   was = sim.phase;
   drawOverlay();
   if (sim.phase !== "menu") {

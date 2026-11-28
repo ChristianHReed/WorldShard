@@ -1,5 +1,5 @@
 export const TILE = 32;
-export const SIZE = { minW: 32, maxW: 128, minH: 48, maxH: 192, w: 64, h: 96 };
+export const SIZE = { minW: 32, maxW: 256, minH: 48, maxH: 384, w: 64, h: 96 };
 
 /** Current map size in tiles. Change it only through setSize, then load a map of that size. */
 export let COLS = SIZE.w;
@@ -18,17 +18,34 @@ export function setSize(w: number, h: number) {
 }
 export const MAX_POP = 60;
 
-/** Seats 1 and 2 sit at the top of the screen; 0 and 3 at the bottom. Seats 0 and 2 start on the left. */
-export const isNorth = (p: number) => p === 1 || p === 2;
+export const MAX_SEATS = 5;
+
+/** Seats 1, 2 and 4 start at the top of the map; 0 and 3 at the bottom. Seats 0 and 2 start on the left. */
+export const isNorth = (p: number) => p === 1 || p === 2 || p === 4;
 export const isLeft = (p: number) => p === 0 || p === 2;
 export const SEATS = [
   { name: "Blue", main: "#2f9fb0", dark: "#17606c", light: "#8fe0ea" },
   { name: "Red", main: "#d4503f", dark: "#852c21", light: "#ffab9c" },
   { name: "Green", main: "#5aa83c", dark: "#33671f", light: "#b4ee94" },
   { name: "Gold", main: "#d29a1e", dark: "#855d0a", light: "#ffdc82" },
+  { name: "Purple", main: "#9a5fd0", dark: "#5c3485", light: "#d9b8f7" },
 ] as const;
 
-export const UNIT_KINDS = ["villager", "militia", "archer", "rider", "ram", "fisher", "galley", "bombard"] as const;
+/** The four peoples a player can choose between. Each has its own look and strengths. */
+export const STYLES = [
+  { name: "Forest Folk", bonus: "chop wood 20% faster · ships cost 20% less" },
+  { name: "Stone Holds", bonus: "buildings 20% tougher · mine stone 25% faster" },
+  { name: "Horse Clans", bonus: "Folk and Riders 12% faster · Riders cost 20% less" },
+  { name: "Sun Harbor", bonus: "farm and fish 20% faster · mine gold 15% faster" },
+] as const;
+export const STYLE = { forest: 0, stone: 1, horse: 2, sun: 3 } as const;
+
+export const LEVELS = ["Easy", "Normal", "Hard"] as const;
+/** how many places each unit takes on a transport (everyone else takes one) */
+export const HOLD = 10;
+export const berth = (k: string) => (k === "ram" ? 3 : 1);
+
+export const UNIT_KINDS = ["villager", "militia", "archer", "rider", "ram", "fisher", "transport", "galley", "bombard"] as const;
 export type UnitKind = (typeof UNIT_KINDS)[number];
 
 export const BUILD_KINDS = ["town", "house", "farm", "barracks", "range", "tower", "palisade", "wall", "gate", "store", "stable", "workshop", "smithy", "dock"] as const;
@@ -187,6 +204,7 @@ export const UNITS: Record<UnitKind, UnitSpec> = {
     age: 3,
   },
   fisher: { name: "Fishing boat", cost: { wood: 70 }, train: 10, hp: 80, speed: 2.3, dmg: 0, range: 0.5, cd: 1, vision: 5, siege: 0, carry: 15, age: 1, naval: true },
+  transport: { name: "Transport", cost: { wood: 120 }, train: 14, hp: 240, speed: 2.5, dmg: 0, range: 0.5, cd: 1, vision: 5.5, siege: 0, carry: 0, age: 1, naval: true },
   galley: { name: "Galley", cost: { wood: 100, gold: 40 }, train: 14, hp: 180, speed: 2.6, dmg: 9, range: 4.5, cd: 1.2, vision: 6.8, siege: 0.7, carry: 0, age: 2, naval: true },
   bombard: { name: "Bombard ship", cost: { wood: 160, gold: 110 }, train: 22, hp: 220, speed: 1.7, dmg: 13, range: 6, cd: 2.8, vision: 6.8, siege: 5.5, carry: 0, age: 3, naval: true },
 };
@@ -360,7 +378,7 @@ export const BUILDINGS: Record<BuildingKind, BuildSpec> = {
     vision: 4,
     place: true,
   },
-  dock: { age: 1, name: "Dock", cost: { wood: 120 }, build: 14, hp: 650, w: 2, h: 2, pop: 0, vision: 6, place: true, shore: true, trains: ["fisher", "galley", "bombard"] },
+  dock: { age: 1, name: "Dock", cost: { wood: 120 }, build: 14, hp: 650, w: 2, h: 2, pop: 0, vision: 6, place: true, shore: true, trains: ["fisher", "transport", "galley", "bombard"] },
 };
 
 export const BUILD_MENU: { name: string; hint: string; kinds: BuildingKind[] }[] = [

@@ -1,16 +1,47 @@
 import { BUILDINGS, TECHS, UNITS, canAfford, type BuildingKind, type TechKind, type UnitKind } from "./content";
-import { ageOf, aiTryBuild, canReachNode, techBlock, hasComplete, orderGather, popCap, popUsed, research, trainUnit, type Node, type PlayerId, type Sim } from "./sim";
+import { IDS, ageOf, aiTryBuild, allied, canReachNode, techBlock, hasComplete, orderGather, popCap, popUsed, research, trainUnit, type Node, type PlayerId, type Sim } from "./sim";
 
 type Kind = Node["kind"];
 
-export function aiThink(sim: Sim) {
-  if (sim.mode !== "solo" || sim.phase !== "play") return;
-  const p: PlayerId = 1;
+/**
+ * How each difficulty plays. `think` is the seconds between decisions and `gather` its work
+ * speed (Hard gathers faster than a person can). Times are seconds into the game.
+ */
+export const LEVEL = [
+  { think: 2.4, gather: 0.8, folk: 9, army: 10, farms: 1, town: 240, castle: 540, tower: 450, navy: 540, upgrades: 480, early: [480, 6], late: [720, 4] },
+  { think: 1.15, gather: 1, folk: 12, army: 20, farms: 2, town: 150, castle: 330, tower: 260, navy: 300, upgrades: 220, early: [330, 8], late: [540, 4] },
+  { think: 0.8, gather: 1.3, folk: 18, army: 30, farms: 3, town: 100, castle: 250, tower: 200, navy: 240, upgrades: 150, early: [270, 9], late: [420, 5] },
+] as const;
+
+function strength(sim: Sim, p: PlayerId) {
+  const army = sim.units.filter((u) => u.owner === p && u.hp > 0 && u.kind !== "villager" && u.kind !== "fisher" && u.kind !== "transport").length;
+  return army + sim.buildings.filter((b) => b.owner === p && !BUILDINGS[b.kind].wall).length * 0.5 + ageOf(sim, p) * 3;
+}
+
+/**
+ * Whether computer `p` takes up an alliance. It keeps to one ally. On Easy it says yes; on
+ * Normal it joins anyone not far ahead of it; on Hard only to face a third player who leads.
+ */
+export function aiAnswer(sim: Sim, p: PlayerId, from: PlayerId) {
+  if (sim.allies[p]) return false;
+  if (sim.level === 0) return true;
+  const rivals = IDS.slice(0, sim.count).filter((q) => q !== p && q !== from && !sim.out[q]);
+  const top = Math.max(0, ...rivals.map((q) => strength(sim, q)));
+  const mine = strength(sim, p);
+  const theirs = strength(sim, from);
+  if (sim.level === 2) return top > Math.max(mine, theirs);
+  return theirs <= mine * 1.4 + 6 || top > mine;
+}
+
+export function aiThink(sim: Sim, p: PlayerId) {
+  if (sim.phase !== "play") return;
+  const level = LEVEL[sim.level]!;
+  const foes = IDS.slice(0, sim.count).filter((q) => !sim.out[q] && !allied(sim, p, q));
   const mine = sim.buildings.filter((b) => b.owner === p && b.hp > 0);
   const folks = sim.units.filter((u) => u.owner === p && u.hp > 0 && u.kind === "villager");
   const military = sim.units.filter((u) => u.owner === p && u.hp > 0 && u.kind !== "villager" && !UNITS[u.kind].naval);
   const fishers = sim.units.filter((u) => u.owner === p && u.hp > 0 && u.kind === "fisher");
-  const warships = sim.units.filter((u) => u.owner === p && u.hp > 0 && UNITS[u.kind].naval && u.kind !== "fisher");
+  const warships = sim.units.filter((u) => u.owner === p && u.hp > 0 && (u.kind === "galley" || u.kind === "bombard"));
   const age = ageOf(sim, p);
   const hall = mine.find((b) => b.kind === "town" && b.progress >= 1);
   if (!hall) return;
@@ -42,6 +73,7 @@ export function aiThink(sim: Sim) {
     if (k) tally[k] += 1;
   }
   const want: Record<Kind, number> = { food: 4, wood: 4, gold: 3, stone: 1 };
+  const crew = level.folk;
   const order: Kind[] = ["wood", "food", "gold", "stone"];
   const shortest = () => order.reduce((a, b) => (tally[a] / want[a] <= tally[b] / want[b] ? a : b));
   const lacking = order.find((k) => tally[k] === 0);
@@ -61,7 +93,7 @@ export function aiThink(sim: Sim) {
   const count = (k: BuildingKind) => mine.filter((b) => b.kind === k).length;
 
   // The next age comes first: once it is due, stop spending food until it is paid for.
-  const nextAge: TechKind | null = age === 1 && sim.clock > 150 && folks.length >= 8 ? "age2" : age === 2 && sim.clock > 330 && folks.length >= 10 ? "age3" : null;
+  const nextAge: TechKind | null = age === 1 && sim.clock > level.town && folks.length >= 8 ? "age2" : age === 2 && sim.clock > level.castle && folks.length >= Math.min(10, crew) ? "age3" : null;
   const wanted = nextAge && !techBlock(sim, p, nextAge) ? nextAge : null;
   const saving = !!wanted && !canAfford(sim.res[p], TECHS[wanted].cost);
 
@@ -83,16 +115,17 @@ export function aiThink(sim: Sim) {
         if (walk > 12) far = n;
       }
     }
-    if (popUsed(sim, p) >= popCap(sim, p) - 2 && popCap(sim, p) < 45) aiTryBuild(sim, p, "house");
+    if (popUsed(sim, p) >= popCap(sim, p) - 2 && popCap(sim, p) < Math.min(60, crew + level.army + 13)) aiTryBuild(sim, p, "house");
     else if (far) aiTryBuild(sim, p, "store", far);
-    else if (count("farm") < 2 && folks.length >= 5) aiTryBuild(sim, p, "farm");
+    else if (count("farm") < level.farms && folks.length >= 5) aiTryBuild(sim, p, "farm");
     else if (!count("barracks") && folks.length >= 6) aiTryBuild(sim, p, "barracks");
     else if (!count("dock") && shoal && sim.clock > 120 && wood >= 120 && aiTryBuild(sim, p, "dock", shoal)) {
       // placed
     } else if (age >= 2 && hasComplete(sim, p, "barracks") && !count("range")) aiTryBuild(sim, p, "range");
     else if (age >= 2 && hasComplete(sim, p, "range") && !count("smithy")) aiTryBuild(sim, p, "smithy");
-    else if (age >= 2 && sim.clock > 260 && !count("tower")) aiTryBuild(sim, p, "tower");
-    else if (age >= 2 && sim.clock > 280 && !count("stable") && wood >= 200) aiTryBuild(sim, p, "stable");
+    else if (age >= 2 && sim.clock > level.tower && !count("tower")) aiTryBuild(sim, p, "tower");
+    else if (age >= 2 && sim.clock > level.tower + 20 && !count("stable") && wood >= 200) aiTryBuild(sim, p, "stable");
+    else if (sim.level === 2 && count("barracks") < 2 && wood >= 260) aiTryBuild(sim, p, "barracks");
     else if (age >= 3 && !count("workshop") && wood >= 220) aiTryBuild(sim, p, "workshop");
   }
 
@@ -125,32 +158,30 @@ export function aiThink(sim: Sim) {
     research(sim, p, tech);
   };
   if (wanted) research1("town", wanted);
-  if (folks.length + hall.queue.length < 12 && !(saving && folks.length >= 9)) train("town", "villager");
+  if (folks.length + hall.queue.length < crew && !(saving && folks.length >= 9)) train("town", "villager");
   const have = (k: UnitKind) => military.filter((u) => u.kind === k).length;
-  if (fishers.length < 3) train("dock", "fisher");
+  if (fishers.length < (sim.level === 0 ? 1 : 3)) train("dock", "fisher");
   if (!saving || military.length < 4) {
-    if (military.length < 20) {
+    if (military.length < level.army) {
       if (have("ram") < 2) train("workshop", "ram");
-      if (have("rider") < 4) train("stable", "rider");
-      if (have("archer") < 6) train("range", "archer");
-      if (have("militia") < 8) train("barracks", "militia");
+      if (have("rider") < level.army / 5) train("stable", "rider");
+      if (have("archer") < level.army * 0.3) train("range", "archer");
+      if (have("militia") < level.army * 0.4) train("barracks", "militia");
     }
-    if (sim.clock > 300) {
+    if (sim.clock > level.navy) {
       if (warships.filter((u) => u.kind === "bombard").length < 2) train("dock", "bombard");
       if (warships.filter((u) => u.kind === "galley").length < 3) train("dock", "galley");
     }
-    if (sim.clock > 220) {
+    if (sim.clock > level.upgrades) {
       for (const t of Object.keys(TECHS) as TechKind[]) if (t !== "age2" && t !== "age3") research1(TECHS[t].at, t);
     }
   }
   sim.sel[p] = keep;
 
-  // Warships hunt the enemy's docks and boats, wherever the water lets them go.
+  // Warships hunt enemy docks and boats, wherever the water lets them go.
   if (warships.length >= 2) {
-    const prey =
-      sim.buildings.find((b) => b.owner === 0 && b.kind === "dock" && b.hp > 0 && b.seen & (1 << p)) ??
-      null;
-    const boat = sim.units.find((u) => u.owner === 0 && u.hp > 0 && UNITS[u.kind].naval);
+    const prey = sim.buildings.find((b) => foes.includes(b.owner) && b.kind === "dock" && b.hp > 0 && b.seen & (1 << p)) ?? null;
+    const boat = sim.units.find((u) => foes.includes(u.owner) && u.hp > 0 && UNITS[u.kind].naval);
     const goal = prey ? { x: prey.tx + 1, y: prey.ty + 1 } : boat ? { x: boat.x, y: boat.y } : null;
     if (goal) {
       for (const u of warships) {
@@ -162,14 +193,19 @@ export function aiThink(sim: Sim) {
   }
 
   // Attack in waves: gather a group, then commit it until it is spent.
-  if (!sim.aiAttack && ((sim.clock > 330 && military.length >= 8) || (sim.clock > 540 && military.length >= 4))) sim.aiAttack = true;
-  if (sim.aiAttack && military.length <= 2) sim.aiAttack = false;
-  if (sim.aiAttack) {
-    const enemy = sim.buildings.find((b) => b.owner === 0 && b.kind === "town" && b.hp > 0);
+  const due = ([after, size]: readonly [number, number]) => sim.clock > after && military.length >= size;
+  if (!sim.aiAttack[p] && (due(level.early) || due(level.late))) sim.aiAttack[p] = true;
+  if (sim.aiAttack[p] && military.length <= 2) sim.aiAttack[p] = false;
+  if (sim.aiAttack[p]) {
+    // march on the nearest enemy hall
+    const enemy = sim.buildings
+      .filter((b) => foes.includes(b.owner) && b.kind === "town" && b.hp > 0)
+      .sort((a, b) => Math.hypot(a.tx - home.x, a.ty - home.y) - Math.hypot(b.tx - home.x, b.ty - home.y))[0];
     if (!enemy) return;
+    const side = home.y < enemy.ty ? -0.5 : BUILDINGS.town.h + 0.5;
     for (const u of military) {
       if (u.order.t !== "idle") continue;
-      u.order = { t: "move", x: enemy.tx + BUILDINGS.town.w / 2, y: enemy.ty - 0.5, hunt: true };
+      u.order = { t: "move", x: enemy.tx + BUILDINGS.town.w / 2, y: enemy.ty + side, hunt: true };
       if (Math.hypot(enemy.tx - u.x, enemy.ty - u.y) < 6 || u.kind === "ram") u.order = { t: "attack", kind: "building", id: enemy.id, resume: null };
       u.goalKey = "";
     }

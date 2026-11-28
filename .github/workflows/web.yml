@@ -100,6 +100,9 @@ jobs:
           sed -i "s/__BUILD__/$B/" dist/index.html
           cp -r game/assets dist/assets
           cp web-prototype/index.html dist/prototype/index.html
+          # Two Halls, a separate small game, at .../two-halls/
+          mkdir -p dist/two-halls
+          cp two-halls/index.html two-halls/manifest.webmanifest two-halls/sw.js two-halls/icon.png two-halls/icon-180.png dist/two-halls/
           touch dist/.nojekyll
           ls -la dist | tee -a build.log
 

@@ -12,6 +12,8 @@ const PRESETS: [string, number, number][] = [
   ["Large", 64, 96],
   ["Huge", 96, 144],
   ["Giant", 128, 192],
+  ["Vast", 192, 288],
+  ["Colossal", 256, 384],
 ];
 
 /** Map size controls for the home page: presets, or any width and height. */
@@ -29,7 +31,7 @@ export function sizePicker({ button, limits, current, choose }: Ui) {
     title.textContent = `Map size: ${s.w} wide × ${s.h} long`;
     PRESETS.forEach(([, w, h], i) => presets.children[i]!.classList.toggle("on", w === s.w && h === s.h));
     const times = (s.w * s.h) / (64 * 96);
-    note.textContent = `${(s.w * s.h).toLocaleString()} tiles${times === 1 ? "" : ` (${+times.toFixed(times < 1 ? 2 : 1)}× Large)`}. Length is the distance between the two ends.`;
+    note.textContent = `${(s.w * s.h).toLocaleString()} tiles${times === 1 ? "" : ` (${+times.toFixed(times < 1 ? 2 : 1)}× Large)`}. Length is the distance between the two ends.${s.w * s.h > 128 * 192 ? " Sizes past Giant are meant for newer tablets and computers." : ""}`;
     for (const r of rows) r();
   };
   const set = (w: number, h: number) => {

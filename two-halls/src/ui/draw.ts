@@ -1,7 +1,6 @@
-import { SEATS, isNorth } from "../game/content";
-import { BUILDINGS, COLS, ROWS } from "../game/content";
-import { terrainAt } from "../game/map";
-import { canSee, type Building, type Node, type PlayerId, type Sim, type Unit } from "../game/sim";
+import { BUILDINGS, COLS, ROWS, SEATS, STYLE, UNITS, isNorth } from "../game/content";
+import { GRID, terrainAt } from "../game/map";
+import { canSee, maxHp as fullHp, type Building, type Node, type PlayerId, type Sim, type Unit } from "../game/sim";
 
 type G = CanvasRenderingContext2D;
 const TEAM = SEATS;
@@ -67,7 +66,7 @@ function drawFish(g: G, n: Node, x: number, y: number, clock: number) {
   }
 }
 
-function drawShip(g: G, u: Unit, x: number, y: number, face: number, clock: number) {
+function drawShip(g: G, u: Unit, x: number, y: number, face: number, clock: number, style: number) {
   const c = TEAM[u.owner];
   const rock = Math.sin(clock * 2 + u.id) * 1.2;
   y += rock;
@@ -84,6 +83,22 @@ function drawShip(g: G, u: Unit, x: number, y: number, face: number, clock: numb
   poly(g, u.flash > 0 ? "#fff" : u.kind === "bombard" ? "#4a2f18" : "#7a4d22", x - w, y - 2, x + w, y - 2, x + w * 0.65, y + 9, x - w * 0.65, y + 9);
   box(g, x - w, y - 4, w * 2, 3, "#b98a52");
   box(g, x - w * 0.8, y + 1, w * 1.6, 3, c.main);
+  if (u.kind === "transport") {
+    // a broad flat barge; heads show above the rail for those aboard
+    box(g, x - w - 2, y - 7, w * 2 + 4, 5, "#caa56a");
+    box(g, x + face * (w + 1) - 3, y - 14, 6, 9, "#8a5a2b");
+    const riders = Math.min(8, u.cargo?.length ?? 0);
+    for (let i = 0; i < riders; i++) {
+      const px = x - 14 + (i % 4) * 9;
+      const py = y - 9 - Math.floor(i / 4) * 6;
+      disc(g, px, py, 3.8, "#17130f");
+      disc(g, px, py, 2.8, "#efc097");
+      box(g, px - 3, py - 3.5, 6, 2.5, c.light);
+    }
+    box(g, x - face * 18 - 1, y - 30, 2.5, 24, "#3b2514");
+    sail(g, style, x - face * 18, y - 30, face, 11, c);
+    return;
+  }
   box(g, x - 1, y - 28 * big, 2.5, 26 * big, "#3b2514");
   if (u.kind === "fisher") {
     poly(g, c.light, x + face * 2, y - 21, x + face * 14, y - 8, x + face * 2, y - 8);
@@ -96,14 +111,30 @@ function drawShip(g: G, u: Unit, x: number, y: number, face: number, clock: numb
     g.stroke();
     if (u.carry >= 1) disc(g, x - face * 7, y - 5, 3.5, "#f4c9a8");
   } else {
-    poly(g, c.main, x - 12 * big, y - 25 * big, x + 12 * big, y - 25 * big, x + 15 * big, y - 9, x - 15 * big, y - 9);
-    box(g, x - 12 * big, y - 18 * big, 24 * big, 3, c.light);
-    poly(g, c.light, x, y - 28 * big, x - face * 12, y - 32 * big, x, y - 34 * big);
+    sail(g, style, x, y - 28 * big, face, 15 * big, c);
     if (u.kind === "bombard") {
       box(g, x + face * 10 - 7, y - 9, 14, 6, "#22262a");
       disc(g, x + face * 18, y - 6, 3.5, "#22262a");
     } else poly(g, "#e8eef0", x + face * w, y - 2, x + face * (w + 8), y - 1, x + face * w, y + 2);
   }
+}
+
+/** A sail hung from a mast top at (x, y); each people cuts theirs differently. */
+function sail(g: G, style: number, x: number, y: number, face: number, r: number, c: Team) {
+  if (style === STYLE.stone) {
+    box(g, x - r * 0.8, y + 3, r * 1.6, r * 1.25, c.main);
+    box(g, x - 2, y + 3, 4, r * 1.25, c.light);
+    box(g, x - r * 0.8, y + 3 + r * 0.5, r * 1.6, 4, c.light);
+  } else if (style === STYLE.horse) {
+    for (let i = 0; i < 4; i++) poly(g, i % 2 ? c.light : c.main, x, y + r * 1.35, x + (i - 2) * r * 0.5, y + 2 + Math.abs(i - 1.5) * 3, x + (i - 1) * r * 0.5, y + 2 + Math.abs(i - 0.5) * 3 - 3);
+  } else if (style === STYLE.sun) {
+    poly(g, c.main, x + face * r * 0.9, y - 5, x - face * r * 1.1, y + r * 1.3, x + face * r * 0.9, y + r * 1.1);
+    poly(g, c.light, x + face * r * 0.9, y - 5, x + face * r * 0.9, y + r * 0.35, x + face * r * 0.2, y + r * 0.3);
+  } else {
+    poly(g, c.main, x - r * 0.8, y + 3, x + r * 0.8, y + 3, x + r, y + r * 1.28, x - r, y + r * 1.28);
+    box(g, x - r * 0.8, y + 3 + r * 0.5, r * 1.6, 3, c.light);
+  }
+  poly(g, c.light, x, y, x - face * 12, y - 4, x, y - 6);
 }
 
 function drawNode(g: G, n: Node, x: number, y: number) {
@@ -129,6 +160,99 @@ function drawNode(g: G, n: Node, x: number, y: number) {
         poly(g, "#ffd23f", x + dx, y + dy - 4, x + dx + 4, y + dy, x + dx, y + dy + 3, x + dx - 3, y + dy);
       }
   }
+}
+
+type Team = (typeof SEATS)[number];
+
+/** The body and roof of a building, in its people's style. */
+function drawHouse(g: G, style: number, kind: Building["kind"], x: number, y: number, w: number, h: number, c: Team, doorW: number) {
+  const roofH = h * 0.5;
+  const shade = kind === "barracks" || kind === "smithy" || kind === "workshop";
+  const mid = x + w / 2;
+  const door = (arched: boolean) => {
+    box(g, mid - doorW / 2, y + h - 24, doorW, 18, "#4a2c17");
+    if (arched) disc(g, mid, y + h - 24, doorW / 2, "#4a2c17");
+  };
+  if (style === STYLE.stone) {
+    box(g, x + 6, y + roofH - 8, w - 12, h - roofH + 2, shade ? "#80837f" : "#a8aba4");
+    for (let row = 0; row < (h - roofH) / 9 - 1; row++)
+      for (let bx = x + 6 + (row % 2) * 8; bx < x + w - 14; bx += 17) box(g, bx, y + roofH + 4 + row * 9, 15, 1.5, "rgba(0,0,0,.22)");
+    // a flat roof behind battlements
+    box(g, x + 4, y + 14, w - 8, roofH - 18, c.dark);
+    box(g, x + 7, y + 17, w - 14, roofH - 25, c.main);
+    for (let bx = x + 4; bx <= x + w - 12; bx += (w - 16) / Math.round((w - 16) / 15)) {
+      box(g, bx, y + 8, 8, 9, "#c3c6bd");
+      box(g, bx, y + roofH - 12, 8, 9, "#c3c6bd");
+    }
+    box(g, x + 4, y + roofH - 5, w - 8, 5, "#c3c6bd");
+    door(true);
+    return;
+  }
+  if (style === STYLE.horse) {
+    // round felt tents with a coloured cone and a crown ring
+    box(g, x + 7, y + roofH, w - 14, h - roofH - 7, shade ? "#c9b896" : "#e8dcc0");
+    g.fillStyle = shade ? "#c9b896" : "#e8dcc0";
+    g.beginPath();
+    g.ellipse(mid, y + h - 8, (w - 14) / 2, 5, 0, 0, Math.PI * 2);
+    g.fill();
+    for (let bx = x + 12; bx < x + w - 10; bx += 12) box(g, bx, y + roofH + 3, 1.5, h - roofH - 12, "rgba(120,90,50,.45)");
+    poly(g, c.main, x + 2, y + roofH + 3, x + w * 0.3, y + 13, mid, y + 6, x + w * 0.7, y + 13, x + w - 2, y + roofH + 3);
+    for (const k of [0.22, 0.5, 0.78]) {
+      g.strokeStyle = c.dark;
+      g.lineWidth = 2;
+      g.beginPath();
+      g.moveTo(mid, y + 7);
+      g.lineTo(x + w * k, y + roofH + 2);
+      g.stroke();
+    }
+    box(g, x + 3, y + roofH, w - 6, 4, c.light);
+    disc(g, mid, y + 8, 5, "#6e4a26");
+    disc(g, mid, y + 8, 2, "#17130f");
+    door(false);
+    return;
+  }
+  if (style === STYLE.sun) {
+    box(g, x + 6, y + roofH - 4, w - 12, h - roofH - 2, shade ? "#c79a5e" : "#e6c184");
+    box(g, x + 4, y + roofH - 8, w - 8, 6, "#f2d9a6");
+    // one dome, or two on the wide buildings
+    const domes = w > 70 ? [0.31, 0.69] : [0.5];
+    const r = w > 70 ? Math.min(w * 0.2, roofH - 12) : Math.min(w * 0.34, roofH - 10);
+    for (const k of domes) {
+      const dx = x + w * k;
+      g.fillStyle = c.main;
+      g.beginPath();
+      g.arc(dx, y + roofH - 7, r, Math.PI, Math.PI * 2);
+      g.fill();
+      g.strokeStyle = c.light;
+      g.lineWidth = 2.5;
+      g.beginPath();
+      g.arc(dx, y + roofH - 7, r * 0.7, Math.PI * 1.12, Math.PI * 1.45);
+      g.stroke();
+      box(g, dx - 1, y + roofH - 14 - r, 2, 8, "#8a6a35");
+      disc(g, dx, y + roofH - 15 - r, 2.5, "#ffd23f");
+    }
+    for (const dx of [12, w - 20]) {
+      box(g, x + dx, y + roofH + 6, 8, 10, "#7d5a33");
+      disc(g, x + dx + 4, y + roofH + 6, 4, "#7d5a33");
+    }
+    door(true);
+    return;
+  }
+  // forest folk: log walls under a steep roof with crossed beams
+  box(g, x + 7, y + roofH - 2, w - 14, h - roofH - 4, shade ? "#7d5a38" : "#a9794a");
+  for (let ly = y + roofH + 5; ly < y + h - 8; ly += 6) box(g, x + 7, ly, w - 14, 1.5, "rgba(40,22,8,.45)");
+  poly(g, c.main, x + 2, y + roofH + 2, mid - w * 0.14, y + 3, mid + w * 0.14, y + 3, x + w - 2, y + roofH + 2);
+  poly(g, c.dark, x + 2, y + roofH + 2, x + w - 2, y + roofH + 2, x + w - 5, y + roofH + 8, x + 5, y + roofH + 8);
+  box(g, mid - w * 0.14, y + 3, w * 0.28, 4, c.light);
+  g.strokeStyle = "#4a2c17";
+  g.lineWidth = 3;
+  for (const side of [-1, 1]) {
+    g.beginPath();
+    g.moveTo(mid + side * (w * 0.14 + 3), y + 10);
+    g.lineTo(mid + side * (w * 0.14 - 6), y - 5);
+    g.stroke();
+  }
+  door(false);
 }
 
 /** links: which sides (screen up, right, down, left) join another wall */
@@ -162,7 +286,7 @@ function drawWall(g: G, b: Building, x: number, y: number, links: boolean[]) {
   box(g, x + 14, y + 20, 4, 3, c.main);
 }
 
-function drawBuilding(g: G, b: Building, x: number, y: number, links: boolean[] = []) {
+function drawBuilding(g: G, b: Building, x: number, y: number, links: boolean[] = [], style = 0) {
   const s = BUILDINGS[b.kind];
   const w = s.w * 32;
   const h = s.h * 32;
@@ -193,8 +317,16 @@ function drawBuilding(g: G, b: Building, x: number, y: number, links: boolean[] 
     box(g, x + 2, y + 6, w - 4, h - 8, "#5a3a1c");
     for (let i = 0; i < 7; i++) box(g, x + 3, y + 8 + i * 8, w - 6, 6, i % 2 ? "#a5773f" : "#b98a52");
     for (const dx of [2, w - 8]) for (const dy of [6, h - 10]) disc(g, x + dx + 3, y + dy + 3, 4.5, "#3c2512");
-    box(g, x + 14, y + 16, 30, 24, "#cbb894");
-    poly(g, c.main, x + 10, y + 19, x + 29, y + 2, x + 48, y + 19);
+    box(g, x + 14, y + 16, 30, 24, ["#a9794a", "#a8aba4", "#e8dcc0", "#e6c184"][style]!);
+    if (style === STYLE.stone) {
+      box(g, x + 12, y + 10, 34, 9, c.main);
+      for (let i = 0; i < 3; i++) box(g, x + 12 + i * 13.5, y + 4, 7, 7, "#c3c6bd");
+    } else if (style === STYLE.sun) {
+      g.fillStyle = c.main;
+      g.beginPath();
+      g.arc(x + 29, y + 18, 16, Math.PI, Math.PI * 2);
+      g.fill();
+    } else poly(g, c.main, x + 10, y + 19, x + 29, y + (style === STYLE.horse ? 6 : -3), x + 48, y + 19);
     box(g, x + 24, y + 27, 10, 13, "#4a2c17");
     box(g, x + w - 16, y - 4, 3, 30, "#4a2c17");
     poly(g, c.light, x + w - 13, y - 4, x + w + 3, y + 1, x + w - 13, y + 7);
@@ -206,26 +338,33 @@ function drawBuilding(g: G, b: Building, x: number, y: number, links: boolean[] 
     box(g, x + 17, y + 12, 9, h - 18, "#b4b8ac");
     box(g, x + 11, y + 8, w - 22, 12, "#9ea39b");
     for (let i = 0; i < 4; i++) box(g, x + 11 + i * 12, y + 2, 7, 8, "#9ea39b");
-    poly(g, c.main, x + 18, y + 3, x + 32, y - 18, x + 46, y + 3);
+    if (style === STYLE.stone) {
+      box(g, x + 31, y - 16, 2, 19, "#4a2c17");
+      poly(g, c.main, x + 33, y - 16, x + 47, y - 11, x + 33, y - 6);
+      box(g, x + 15, y + 15, w - 30, 5, c.main);
+    } else if (style === STYLE.sun) {
+      g.fillStyle = c.main;
+      g.beginPath();
+      g.arc(x + 32, y + 4, 15, Math.PI, Math.PI * 2);
+      g.fill();
+      disc(g, x + 32, y - 13, 2.5, "#ffd23f");
+    } else if (style === STYLE.horse) {
+      poly(g, c.main, x + 12, y + 5, x + 32, y - 10, x + 52, y + 5);
+      box(g, x + 31, y - 22, 2, 13, "#4a2c17");
+      poly(g, c.light, x + 33, y - 22, x + 45, y - 19, x + 33, y - 15);
+    } else poly(g, c.main, x + 18, y + 3, x + 32, y - 18, x + 46, y + 3);
     box(g, x + 28, y + h - 22, 9, 16, "#3c2414");
     box(g, x + 29, y + 28, 6, 9, "#25343a");
     return;
   }
-  const wall = b.kind === "town" ? "#cbb894" : b.kind === "barracks" ? "#9a8068" : b.kind === "smithy" ? "#7d7a76" : b.kind === "workshop" ? "#8f6f4a" : "#c29a68";
-  const roofH = h * 0.5;
-  box(g, x + 7, y + roofH - 2, w - 14, h - roofH - 4, wall);
-  box(g, x + 7, y + h - 12, w - 14, 6, "rgba(0,0,0,.18)");
-  poly(g, c.main, x + 2, y + roofH, x + w * 0.22, y + 6, x + w * 0.78, y + 6, x + w - 2, y + roofH);
-  poly(g, c.dark, x + 2, y + roofH, x + w - 2, y + roofH, x + w - 5, y + roofH + 6, x + 5, y + roofH + 6);
-  box(g, x + w * 0.22, y + 6, w * 0.56, 4, c.light);
   const doorW = b.kind === "town" ? 20 : 12;
-  box(g, x + w / 2 - doorW / 2, y + h - 24, doorW, 18, "#4a2c17");
+  drawHouse(g, style, b.kind, x, y, w, h, c, doorW);
   if (b.kind === "town") {
     for (const dx of [18, w - 30]) box(g, x + dx, y + h - 30, 12, 12, "#31505a");
     box(g, x + w / 2 - 1, y - 20, 3, 28, "#4a2c17");
     poly(g, c.light, x + w / 2 + 2, y - 20, x + w / 2 + 22, y - 14, x + w / 2 + 2, y - 8);
   } else if (b.kind === "house") {
-    box(g, x + w - 20, y + 2, 8, 14, "#7a706a");
+    if (style === STYLE.forest) box(g, x + w - 20, y + 4, 8, 14, "#7a706a");
   } else if (b.kind === "barracks") {
     g.strokeStyle = "#e8eef0";
     g.lineWidth = 3;
@@ -262,9 +401,33 @@ function drawBuilding(g: G, b: Building, x: number, y: number, links: boolean[] 
   }
 }
 
-function drawUnit(g: G, u: Unit, x: number, y: number, face: number, clock: number) {
-  if (u.kind === "fisher" || u.kind === "galley" || u.kind === "bombard") {
-    drawShip(g, u, x, y, face, clock);
+/** What each people wears on their heads. */
+function hat(g: G, style: number, x: number, y: number, c: Team, armed: boolean) {
+  if (style === STYLE.stone) {
+    box(g, x - 6, y - 19, 12, 8, armed ? "#aeb8bd" : "#8d928c");
+    box(g, x - 6, y - 14, 12, 2.5, "#5d666b");
+    if (armed) box(g, x - 1.5, y - 22, 3, 4, c.light);
+  } else if (style === STYLE.horse) {
+    disc(g, x, y - 15, 6.5, "#8a5a2b");
+    box(g, x - 7.5, y - 15, 15, 4, "#e8dcc0");
+    poly(g, armed ? c.light : "#6e4522", x - 3, y - 20, x, y - 26, x + 3, y - 20);
+  } else if (style === STYLE.sun) {
+    disc(g, x, y - 15, 6.2, "#f4ead2");
+    box(g, x - 6.5, y - 15, 13, 3, armed ? c.light : "#d9b455");
+    box(g, x - 8, y - 13, 3, 8, "#f4ead2");
+  } else if (armed) {
+    disc(g, x, y - 13, 6, "#aeb8bd");
+    box(g, x - 6, y - 13, 12, 3, "#6d777d");
+    for (const s of [-1, 1]) poly(g, "#f4ead2", x + s * 5, y - 15, x + s * 11, y - 21, x + s * 6, y - 11);
+  } else {
+    box(g, x - 8, y - 17, 16, 3, "#d9b455");
+    box(g, x - 4, y - 20, 8, 4, "#d9b455");
+  }
+}
+
+function drawUnit(g: G, u: Unit, x: number, y: number, face: number, clock: number, style: number) {
+  if (u.kind === "fisher" || u.kind === "transport" || u.kind === "galley" || u.kind === "bombard") {
+    drawShip(g, u, x, y, face, clock, style);
     return;
   }
   const c = TEAM[u.owner];
@@ -295,7 +458,7 @@ function drawUnit(g: G, u: Unit, x: number, y: number, face: number, clock: numb
     box(g, x + face * 13 - 4, y - 13, 9, 6, "#8d5b31");
     poly(g, u.flash > 0 ? "#fff" : c.main, x - 6, y, x - 4, y - 13, x + 4, y - 13, x + 6, y);
     disc(g, x, y - 17, 5, "#efc097");
-    disc(g, x, y - 19, 5, "#aeb8bd");
+    hat(g, style, x, y - 6, c, true);
     box(g, x - face * 7 - 1, y - 28, 2, 28, "#e8eef0");
     poly(g, c.light, x - face * 7, y - 28, x - face * 18, y - 25, x - face * 7, y - 21);
     return;
@@ -308,8 +471,7 @@ function drawUnit(g: G, u: Unit, x: number, y: number, face: number, clock: numb
   disc(g, x, y - 11, 6.5, "#17130f");
   disc(g, x, y - 11, 5.2, "#efc097");
   if (u.kind === "villager") {
-    box(g, x - 8, y - 17, 16, 3, "#d9b455");
-    box(g, x - 4, y - 20, 8, 4, "#d9b455");
+    hat(g, style, x, y, c, false);
     box(g, x + face * 9 - 1, y - 7 + swing, 2.5, 13, "#7a4d22");
     box(g, x + face * 9 - 4, y - 8 + swing, 8, 4, "#cfd6d8");
     if (u.carry >= 1) {
@@ -318,14 +480,14 @@ function drawUnit(g: G, u: Unit, x: number, y: number, face: number, clock: numb
       disc(g, x - face * 8, y - 3, 3.5, col);
     }
   } else if (u.kind === "militia") {
-    disc(g, x, y - 13, 6, "#aeb8bd");
-    box(g, x - 6, y - 13, 12, 3, "#6d777d");
+    hat(g, style, x, y, c, true);
     box(g, x + face * 10 - 1.5, y - 18, 3, 18, "#e8eef0");
     box(g, x + face * 10 - 4, y - 2, 8, 2.5, "#7a4d22");
     disc(g, x - face * 7, y - 1, 5.5, c.light);
     disc(g, x - face * 7, y - 1, 2, c.dark);
   } else {
-    poly(g, c.dark, x - 7, y - 10, x, y - 21, x + 7, y - 10);
+    if (style === STYLE.forest) poly(g, "#2f5a2a", x - 7, y - 10, x, y - 22, x + 7, y - 10);
+    else hat(g, style, x, y, c, false);
     g.strokeStyle = "#7a4d22";
     g.lineWidth = 2.5;
     g.beginPath();
@@ -386,14 +548,15 @@ export function render(g: G, sim: Sim, p: PlayerId, cssW: number, cssH: number, 
     items.push({
       z: b.kind === "farm" ? y : y + s.h * 32 - 6,
       f: () => {
-        drawBuilding(g, b, x, y, s.wall ? links(b) : []);
+        drawBuilding(g, b, x, y, s.wall ? links(b) : [], sim.style[b.owner]);
         const picked = sim.sel[p].building === b.id;
         if (picked) {
           g.strokeStyle = "#fff6a8";
           g.lineWidth = 2;
           g.strokeRect(x, y, s.w * 32, s.h * 32);
         }
-        if (picked || b.hp < s.hp - 0.5) hpBar(g, x + 8, y + s.h * 32 - 4, s.w * 32 - 16, b.hp / s.hp);
+        const full = fullHp(sim, b.owner, b.kind);
+        if (picked || b.hp < full - 0.5) hpBar(g, x + 8, y + s.h * 32 - 4, s.w * 32 - 16, b.hp / full);
       },
     });
   }
@@ -405,7 +568,7 @@ export function render(g: G, sim: Sim, p: PlayerId, cssW: number, cssH: number, 
     items.push({
       z: y + 9,
       f: () => {
-        const afloat = u.kind === "fisher" || u.kind === "galley" || u.kind === "bombard";
+        const afloat = !!UNITS[u.kind].naval;
         if (chosen.has(u.id)) {
           g.strokeStyle = "#fff6a8";
           g.lineWidth = 2;
@@ -413,7 +576,7 @@ export function render(g: G, sim: Sim, p: PlayerId, cssW: number, cssH: number, 
           g.ellipse(x, y + 9, afloat ? 27 : 12, afloat ? 9 : 6, 0, 0, Math.PI * 2);
           g.stroke();
         }
-        drawUnit(g, u, x, y, u.fx * dir < 0 ? -1 : 1, sim.clock);
+        drawUnit(g, u, x, y, u.fx * dir < 0 ? -1 : 1, sim.clock, sim.style[u.owner]);
         if (chosen.has(u.id) || u.hp < maxHp(u) - 0.5) hpBar(g, x - 9, y - (afloat ? 40 : 25), 18, u.hp / maxHp(u));
       },
     });
@@ -468,25 +631,60 @@ export function render(g: G, sim: Sim, p: PlayerId, cssW: number, cssH: number, 
   if (bad) mark(bad.tx, bad.ty, bad.w, bad.h, "rgba(240,60,40,.4)", "#ff6a55");
 }
 
-const MINI = { water: "#2c6f9e", dirt: "#a8864f", grass: "#5c8338" } as const;
-const MINI_NODE = { wood: "#1d4a22", food: "#d0365a", gold: "#ffd23f", stone: "#d5d9d4" } as const;
-const MINI_FISH = "#f4c9a8";
+const rgb = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+const MINI = { water: rgb("#2c6f9e"), dirt: rgb("#a8864f"), grass: rgb("#5c8338") } as const;
+const MINI_NODE = { wood: rgb("#1d4a22"), food: rgb("#d0365a"), gold: rgb("#ffd23f"), stone: rgb("#d5d9d4") } as const;
+const MINI_FISH = rgb("#f4c9a8");
+const DARK = rgb("#161b13");
+
+let ground = new Uint8ClampedArray(0);
+let groundFor: unknown = null;
 
 /** One pixel per tile, turned the same way as the player's own view. */
-export function renderMini(g: G, sim: Sim, p: PlayerId) {
-  g.setTransform(1, 0, 0, 1, 0, 0);
-  if (isNorth(p)) g.setTransform(-1, 0, 0, -1, COLS, ROWS);
+export function renderMini(g: G, sim: Sim, p: PlayerId, flipped = isNorth(p)) {
+  const img = g.createImageData(COLS, ROWS);
+  const px = img.data;
+  if (groundFor !== GRID || ground.length !== px.length) {
+    groundFor = GRID;
+    ground = new Uint8ClampedArray(px.length);
+    for (let y = 0; y < ROWS; y++)
+      for (let x = 0; x < COLS; x++) ground.set([...MINI[terrainAt(x, y)], 255], (y * COLS + x) * 4);
+  }
+  const put = (x: number, y: number, c: readonly number[]) => {
+    if (x < 0 || y < 0 || x >= COLS || y >= ROWS) return;
+    const i = ((flipped ? (ROWS - 1 - y) * COLS + COLS - 1 - x : y * COLS + x)) * 4;
+    px[i] = c[0]!;
+    px[i + 1] = c[1]!;
+    px[i + 2] = c[2]!;
+    px[i + 3] = 255;
+  };
+  const seen = sim.explored[p];
   for (let y = 0; y < ROWS; y++)
-    for (let x = 0; x < COLS; x++) box(g, x, y, 1, 1, sim.explored[p][y * COLS + x] ? MINI[terrainAt(x, y)] : "#161b13");
-  for (const n of sim.nodes) if (!n.farm && n.amount > 0 && sim.explored[p][n.y * COLS + n.x]) box(g, n.x, n.y, 1, 1, n.sea ? MINI_FISH : MINI_NODE[n.kind]);
+    for (let x = 0; x < COLS; x++) {
+      const i = y * COLS + x;
+      if (seen[i]) put(x, y, [ground[i * 4]!, ground[i * 4 + 1]!, ground[i * 4 + 2]!]);
+      else put(x, y, DARK);
+    }
+  for (const n of sim.nodes) if (!n.farm && n.amount > 0 && seen[n.y * COLS + n.x]) put(n.x, n.y, n.sea ? MINI_FISH : MINI_NODE[n.kind]);
+  const team = TEAM.map((t) => ({ main: rgb(t.main), light: rgb(t.light) }));
+  // on very big maps, dots are drawn larger so they can still be seen
+  const dot = Math.max(2, Math.round(COLS / 48));
   for (const b of sim.buildings) {
     if (!(b.seen & (1 << p))) continue;
     const s = BUILDINGS[b.kind];
-    box(g, b.tx, b.ty, s.w, s.h, s.wall ? TEAM[b.owner].light : TEAM[b.owner].main);
+    for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) put(b.tx + x, b.ty + y, s.wall ? team[b.owner]!.light : team[b.owner]!.main);
   }
-  for (const u of sim.units) if (u.owner === p || canSee(sim, p, u.x, u.y)) box(g, u.x - 1, u.y - 1, 2, 2, u.owner === p ? "#fff" : TEAM[u.owner].main);
+  for (const u of sim.units) {
+    if (u.owner !== p && !canSee(sim, p, u.x, u.y)) continue;
+    const c = u.owner === p ? [255, 255, 255] : team[u.owner]!.main;
+    for (let y = 0; y < dot; y++) for (let x = 0; x < dot; x++) put(Math.round(u.x - dot / 2) + x, Math.round(u.y - dot / 2) + y, c);
+  }
+  g.putImageData(img, 0, 0);
   const v = sim.view[p];
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  if (flipped) g.setTransform(-1, 0, 0, -1, COLS, ROWS);
   g.strokeStyle = "#fff27a";
-  g.lineWidth = 1;
+  g.lineWidth = Math.max(1, COLS / 100);
   g.strokeRect(sim.cam[p].x - v.w / 64, sim.cam[p].y - v.h / 64, v.w / 32, v.h / 32);
+  g.setTransform(1, 0, 0, 1, 0, 0);
 }
