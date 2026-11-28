@@ -1,0 +1,1102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>WorldShard</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#05070f;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+body{font-family:Georgia,'Times New Roman',serif;color:#f3ead6}
+#gl{position:fixed;inset:0;width:100%;height:100%;display:block;outline:none}
+.hud{position:fixed;pointer-events:none;text-shadow:0 1px 3px rgba(0,0,0,.75)}
+#status{left:12px;top:10px;font-size:14px;line-height:1.45}
+#status .dim{opacity:.75;font-size:12px}
+#compass{left:50%;top:8px;transform:translateX(-50%);width:min(40vw,420px);height:26px;overflow:hidden;border-bottom:1px solid rgba(243,234,214,.35);
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 20%,#000 80%,transparent);mask-image:linear-gradient(90deg,transparent,#000 20%,#000 80%,transparent)}
+#compassStrip{position:absolute;top:2px;left:0;white-space:nowrap;font-size:14px;letter-spacing:1px}
+#compassStrip span{position:absolute;transform:translateX(-50%)}
+#compassTick{position:fixed;left:50%;top:34px;transform:translateX(-50%);width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:7px solid #f3ead6}
+#mini{right:10px;top:10px;width:132px;height:132px;border-radius:50%;box-shadow:0 0 0 2px rgba(243,234,214,.55),0 2px 10px rgba(0,0,0,.5)}
+#banner{left:50%;top:22%;transform:translateX(-50%);text-align:center;opacity:0;transition:opacity 1.2s}
+#banner .t{font-size:clamp(28px,6vw,46px);letter-spacing:.18em;text-transform:uppercase}
+#banner .s{font-size:clamp(14px,3vw,18px);font-style:italic;opacity:.9;margin-top:4px}
+#toast{left:50%;bottom:120px;transform:translateX(-50%);background:rgba(10,14,28,.72);padding:8px 14px;border-radius:8px;font-size:14px;opacity:0;transition:opacity .4s;max-width:80vw;text-align:center}
+#help{left:12px;bottom:12px;font-size:12px;opacity:.85;line-height:1.5}
+#menuBtn{position:fixed;right:10px;top:152px;pointer-events:auto}
+button.ui{font:inherit;color:#f3ead6;background:rgba(10,14,28,.6);border:1px solid rgba(243,234,214,.45);border-radius:8px;padding:6px 12px;font-size:14px;cursor:pointer}
+button.ui:active{background:rgba(40,50,80,.8)}
+#menu{position:fixed;right:10px;top:192px;background:rgba(10,14,28,.88);border:1px solid rgba(243,234,214,.35);border-radius:10px;padding:10px;display:none;flex-direction:column;gap:8px;min-width:190px;pointer-events:auto;font-size:14px}
+#menu.open{display:flex}
+#menu .note{font-size:12px;opacity:.75;max-width:210px;line-height:1.4}
+button.ui:disabled{opacity:.45;cursor:default}
+#confirm{display:none;flex-direction:column;gap:6px}
+#confirm.open{display:flex}
+#touchUI{display:none}
+.touch #touchUI{display:block}
+.touch #help{display:none}
+#joyBase{position:fixed;width:110px;height:110px;margin:-55px 0 0 -55px;border-radius:50%;border:2px solid rgba(243,234,214,.4);background:rgba(10,14,28,.25);display:none;pointer-events:none}
+#joyKnob{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;background:rgba(243,234,214,.55)}
+.tbtn{position:fixed;width:64px;height:64px;border-radius:50%;font:inherit;font-size:13px;color:#f3ead6;background:rgba(10,14,28,.5);border:2px solid rgba(243,234,214,.5);pointer-events:auto}
+.tbtn.on{background:rgba(198,113,57,.7)}
+#jumpBtn{right:22px;bottom:34px}
+#runBtn{right:98px;bottom:20px;width:54px;height:54px}
+#loading{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,#1a2148 0%,#05070f 70%);z-index:10;transition:opacity .8s}
+#loading h1{font-weight:normal;letter-spacing:.3em;font-size:clamp(30px,8vw,56px);margin:0 0 8px}
+#loading .sub{font-style:italic;opacity:.8;margin-bottom:26px}
+#bar{width:min(70vw,320px);height:4px;background:rgba(243,234,214,.15);border-radius:2px;overflow:hidden}
+#barFill{height:100%;width:0;background:#e9d9b4;transition:width .2s}
+#loadMsg{margin-top:12px;font-size:13px;opacity:.75}
+#start{margin-top:22px;display:none}
+</style>
+</head>
+<body>
+<canvas id="gl" tabindex="0"></canvas>
+
+<div id="loading">
+  <h1>WORLDSHARD</h1>
+  <div class="sub">a broken piece of Earth, adrift</div>
+  <div id="bar"><div id="barFill"></div></div>
+  <div id="loadMsg">Starting…</div>
+  <button id="start" class="ui">Enter the world</button>
+</div>
+
+<div id="status" class="hud"><div id="clock">Day 1 · 09:00</div><div id="saveState" class="dim">Not saved yet</div></div>
+<div id="compass" class="hud"><div id="compassStrip"></div></div>
+<div id="compassTick" class="hud"></div>
+<canvas id="mini" class="hud" width="264" height="264"></canvas>
+<button id="menuBtn" class="ui">Menu</button>
+<div id="menu">
+  <button class="ui" id="fileSave">Save file (put it in Google Drive)</button>
+  <button class="ui" id="fileLoad">Open save file</button>
+  <input type="file" id="fileIn" accept=".json,application/json,text/plain" style="display:none">
+  <div class="note" id="fileNote">Saves a small file. On your phone, choose Google Drive in the share or save menu. To load, pick that file from Google Drive.</div>
+  <div id="copyBox" style="display:none;flex-direction:column;gap:6px"><div class="note">This view can't hand you a file. Copy the save and paste it into a note in Google Drive:</div><textarea id="copyText" readonly style="width:200px;height:70px;font-size:11px"></textarea><button class="ui" id="copyBtn">Copy save</button></div>
+  <button class="ui" id="saveNow">Quick save</button>
+  <button class="ui" id="toSpawn">Return to start point</button>
+  <button class="ui" id="newGame">New game</button>
+  <div id="confirm"><div class="note">Erase this save and start over?</div><button class="ui" id="confirmYes">Yes, start over</button><button class="ui" id="confirmNo">Cancel</button></div>
+  <div class="note" id="saveWhere"></div>
+  <div class="note">Quick save keeps your spot for next time. Google Drive saves are files you keep and can load on any device.</div>
+</div>
+<div id="banner" class="hud"><div class="t" id="bannerT"></div><div class="s" id="bannerS"></div></div>
+<div id="toast" class="hud"></div>
+<div id="help" class="hud">WASD / arrows move · drag to look · Shift run · Space jump</div>
+<div id="touchUI">
+  <div id="joyBase"><div id="joyKnob"></div></div>
+  <button class="tbtn" id="jumpBtn">Jump</button>
+  <button class="tbtn" id="runBtn">Run</button>
+</div>
+
+<script>
+'use strict';
+// =====================================================================
+//  WORLD GENERATION  (same generator and seed as the island map)
+// =====================================================================
+const MW = 1600, MH = 1280, CX = 800, CY = 640, D2R = Math.PI / 180;
+const S = 4;                     // metres per map pixel
+let seed = 20261117;
+const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const P = new Uint8Array(512);
+{ const p = [...Array(256).keys()]; for (let i = 255; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [p[i], p[j]] = [p[j], p[i]]; } for (let i = 0; i < 512; i++) P[i] = p[i & 255]; }
+const fade = t => t * t * t * (t * (t * 6 - 15) + 10);
+const lerp = (a, b, t) => a + t * (b - a);
+function g2(h, x, y) { switch (h & 7) { case 0: return x + y; case 1: return -x + y; case 2: return x - y; case 3: return -x - y; case 4: return x; case 5: return -x; case 6: return y; default: return -y; } }
+function n2(x, y) {
+  const X = Math.floor(x), Y = Math.floor(y); x -= X; y -= Y;
+  const xi = X & 255, yi = Y & 255, u = fade(x), v = fade(y);
+  const aa = P[P[xi] + yi], ab = P[P[xi] + yi + 1], ba = P[P[xi + 1] + yi], bb = P[P[xi + 1] + yi + 1];
+  return lerp(lerp(g2(aa, x, y), g2(ba, x - 1, y), u), lerp(g2(ab, x, y - 1), g2(bb, x - 1, y - 1), u), v);
+}
+function g3(h, x, y, z) { const hh = h & 15, u = hh < 8 ? x : y, v = hh < 4 ? y : (hh === 12 || hh === 14 ? x : z); return ((hh & 1) ? -u : u) + ((hh & 2) ? -v : v); }
+function n3(x, y, z) {
+  const X = Math.floor(x), Y = Math.floor(y), Z = Math.floor(z); x -= X; y -= Y; z -= Z;
+  const xi = X & 255, yi = Y & 255, zi = Z & 255, u = fade(x), v = fade(y), w = fade(z);
+  const A = P[xi] + yi, AA = P[A] + zi, AB = P[A + 1] + zi, B = P[xi + 1] + yi, BA = P[B] + zi, BB = P[B + 1] + zi;
+  return lerp(
+    lerp(lerp(g3(P[AA], x, y, z), g3(P[BA], x - 1, y, z), u), lerp(g3(P[AB], x, y - 1, z), g3(P[BB], x - 1, y - 1, z), u), v),
+    lerp(lerp(g3(P[AA + 1], x, y, z - 1), g3(P[BA + 1], x - 1, y, z - 1), u), lerp(g3(P[AB + 1], x, y - 1, z - 1), g3(P[BB + 1], x - 1, y - 1, z - 1), u), v), w);
+}
+function fbm(x, y, o) { let s = 0, a = 0.5, f = 1, m = 0; for (let k = 0; k < o; k++) { s += a * n2(x * f + k * 17.3, y * f); m += a; a *= 0.5; f *= 2.03; } return s / m; }
+function ridged(x, y, o) { let s = 0, a = 0.5, f = 1, m = 0; for (let k = 0; k < o; k++) { const n = 1 - Math.abs(n2(x * f + k * 9.7, y * f)); s += a * n * n; m += a; a *= 0.5; f *= 2.07; } return s / m; }
+const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+const angd = d => ((d + 540) % 360) - 180;
+
+const EX = CX - 28, EY = CY - 38, HX = CX + 62, HY = CY + 30;
+const BORD = [-60, 0, 60, 120, 180, 240];
+const REG = [
+  { n: 'North', d: 'Rock mines', c: -90, col: [160, 152, 138], fcol: [84, 98, 72], fd: 0.03 },
+  { n: 'Northeast', d: 'Lava flows and desert', c: -30, col: [226, 200, 144], fcol: [90, 100, 60], fd: 0.0 },
+  { n: 'Southeast', d: 'Mid forest with fields', c: 30, col: [150, 176, 98], fcol: [62, 102, 50], fd: 0.42 },
+  { n: 'South', d: 'Dark forest', c: 90, col: [84, 112, 64], fcol: [34, 62, 36], fd: 0.97 },
+  { n: 'Southwest', d: 'Grasslands', c: 150, col: [186, 198, 110], fcol: [84, 112, 58], fd: 0.03 },
+  { n: 'Northwest', d: 'Lakes and swampy forest', c: 210, col: [104, 128, 82], fcol: [50, 82, 56], fd: 0.6 }
+];
+const WR = new Float32Array(6);
+function regW(deg, x, y, out) {
+  const dj = deg + 10 * n2(x / 110, y / 110); let ws = 0;
+  for (let k = 0; k < 6; k++) { const w = Math.max(0, Math.min(1, 1 - (Math.abs(angd(dj - REG[k].c)) - 22) / 16)); out[k] = w; ws += w; }
+  for (let k = 0; k < 6; k++) out[k] /= ws;
+}
+const regIdx = deg => { let b = 0, bd = 999; REG.forEach((g, k) => { const d = Math.abs(angd(deg - g.c)); if (d < bd) { bd = d; b = k; } }); return b; };
+const pol = (deg, r) => [CX + r * Math.cos(deg * D2R), CY + r * Math.sin(deg * D2R)];
+const ISLETS = [[172, 432, 14], [188, 452, 10], [200, 430, 15], [158, 444, 9]].map(([d, r, s]) => { const [x, y] = pol(d, r); return [x, y, s]; });
+function coastR(deg) { const a = deg * D2R; return 355 + 18 * Math.sin(3 * a + 0.7) + 12 * Math.sin(7 * a + 1.3) + 7 * Math.sin(13 * a) - 160 * Math.exp(-Math.pow((deg - 48) / 13, 2)); }
+const cliffW = deg => sm(-70, -56, deg) * (1 - sm(14, 28, deg));
+const borderOff = (k, r) => 16 * n2(r / 70, k * 3.7);
+
+function landValue(x, y, r, deg) {
+  const R = coastR(deg);
+  let L = (R - r) / R + 0.11 * fbm(x / 130, y / 130, 3) + 0.06 * fbm(x / 45 + 7, y / 45, 3) + 0.022 * fbm(x / 11, y / 11, 2);
+  for (const [ix, iy, s] of ISLETS) { const d = Math.hypot(x - ix, y - iy); if (d < s * 2.5) { const li = (s - d) / 120 + 0.04 * fbm(x / 14 + 50, y / 14, 2); if (li > L) L = li; } }
+  return L;
+}
+function elevation(x, y, r, deg, L) {
+  let e = 0.26 * Math.pow(Math.min(1, L * 3.2), 0.75);
+  const ex = x - EX, ey = y - EY, d1 = Math.hypot(ex, ey);
+  e += 0.95 * Math.exp(-Math.pow(d1 / 120, 1.25));
+  const d2 = Math.hypot(x - HX, y - HY);
+  e += 0.72 * Math.exp(-Math.pow(d2 / 58, 1.35)) - 0.38 * Math.exp(-Math.pow(d2 / 15, 2.6));
+  const a1 = Math.atan2(ey, ex) + 0.35 * n2(d1 / 90, 3.3) + 0.12 * n2(x / 40, y / 40), ca = Math.cos(a1), sa = Math.sin(a1);
+  let rr = 0, amp = 0.5, f = 1, nm = 0;
+  for (let o = 0; o < 4; o++) { const n = 1 - Math.abs(n3(ca * 3.6 * f, sa * 3.6 * f, d1 / 120 * f + o * 7.1)); rr += amp * n * n; nm += amp; amp *= 0.5; f *= 2; }
+  rr /= nm;
+  const inland = Math.min(1, L * 5);
+  e += (rr - 0.4) * 0.26 * sm(8, 70, d1) * Math.exp(-d1 / 340) * inland;
+  let br = 0;
+  for (let k = 0; k < 6; k++) { const pd = Math.abs(angd(deg - BORD[k]) * D2R * r + borderOff(k, r)); const v = Math.exp(-(pd / 26) * (pd / 26)); if (v > br) br = v; }
+  e += br * 0.18 * sm(110, 190, r) * inland;
+  e += 0.10 * fbm(x / 85, y / 85, 5) + 0.05 * (ridged(x / 55, y / 55, 4) - 0.45);
+  regW(deg, x, y, WR); if (WR[0] > 0) e += WR[0] * 0.1 * (ridged(x / 22, y / 22, 3) - 0.45) * inland;
+  e += cliffW(deg) * 0.24 * sm(0, 0.025, L) * sm(230, 300, r);
+  return Math.max(0.01, e);
+}
+const landAtMap = (x, y) => { const dx = x - CX, dy = y - CY; return landValue(x, y, Math.hypot(dx, dy), Math.atan2(dy, dx) / D2R); };
+
+// ---- world grid ----
+const GN = 480, EXT = 1920, CELL = 2 * EXT / GN, GV = GN + 1;  // ~8 m cells
+const HEIGHT = 430, SEA_R = 2330, WALL_R = 2150;
+const toMap = (wx, wz) => [CX + wx / S, CY + wz / S];
+const toWorld = (mx, my) => [(mx - CX) * S, (my - CY) * S];
+
+const G = {
+  H: new Float32Array(GV * GV), L: new Float32Array(GV * GV), E: new Float32Array(GV * GV),
+  col: new Float32Array(GV * GV * 3), extra: new Float32Array(GV * GV * 3), // emissive, forest, wet
+  FM: new Float32Array(GV * GV), reg: new Uint8Array(GV * GV), field: new Uint8Array(GV * GV)
+};
+function heightAt(wx, wz) {
+  const gx = (wx + EXT) / CELL, gz = (wz + EXT) / CELL;
+  if (gx < 0 || gz < 0 || gx >= GN || gz >= GN) return -60;
+  const i = Math.floor(gx), j = Math.floor(gz), fx = gx - i, fz = gz - j, H = G.H;
+  const a = H[j * GV + i], b = H[j * GV + i + 1], c = H[(j + 1) * GV + i], d = H[(j + 1) * GV + i + 1];
+  return lerp(lerp(a, b, fx), lerp(c, d, fx), fz);
+}
+function gridIdx(wx, wz) {
+  const i = Math.round((wx + EXT) / CELL), j = Math.round((wz + EXT) / CELL);
+  if (i < 0 || j < 0 || i > GN || j > GN) return -1;
+  return j * GV + i;
+}
+
+// lava flows in map pixels, painted into a mask
+const LAVA = { crust: new Float32Array(MW * MH), core: new Float32Array(MW * MH) };
+function buildLava() {
+  const flows = [];
+  const addFlow = (a0, r0, ph) => {
+    const pts = [];
+    for (let r = r0; r < 460; r += 3) {
+      const a = a0 + 7 * n2(r / 55, ph) + 2 * n2(r / 14, ph + 3);
+      const [x, y] = pol(a, r);
+      if (landAtMap(x, y) < 0.035) break;
+      pts.push([x, y]);
+    }
+    if (pts.length > 10) flows.push(pts);
+    return pts;
+  };
+  [[-53, 120, 1.3], [-43, 135, 5.1], [-19, 128, 8.7], [-8, 140, 12.2]].forEach(([a0, r0, ph]) => {
+    const main = addFlow(a0, r0, ph);
+    if (main.length > 40) addFlow(a0 + (a0 < -30 ? 5 : -5), r0 + main.length * 1.5, ph + 20);
+  });
+  const stamp = (arr, x, y, rad, v) => {
+    const r2 = rad * rad;
+    for (let yy = Math.floor(y - rad); yy <= y + rad; yy++) for (let xx = Math.floor(x - rad); xx <= x + rad; xx++) {
+      const d2 = (xx - x) * (xx - x) + (yy - y) * (yy - y); if (d2 > r2 || xx < 0 || yy < 0 || xx >= MW || yy >= MH) continue;
+      const k = yy * MW + xx, t = v * (1 - Math.sqrt(d2) / rad * 0.5); if (t > arr[k]) arr[k] = t;
+    }
+  };
+  for (const pts of flows) {
+    const n = pts.length;
+    pts.forEach(([x, y], k) => {
+      const w = 3 + 6 * (k / n) + 2.5 * n2(k / 5, x / 50);
+      stamp(LAVA.crust, x, y, Math.max(2, w), 1);
+      if (n2(k / 4, n) <= 0.28) stamp(LAVA.core, x, y, 0.8 + 1.4 * (k / n), 1);
+    });
+  }
+}
+const lavaAt = (arr, mx, my) => { const x = Math.round(mx), y = Math.round(my); return (x < 0 || y < 0 || x >= MW || y >= MH) ? 0 : arr[y * MW + x]; };
+
+// north-west lakes (pool mask in world metres)
+const NWLAKES = [];
+function buildLakes() {
+  let s2 = 991;
+  const r2 = () => (s2 = (s2 * 16807) % 2147483647) / 2147483647;
+  for (let t = 0; t < 400 && NWLAKES.length < 9; t++) {
+    const [mx, my] = pol(186 + r2() * 50, 130 + r2() * 200);
+    const L = landAtMap(mx, my); if (L < 0.06) continue;
+    const [wx, wz] = toWorld(mx, my);
+    NWLAKES.push([wx, wz, (5 + r2() * 8) * S * 1.1]);
+  }
+}
+
+async function generate(progress) {
+  buildLava(); buildLakes();
+  const { H, L: LL, E: EE, col, extra, FM, reg, field } = G;
+  for (let j = 0; j < GV; j++) {
+    for (let i = 0; i < GV; i++) {
+      const k = j * GV + i, wx = -EXT + i * CELL, wz = -EXT + j * CELL;
+      const [x, y] = toMap(wx, wz), dx = x - CX, dy = y - CY, r = Math.hypot(dx, dy), deg = Math.atan2(dy, dx) / D2R;
+      const L = landValue(x, y, r, deg); LL[k] = L;
+      let cr, cg, cb, em = 0, fo = 0, wet = 0;
+      if (L > 0) {
+        const e = elevation(x, y, r, deg, L); EE[k] = e;
+        H[k] = 1.2 + e * HEIGHT;
+        // ---- colour (same recipe as the map, without baked shading) ----
+        regW(deg, x, y, WR);
+        let fd = 0, f0 = 0, f1 = 0, f2 = 0; cr = 0; cg = 0; cb = 0; let best = 0, bw = 0;
+        for (let q = 0; q < 6; q++) { const w = WR[q]; if (!w) continue; const g = REG[q]; cr += w * g.col[0]; cg += w * g.col[1]; cb += w * g.col[2]; f0 += w * g.fcol[0]; f1 += w * g.fcol[1]; f2 += w * g.fcol[2]; fd += w * g.fd; if (w > bw) { bw = w; best = q; } }
+        reg[k] = best;
+        const patch = 1 + 0.07 * fbm(x / 45 + 3, y / 45, 3); cr *= patch; cg *= patch; cb *= patch;
+        const mx = (c, t) => { cr += (c[0] - cr) * t; cg += (c[1] - cg) * t; cb += (c[2] - cb) * t; };
+        mx([176, 160, 118], sm(0.66, 0.95, e) * 0.85);
+        mx([190, 183, 168], sm(0.95, 1.12, e));
+        const d1 = Math.hypot(x - EX, y - EY), d2 = Math.hypot(x - HX, y - HY);
+        if (d1 < 190) mx([250, 250, 247], sm(0.98, 1.12, e) * (1 - sm(110, 175, d1)));
+        mx([132, 96, 72], 0.8 * Math.exp(-Math.pow(d2 / 46, 2.2))); mx([70, 52, 42], 0.7 * Math.exp(-Math.pow(d2 / 11, 2)));
+        const cw = cliffW(deg) * (1 - sm(0.025, 0.07, L));
+        mx([226, 221, 208], cw * 0.75);
+        const fm = sm(1 - fd - 0.07, 1 - fd + 0.07, fbm(x / 60, y / 60, 3) * 1.4 + 0.5) * (1 - sm(0.55, 0.75, e)) * sm(0.01, 0.04, L);
+        FM[k] = fm; fo = fm;
+        const fw = WR[2] * (1 - fm) * (1 - sm(0.45, 0.6, e)) * sm(0.02, 0.06, L) * sm(-0.25, -0.05, fbm(x / 110 + 9, y / 110, 2));
+        if (fw > 0.01) {
+          const u = x * 0.88 + y * 0.47, v = -x * 0.47 + y * 0.88, cu = Math.floor(u / 26), cv = Math.floor(v / 18);
+          const hv = P[(P[cu & 255] + (cv & 255)) & 511] / 255, fu = u / 26 - cu, fv = v / 18 - cv;
+          const FC = [[198, 196, 110], [222, 204, 128], [148, 170, 86], [186, 168, 100], [170, 190, 96], [210, 214, 140]][Math.floor(hv * 6) % 6];
+          const fk = sm(0.12, 0.35, fw); mx(FC, fk * 0.95);
+          if (fu < 0.06 || fv < 0.08) mx([72, 90, 48], fk * 0.8);
+          if (fk > 0.5) field[k] = 1;
+        }
+        if (fm > 0) mx([f0, f1, f2], fm * 0.85);
+        mx([228, 216, 170], (1 - sm(0.004, 0.016, L)) * 0.7 * (1 - cliffW(deg)));
+        // north-west swamp pools + lakes
+        const pw = WR[5] * (1 - sm(0.4, 0.58, e)) * sm(0.03, 0.08, L);
+        if (pw > 0.02) {
+          const pn = fbm(x / 26 + 70, y / 26, 3);
+          mx([92, 118, 96], pw * 0.22);
+          const pool = sm(0.17, 0.21, pn) * pw, edge = (sm(0.13, 0.17, pn) - sm(0.17, 0.21, pn)) * pw;
+          mx([70, 92, 74], edge * 0.6); mx([92, 128, 132], pool * 0.92); wet = Math.max(wet, pool);
+        }
+        for (const [lx, lz, lr] of NWLAKES) {
+          const dd = Math.hypot((wx - lx) / 1.3, (wz - lz) / 0.8) / lr;
+          if (dd < 1.15) { const t = 1 - sm(0.85, 1.05, dd); mx([88, 128, 140], t); wet = Math.max(wet, t); if (dd < 1) H[k] = Math.min(H[k], H[k] - 1.5 * t); }
+        }
+        // lava
+        const crust = lavaAt(LAVA.crust, x, y), core = lavaAt(LAVA.core, x, y);
+        if (crust > 0) { mx([52, 40, 34], crust * 0.92); }
+        if (core > 0) { mx([200, 90, 30], core); em = core; }
+      } else {
+        H[k] = Math.max(-60, -1 + 170 * L);
+        cr = 196; cg = 186; cb = 150;
+        mx2: { const t = sm(0, -0.08, L); cr = lerp(214, 120, t); cg = lerp(204, 130, t); cb = lerp(160, 120, t); }
+      }
+      col[k * 3] = cr / 255; col[k * 3 + 1] = cg / 255; col[k * 3 + 2] = cb / 255;
+      extra[k * 3] = em; extra[k * 3 + 1] = fo; extra[k * 3 + 2] = wet;
+    }
+    if (j % 24 === 0) { progress(0.1 + 0.6 * j / GV, 'Raising the island…'); await new Promise(r => setTimeout(r, 0)); }
+  }
+}
+
+// =====================================================================
+//  WEBGL HELPERS
+// =====================================================================
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl2', { antialias: true, powerPreference: 'high-performance' });
+function compile(vs, fs) {
+  const mk = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) + '\n' + src.split('\n').map((l, i) => (i + 1) + ': ' + l).join('\n')); return s; };
+  const p = gl.createProgram(); gl.attachShader(p, mk(gl.VERTEX_SHADER, vs)); gl.attachShader(p, mk(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  const u = {}; const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for (let i = 0; i < n; i++) { const info = gl.getActiveUniform(p, i); u[info.name.replace('[0]', '')] = gl.getUniformLocation(p, info.name); }
+  return { p, u, a: name => gl.getAttribLocation(p, name) };
+}
+function buf(data, target = gl.ARRAY_BUFFER, usage = gl.STATIC_DRAW) { const b = gl.createBuffer(); gl.bindBuffer(target, b); gl.bufferData(target, data, usage); return b; }
+function attr(prog, name, b, size, stride = 0, off = 0, divisor = 0) {
+  const loc = prog.a(name); if (loc < 0) return -1;
+  gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, size, gl.FLOAT, false, stride, off);
+  gl.vertexAttribDivisor(loc, divisor); return loc;
+}
+// --- tiny matrix library (column-major) ---
+const M4 = {
+  persp(fov, asp, n, f) { const t = 1 / Math.tan(fov / 2), m = new Float32Array(16); m[0] = t / asp; m[5] = t; m[10] = (f + n) / (n - f); m[11] = -1; m[14] = 2 * f * n / (n - f); return m; },
+  mul(a, b) { const o = new Float32Array(16); for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) { let s = 0; for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k]; o[c * 4 + r] = s; } return o; },
+  view(e, f) {
+    let rx = -f[2], rz = f[0]; const rl = Math.hypot(rx, rz) || 1; rx /= rl; rz /= rl; const ry = 0;
+    const ux = ry * f[2] - rz * f[1], uy = rz * f[0] - rx * f[2], uz = rx * f[1] - ry * f[0];
+    const m = new Float32Array(16);
+    m[0] = rx; m[1] = ux; m[2] = -f[0]; m[4] = ry; m[5] = uy; m[6] = -f[1]; m[8] = rz; m[9] = uz; m[10] = -f[2];
+    m[12] = -(rx * e[0] + ry * e[1] + rz * e[2]); m[13] = -(ux * e[0] + uy * e[1] + uz * e[2]); m[14] = f[0] * e[0] + f[1] * e[1] + f[2] * e[2]; m[15] = 1;
+    return m;
+  },
+  inv(m) {
+    const o = new Float32Array(16), [a00, a01, a02, a03, a10, a11, a12, a13, a20, a21, a22, a23, a30, a31, a32, a33] = m;
+    const b00 = a00 * a11 - a01 * a10, b01 = a00 * a12 - a02 * a10, b02 = a00 * a13 - a03 * a10, b03 = a01 * a12 - a02 * a11, b04 = a01 * a13 - a03 * a11, b05 = a02 * a13 - a03 * a12;
+    const b06 = a20 * a31 - a21 * a30, b07 = a20 * a32 - a22 * a30, b08 = a20 * a33 - a23 * a30, b09 = a21 * a32 - a22 * a31, b10 = a21 * a33 - a23 * a31, b11 = a22 * a33 - a23 * a32;
+    let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06; det = 1 / det;
+    o[0] = (a11 * b11 - a12 * b10 + a13 * b09) * det; o[1] = (a02 * b10 - a01 * b11 - a03 * b09) * det; o[2] = (a31 * b05 - a32 * b04 + a33 * b03) * det; o[3] = (a22 * b04 - a21 * b05 - a23 * b03) * det;
+    o[4] = (a12 * b08 - a10 * b11 - a13 * b07) * det; o[5] = (a00 * b11 - a02 * b08 + a03 * b07) * det; o[6] = (a32 * b02 - a30 * b05 - a33 * b01) * det; o[7] = (a20 * b05 - a22 * b02 + a23 * b01) * det;
+    o[8] = (a10 * b10 - a11 * b08 + a13 * b06) * det; o[9] = (a01 * b08 - a00 * b10 - a03 * b06) * det; o[10] = (a30 * b04 - a31 * b02 + a33 * b00) * det; o[11] = (a21 * b02 - a20 * b04 - a23 * b00) * det;
+    o[12] = (a11 * b07 - a10 * b09 - a12 * b06) * det; o[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det; o[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det; o[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
+    return o;
+  }
+};
+
+// =====================================================================
+//  SHADERS
+// =====================================================================
+const COMMON = `
+uniform vec3 uSun, uSunCol, uMoon, uMoonCol, uSkyAmb, uGndAmb, uFogCol, uCam;
+uniform float uFogDen, uTime;
+float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f);
+  return mix(mix(hash(i), hash(i + vec2(1,0)), f.x), mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), f.x), f.y); }
+vec3 lightAt(vec3 N){ return max(dot(N, uSun), 0.) * uSunCol + max(dot(N, uMoon), 0.) * uMoonCol + mix(uGndAmb, uSkyAmb, N.y * .5 + .5); }
+vec3 applyFog(vec3 c, vec3 wp, float k){ float d = length(wp - uCam) * uFogDen * k; return mix(c, uFogCol, 1. - exp(-d * d)); }
+`;
+const SKYFN = `
+uniform float uDay;
+vec3 skyColor(vec3 d){
+  float h = d.y;
+  vec3 dayZ = vec3(.27,.50,.82), dayH = vec3(.70,.82,.92), nZ = vec3(.012,.018,.045), nH = vec3(.05,.07,.13);
+  vec3 up = mix(mix(nH, nZ, clamp(h * 2.2, 0., 1.)), mix(dayH, dayZ, clamp(pow(max(h,0.), .6) * 1.4, 0., 1.)), uDay);
+  float sunLow = clamp(1. - abs(uSun.y) * 4., 0., 1.);
+  float toward = max(dot(normalize(vec3(d.x, 0., d.z)), normalize(vec3(uSun.x, 0., uSun.z))), 0.);
+  up = mix(up, vec3(.98,.58,.32), sunLow * pow(toward, 3.) * exp(-max(h,0.) * 6.) * .75);
+  vec3 space = vec3(.008,.01,.03);
+  float hb = smoothstep(.0, -.12, h);
+  return mix(up, space, hb);
+}
+`;
+
+const TERRAIN_VS = `#version 300 es
+in vec3 aPos; in vec3 aNor; in vec3 aCol; in vec3 aExt;
+uniform mat4 uVP;
+out vec3 vW; out vec3 vN; out vec3 vC; out vec3 vE;
+void main(){ vW = aPos; vN = aNor; vC = aCol; vE = aExt; gl_Position = uVP * vec4(aPos, 1.); }`;
+const TERRAIN_FS = `#version 300 es
+precision highp float;
+${COMMON}
+in vec3 vW; in vec3 vN; in vec3 vC; in vec3 vE;
+out vec4 o;
+void main(){
+  vec3 N = normalize(vN);
+  vec3 c = vC;
+  float n1 = vnoise(vW.xz * .35), n2 = vnoise(vW.xz * 1.7), n3 = vnoise(vW.xz * .05);
+  c *= .86 + .2 * n1 + .1 * n2 + .1 * (n3 - .5);
+  float fo = vE.y;
+  if (fo > 0.) c *= mix(1., .62 + .6 * vnoise(vW.xz * .8), fo);
+  float steep = 1. - smoothstep(.55, .8, N.y);
+  c = mix(c, vec3(.47,.44,.40) * (.8 + .3 * n2), steep * .55 * (1. - vE.x));
+  float wet = vE.z;
+  vec3 Nl = normalize(mix(N, vec3(0,1,0), wet));
+  vec3 col = c * lightAt(Nl);
+  vec3 V = normalize(uCam - vW);
+  col += wet * pow(max(dot(reflect(-uSun, Nl), V), 0.), 80.) * uSunCol * .8;
+  col += wet * .12 * uSkyAmb;
+  float glow = vE.x * (.85 + .3 * sin(uTime * 2. + vW.x * .07 + vW.z * .05) * vnoise(vW.xz * .2 + uTime * .3));
+  col += glow * vec3(1.6, .55, .12);
+  col = applyFog(col, vW, 1.);
+  o = vec4(col, 1.);
+}`;
+
+const WATER_VS = `#version 300 es
+in vec2 aXZ; in float aDepth;
+uniform mat4 uVP;
+out vec3 vW; out float vD;
+void main(){ vW = vec3(aXZ.x, 0., aXZ.y); vD = aDepth; gl_Position = uVP * vec4(vW, 1.); }`;
+const WATER_FS = `#version 300 es
+precision highp float;
+${COMMON}
+${SKYFN}
+in vec3 vW; in float vD;
+out vec4 o;
+void main(){
+  float R = length(vW.xz); if (R > ${SEA_R.toFixed(1)}) discard;
+  vec2 p = vW.xz; float t = uTime;
+  vec2 g = vec2(0.);
+  g += vec2(.8, .3) * cos(dot(p, vec2(.8, .3)) * .09 + t * .9) * .5;
+  g += vec2(-.4, .9) * cos(dot(p, vec2(-.4, .9)) * .13 + t * 1.2) * .35;
+  g += vec2(.6, -.7) * cos(dot(p, vec2(.6, -.7)) * .27 + t * 1.7) * .2;
+  g += vec2(vnoise(p * .6 + t * .4) - .5, vnoise(p * .6 - t * .35 + 7.) - .5) * .6;
+  vec3 N = normalize(vec3(-g.x * .18, 1., -g.y * .18));
+  float d = max(vD, 0.);
+  vec3 shallow = vec3(.50,.80,.78), mid = vec3(.15,.47,.62), deep = vec3(.05,.20,.38);
+  vec3 base = mix(shallow, mid, smoothstep(0., 6., d)); base = mix(base, deep, smoothstep(6., 40., d));
+  base = mix(base, deep * .7, smoothstep(${(SEA_R - 400).toFixed(1)}, ${SEA_R.toFixed(1)}, R));
+  vec3 V = normalize(uCam - vW);
+  vec3 col = base * (lightAt(vec3(0,1,0)) * .9);
+  float fr = pow(1. - max(dot(N, V), 0.), 4.);
+  col = mix(col, skyColor(reflect(-V, N)), fr * .6);
+  vec3 Hh = normalize(uSun + V);
+  col += pow(max(dot(N, Hh), 0.), 220.) * uSunCol * 1.4;
+  float foam = (1. - smoothstep(.15, 1.4, d)) * (.6 + .4 * sin(t * 1.5 + R * .05 + vnoise(p * .3) * 6.));
+  col = mix(col, vec3(.92,.96,.95) * (lightAt(vec3(0,1,0)) * .9 + .1), clamp(foam, 0., 1.) * .8);
+  col = applyFog(col, vW, .8);
+  o = vec4(col, 1.);
+}`;
+
+const SKY_VS = `#version 300 es
+out vec2 vNdc;
+void main(){ vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2) * 2. - 1.; vNdc = p; gl_Position = vec4(p, 1., 1.); }`;
+const SKY_FS = `#version 300 es
+precision highp float;
+${COMMON}
+${SKYFN}
+uniform mat4 uInvVP;
+in vec2 vNdc; out vec4 o;
+float h3(vec3 p){ p = fract(p * .3183099 + .1); p *= 17.; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+void main(){
+  vec4 w = uInvVP * vec4(vNdc, 1., 1.); vec3 d = normalize(w.xyz / w.w);
+  vec3 col = skyColor(d);
+  // stars: always below the horizon (open space), above it only at night
+  vec3 c = floor(d * 260.); float s = h3(c);
+  float star = smoothstep(.9965, 1., s) * (.5 + .5 * h3(c + 3.1));
+  float vis = mix(1. - uDay, 1., smoothstep(.02, -.1, d.y));
+  col += star * vis * vec3(.95,.92,1.);
+  // faint nebula below the shard
+  float neb = vnoise(d.xz * 3. + d.y * 2.) * vnoise(d.zx * 5. + 4.);
+  col += smoothstep(.0, -.4, d.y) * neb * vec3(.10,.05,.16) * 1.4;
+  // sun + moon
+  float sd = dot(d, uSun);
+  col += smoothstep(.9993, .9997, sd) * vec3(1.6,1.45,1.2) + pow(max(sd, 0.), 280.) * vec3(1.,.8,.55) * .7 + pow(max(sd,0.), 12.) * vec3(.5,.35,.2) * .25 * uDay;
+  float md = dot(d, uMoon);
+  col += smoothstep(.9994, .9997, md) * vec3(.85,.88,1.) * (1. - uDay) + pow(max(md,0.), 400.) * vec3(.3,.35,.5) * (1. - uDay);
+  o = vec4(col, 1.);
+}`;
+
+const OBJ_VS = `#version 300 es
+in vec3 aPos; in vec3 aNor; in vec3 aCol; in float aTint;
+in vec3 iPos; in vec2 iSR; in vec3 iTint;
+uniform mat4 uVP; uniform vec3 uCam; uniform float uTime, uCull;
+out vec3 vW; out vec3 vN; out vec3 vC;
+void main(){
+  float dist = length(iPos.xz - uCam.xz);
+  float s = iSR.x * smoothstep(uCull, uCull - 160., dist);
+  float c = cos(iSR.y), sn = sin(iSR.y);
+  vec3 p = aPos * s;
+  p.x += aTint * sin(uTime * 1.3 + iPos.x * .05 + iPos.z * .07) * .02 * aPos.y * s;
+  p = vec3(c * p.x - sn * p.z, p.y, sn * p.x + c * p.z);
+  vN = vec3(c * aNor.x - sn * aNor.z, aNor.y, sn * aNor.x + c * aNor.z);
+  vC = mix(aCol, aCol * iTint, aTint);
+  vW = iPos + p;
+  gl_Position = uVP * vec4(vW, 1.);
+}`;
+const OBJ_FS = `#version 300 es
+precision highp float;
+${COMMON}
+in vec3 vW; in vec3 vN; in vec3 vC; out vec4 o;
+void main(){ vec3 N = normalize(vN); vec3 col = vC * lightAt(N); o = vec4(applyFog(col, vW, 1.), 1.); }`;
+
+const CLOUD_VS = `#version 300 es
+in vec2 aCorner; in vec4 iPuff; in float iShade;
+uniform mat4 uVP; uniform vec3 uRight, uUp;
+out vec2 vUv; out float vShade; out vec3 vW;
+void main(){
+  vUv = aCorner * .5 + .5; vShade = iShade;
+  vW = iPuff.xyz + (uRight * aCorner.x + uUp * aCorner.y) * iPuff.w;
+  gl_Position = uVP * vec4(vW, 1.);
+}`;
+const CLOUD_FS = `#version 300 es
+precision highp float;
+${COMMON}
+uniform sampler2D uTex; uniform float uDay;
+in vec2 vUv; in float vShade; in vec3 vW; out vec4 o;
+void main(){
+  vec4 t = texture(uTex, vUv);
+  if (t.a < .01) discard;
+  float lit = clamp(.45 + .65 * vUv.y + .2 * (t.r - .5), 0., 1.2) * vShade;
+  vec3 light = uSunCol * max(uSun.y + .25, .0) * .9 + uMoonCol * .6 + uSkyAmb * 1.1;
+  vec3 col = mix(vec3(.55,.60,.70), vec3(1.), lit) * light;
+  col = applyFog(col, vW, .35);
+  o = vec4(col * t.a, t.a);
+}`;
+
+// =====================================================================
+//  GEOMETRY BUILDERS (flat shaded, for trees / rocks / mines)
+// =====================================================================
+function Geo() { return { p: [], n: [], c: [], t: [] }; }
+function tri(g, a, b, c, col, tint) {
+  const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+  let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
+  for (const v of [a, b, c]) { g.p.push(v[0], v[1], v[2]); g.n.push(nx, ny, nz); g.c.push(col[0], col[1], col[2]); g.t.push(tint); }
+}
+function cone(g, y0, y1, r, sides, col, tint, jit = 0, rng = Math.random) {
+  const ring = []; for (let i = 0; i < sides; i++) { const a = i / sides * Math.PI * 2, rr = r * (1 + (rng() - 0.5) * jit); ring.push([Math.cos(a) * rr, y0 + (rng() - 0.5) * jit * r * 0.3, Math.sin(a) * rr]); }
+  const apex = [(rng() - 0.5) * jit * r * 0.3, y1, (rng() - 0.5) * jit * r * 0.3], base = [0, y0, 0];
+  for (let i = 0; i < sides; i++) { const a = ring[i], b = ring[(i + 1) % sides]; const sh = 0.9 + rng() * 0.2; tri(g, a, apex, b, col.map(v => v * sh), tint); tri(g, a, b, base, col.map(v => v * 0.7), tint); }
+}
+function cylinder(g, y0, y1, r0, r1, sides, col, tint) {
+  for (let i = 0; i < sides; i++) {
+    const a = i / sides * Math.PI * 2, b = (i + 1) / sides * Math.PI * 2;
+    const p0 = [Math.cos(a) * r0, y0, Math.sin(a) * r0], p1 = [Math.cos(b) * r0, y0, Math.sin(b) * r0], p2 = [Math.cos(b) * r1, y1, Math.sin(b) * r1], p3 = [Math.cos(a) * r1, y1, Math.sin(a) * r1];
+    tri(g, p0, p3, p1, col, tint); tri(g, p1, p3, p2, col, tint);
+  }
+}
+const ICO = (() => { const t = (1 + Math.sqrt(5)) / 2; const v = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]].map(p => { const l = Math.hypot(...p); return p.map(x => x / l); });
+  const f = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]]; return { v, f }; })();
+function blob(g, cx, cy, cz, rad, sy, col, tint, jit, rng, subdiv = 1) {
+  let verts = ICO.v.map(p => p.slice()), faces = ICO.f.map(f => f.slice());
+  for (let s = 0; s < subdiv; s++) {
+    const cache = {}, nf = [];
+    const mid = (a, b) => { const k = a < b ? a + '_' + b : b + '_' + a; if (cache[k] !== undefined) return cache[k]; const m = [(verts[a][0] + verts[b][0]) / 2, (verts[a][1] + verts[b][1]) / 2, (verts[a][2] + verts[b][2]) / 2]; const l = Math.hypot(...m); verts.push(m.map(x => x / l)); return cache[k] = verts.length - 1; };
+    for (const [a, b, c] of faces) { const ab = mid(a, b), bc = mid(b, c), ca = mid(c, a); nf.push([a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]); }
+    faces = nf;
+  }
+  const vv = verts.map(p => { const k = 1 + (rng() - 0.5) * jit; return [cx + p[0] * rad * k, cy + p[1] * rad * sy * k, cz + p[2] * rad * k]; });
+  for (const [a, b, c] of faces) { const sh = 0.88 + rng() * 0.24; tri(g, vv[a], vv[b], vv[c], col.map(v => v * sh), tint); }
+}
+function box(g, cx, cy, cz, sx, sy, sz, col, tint) {
+  const x0 = cx - sx / 2, x1 = cx + sx / 2, y0 = cy - sy / 2, y1 = cy + sy / 2, z0 = cz - sz / 2, z1 = cz + sz / 2;
+  const q = (a, b, c, d) => { tri(g, a, b, c, col, tint); tri(g, a, c, d, col, tint); };
+  q([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]); q([x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]);
+  q([x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]); q([x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]);
+  q([x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]); q([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]);
+}
+function seeded(s) { return () => (s = (s * 16807) % 2147483647) / 2147483647; }
+function buildKinds() {
+  const r = seeded(4242), W = [1, 1, 1], BARK = [0.36, 0.25, 0.17], GREY = [0.42, 0.40, 0.37];
+  const pine = Geo(); cylinder(pine, 0, 3, 0.35, 0.22, 6, BARK, 0); cone(pine, 2, 7, 2.6, 7, W, 1, 0.15, r); cone(pine, 4.2, 9.5, 2.0, 7, W, 1, 0.15, r); cone(pine, 6.5, 11.5, 1.3, 6, W, 1, 0.15, r);
+  const broad = Geo(); cylinder(broad, 0, 4, 0.42, 0.28, 6, BARK, 0); blob(broad, 0, 6.2, 0, 3.4, 0.85, W, 1, 0.25, r, 1); blob(broad, 1.3, 5.2, 0.8, 2.0, 0.8, W.map(v => v * 0.92), 1, 0.25, r, 0);
+  const dead = Geo(); cylinder(dead, 0, 7, 0.35, 0.12, 5, GREY, 0); box(dead, 0.9, 4.5, 0, 1.8, 0.18, 0.18, GREY, 0); box(dead, -0.7, 5.6, 0.3, 1.4, 0.16, 0.16, GREY, 0); blob(dead, 0, 7, 0, 0.9, 0.6, W, 1, 0.4, r, 0);
+  const bush = Geo(); blob(bush, 0, 0.7, 0, 1.3, 0.75, W, 1, 0.3, r, 1);
+  const rock = Geo(); blob(rock, 0, 0.35, 0, 1.6, 0.65, W, 1, 0.45, r, 1);
+  const mine = Geo(); const WOOD = [0.42, 0.29, 0.18];
+  blob(mine, 0, 1, -5.5, 8, 0.75, [0.95, 0.95, 0.95], 1, 0.35, r, 1);
+  box(mine, -2.1, 2, 0.6, 0.45, 4, 0.45, WOOD, 0); box(mine, 2.1, 2, 0.6, 0.45, 4, 0.45, WOOD, 0); box(mine, 0, 4.15, 0.6, 5.2, 0.5, 0.6, WOOD, 0);
+  box(mine, 0, 1.9, 0.1, 3.75, 3.8, 0.4, [0.04, 0.035, 0.03], 0);
+  box(mine, -0.8, 0.05, 5, 0.12, 0.1, 9, [0.3, 0.3, 0.32], 0); box(mine, 0.8, 0.05, 5, 0.12, 0.1, 9, [0.3, 0.3, 0.32], 0);
+  for (let i = 0; i < 6; i++) box(mine, 0, 0.0, 1.5 + i * 1.4, 2.2, 0.12, 0.3, WOOD, 0);
+  box(mine, 2.6, 0.7, 6, 1.6, 1.0, 2.2, [0.33, 0.30, 0.28], 0);
+  return { pine, broad, dead, bush, rock, mine };
+}
+
+// =====================================================================
+//  SCATTER  (trees, bushes, rocks, mines)
+// =====================================================================
+const NCH = 16, CHW = 2 * EXT / NCH;
+function scatter() {
+  const r = seeded(777);
+  const lists = { pine: [], broad: [], dead: [], bush: [], rock: [], mine: [] };
+  const add = (kind, x, z, s, tint) => { const y = heightAt(x, z) - 0.15; const v = 0.9 + r() * 0.2; lists[kind].push([x, y, z, s, r() * Math.PI * 2, tint[0] * v, tint[1] * v, tint[2] * v]); };
+  const mines = [[-112, 190], [-74, 175], [-100, 305], [-66, 300]].map(([d, rr]) => { const [mx, my] = pol(d, rr); return toWorld(mx, my); });
+  const nearMine = (x, z) => mines.some(([a, b]) => Math.hypot(a - x, b - z) < 22);
+  const lavaW = (x, z) => { const [mx, my] = toMap(x, z); return lavaAt(LAVA.crust, mx, my); };
+  const STEP = 7;
+  for (let z = -EXT + 4; z < EXT - 4; z += STEP) for (let x = -EXT + 4; x < EXT - 4; x += STEP) {
+    const jx = x + (r() - 0.5) * STEP, jz = z + (r() - 0.5) * STEP, k = gridIdx(jx, jz); if (k < 0) continue;
+    const L = G.L[k], e = G.E[k], h = G.H[k]; if (L < 0.02 || h < 2) continue;
+    if (G.extra[k * 3 + 2] > 0.3 || nearMine(jx, jz) || lavaW(jx, jz) > 0) continue;
+    const reg = G.reg[k], fm = G.FM[k], q = r();
+    const [mx, my] = toMap(jx, jz), dEv = Math.hypot(mx - EX, my - EY);
+    if (e > 0.72 || dEv < 95) { if (q < 0.02) add('rock', jx, jz, 1 + r() * 2.5, [0.62, 0.6, 0.57]); continue; }
+    const slope = Math.abs(heightAt(jx + 3, jz) - heightAt(jx - 3, jz)) + Math.abs(heightAt(jx, jz + 3) - heightAt(jx, jz - 3));
+    if (slope > 7) { if (q < 0.05) add('rock', jx, jz, 0.8 + r() * 2, [0.55, 0.52, 0.48]); continue; }
+    switch (reg) {
+      case 0: // North: rock mines
+        if (q < 0.035) add('rock', jx, jz, 0.7 + r() * 2.2, [0.62, 0.6, 0.56]); else if (q < 0.045) add('pine', jx, jz, 0.7 + r() * 0.4, [0.24, 0.34, 0.24]); break;
+      case 1: // Northeast: lava + desert
+        if (q < 0.012) add('rock', jx, jz, 0.6 + r() * 1.8, [0.3, 0.26, 0.24]); else if (q < 0.02) add('rock', jx, jz, 0.5 + r() * 1.2, [0.74, 0.62, 0.45]); else if (q < 0.023) add('dead', jx, jz, 0.6 + r() * 0.4, [0.55, 0.5, 0.42]); break;
+      case 2: // Southeast: mid forest + fields
+        if (G.field[k]) { if (q < 0.004) add('broad', jx, jz, 0.8 + r() * 0.4, [0.36, 0.5, 0.22]); break; }
+        if (fm > 0.4 && q < 0.26 * fm) add(r() < 0.75 ? 'broad' : 'pine', jx, jz, 0.8 + r() * 0.5, [0.27, 0.44, 0.2]); else if (q < 0.015) add('bush', jx, jz, 0.7 + r() * 0.6, [0.32, 0.46, 0.22]); break;
+      case 3: // South: dark forest
+        if (q < 0.22 * Math.max(fm, 0.5)) add(r() < 0.65 ? 'pine' : 'broad', jx, jz, 0.9 + r() * 0.6, r() < 0.5 ? [0.11, 0.21, 0.13] : [0.15, 0.25, 0.14]); else if (q < 0.26) add('bush', jx, jz, 0.6 + r() * 0.5, [0.17, 0.27, 0.15]); break;
+      case 4: // Southwest: grasslands
+        if (q < 0.004) add('broad', jx, jz, 0.8 + r() * 0.5, [0.38, 0.5, 0.22]); else if (q < 0.016) add('bush', jx, jz, 0.5 + r() * 0.6, [0.42, 0.52, 0.24]); else if (q < 0.019) add('rock', jx, jz, 0.4 + r(), [0.62, 0.6, 0.55]); break;
+      case 5: // Northwest: lakes + swampy forest
+        if (fm > 0.3 && q < 0.2 * fm) { const p = r(); add(p < 0.6 ? 'broad' : p < 0.85 ? 'dead' : 'pine', jx, jz, 0.75 + r() * 0.45, [0.30, 0.38, 0.22]); }
+        else if (q < 0.03) add('bush', jx, jz, 0.6 + r() * 0.6, [0.32, 0.4, 0.24]); else if (q < 0.036) add('dead', jx, jz, 0.6 + r() * 0.4, [0.45, 0.43, 0.38]); break;
+    }
+  }
+  for (const [x, z] of mines) {
+    const [mx, my] = toMap(x, z), [ex, ez] = toWorld(EX, EY);
+    const face = Math.atan2(x - ex, z - ez);   // face away from Everest
+    const y = heightAt(x, z) - 0.3; lists.mine.push([x, y, z, 1, -face, 0.6, 0.58, 0.55]);
+  }
+  // sort each list into spatial chunks
+  const out = {};
+  for (const kind in lists) {
+    const arr = lists[kind].map(v => ({ v, c: Math.min(NCH - 1, Math.max(0, Math.floor((v[2] + EXT) / CHW))) * NCH + Math.min(NCH - 1, Math.max(0, Math.floor((v[0] + EXT) / CHW))) }));
+    arr.sort((a, b) => a.c - b.c);
+    const data = new Float32Array(arr.length * 8), start = new Int32Array(NCH * NCH).fill(-1), count = new Int32Array(NCH * NCH);
+    arr.forEach((o, i) => { data.set(o.v, i * 8); if (start[o.c] < 0) start[o.c] = i; count[o.c]++; });
+    out[kind] = { data, start, count, n: arr.length };
+  }
+  out.minesWorld = mines;
+  return out;
+}
+
+// =====================================================================
+//  CLOUDWALL
+// =====================================================================
+function cloudPuffs() {
+  const r = seeded(5150), arr = [];
+  for (let layer = 0; layer < 7; layer++) {
+    const y = -20 + layer * 70, n = layer < 5 ? 120 : 80 - layer * 6;
+    for (let i = 0; i < n; i++) {
+      const a = (i + r() * 0.8) / n * Math.PI * 2;
+      for (let ring = 0; ring < 2; ring++) {
+        const R = 2280 + ring * 150 + (r() - 0.5) * 120 + 40 * Math.sin(a * 5 + layer);
+        const size = (layer < 5 ? 110 : 85) + r() * 70 - ring * 10;
+        arr.push([Math.cos(a) * R, y + (r() - 0.5) * 40 + (ring ? 20 : 0), Math.sin(a) * R, size, 0.82 + r() * 0.25 + layer * 0.02]);
+      }
+    }
+  }
+  return arr;
+}
+function puffTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d');
+  const r = seeded(31);
+  for (let i = 0; i < 14; i++) {
+    const px = 64 + (r() - 0.5) * 50, py = 70 + (r() - 0.5) * 36 - i * 0.6, rad = 22 + r() * 22;
+    const g = x.createRadialGradient(px, py - rad * 0.3, rad * 0.1, px, py, rad);
+    const b = 200 + Math.floor(r() * 55);
+    g.addColorStop(0, `rgba(${b},${b},${b},0.9)`); g.addColorStop(0.6, `rgba(${b - 20},${b - 20},${b - 20},0.55)`); g.addColorStop(1, 'rgba(170,170,170,0)');
+    x.fillStyle = g; x.beginPath(); x.arc(px, py, rad, 0, Math.PI * 2); x.fill();
+  }
+  const img = x.getImageData(0, 0, 128, 128), d = img.data;
+  for (let i = 0; i < 128 * 128; i++) { const px = i % 128, py = (i / 128) | 0, rr = Math.hypot(px - 64, py - 64) / 64; d[i * 4 + 3] *= Math.max(0, 1 - Math.pow(rr, 4)); }
+  x.putImageData(img, 0, 0);
+  return c;
+}
+
+// =====================================================================
+//  MINIMAP
+// =====================================================================
+let miniImg = null;
+function buildMinimap() {
+  const N = 264, c = document.createElement('canvas'); c.width = c.height = N; const x = c.getContext('2d'); const img = x.createImageData(N, N), d = img.data;
+  const span = 2700;
+  for (let py = 0; py < N; py++) for (let px = 0; px < N; px++) {
+    const wx = (px / N * 2 - 1) * span, wz = (py / N * 2 - 1) * span, R = Math.hypot(wx, wz), o = (py * N + px) * 4;
+    let r, g, b;
+    const k = gridIdx(wx, wz);
+    if (R > SEA_R) { const t = sm(SEA_R, SEA_R + 300, R); r = 235 - 200 * t; g = 238 - 200 * t; b = 242 - 190 * t; }
+    else if (k >= 0 && G.L[k] > 0) {
+      const h = G.H[k], hx = heightAt(wx + 12, wz + 12); const sh = Math.max(0.6, Math.min(1.25, 1 - (hx - h) * 0.03));
+      r = G.col[k * 3] * 255 * sh; g = G.col[k * 3 + 1] * 255 * sh; b = G.col[k * 3 + 2] * 255 * sh;
+      if (G.extra[k * 3] > 0) { r = 240; g = 120; b = 40; }
+    } else { const dep = -heightAt(wx, wz), t = sm(0, 30, dep); r = 140 - 110 * t; g = 205 - 135 * t; b = 205 - 90 * t; }
+    d[o] = r; d[o + 1] = g; d[o + 2] = b; d[o + 3] = 255;
+  }
+  x.putImageData(img, 0, 0); miniImg = c;
+}
+
+// =====================================================================
+//  GAME STATE, INPUT, SAVE
+// =====================================================================
+const SPAWN = (() => { const [mx, my] = pol(150, 232); const [x, z] = toWorld(mx, my); return { x, z, yaw: Math.atan2(-x, z), pitch: -0.05 }; })();
+const state = { x: SPAWN.x, y: 0, z: SPAWN.z, yaw: SPAWN.yaw, pitch: SPAWN.pitch, vy: 0, onGround: true, hours: 9, day: 1, visited: [], playSec: 0, running: false };
+const keys = {};
+let dirtySince = 0, lastSaved = { x: 1e9, z: 1e9 };
+
+const touch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+if (touch) document.body.classList.add('touch');
+
+// --- keyboard ---
+addEventListener('keydown', e => { keys[e.code] = true; if (e.code === 'Space') { jump(); e.preventDefault(); } if (e.code.startsWith('Arrow')) e.preventDefault(); });
+addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+// --- mouse look ---
+let mouseDown = false, mx0 = 0, my0 = 0;
+canvas.addEventListener('mousedown', e => { mouseDown = true; mx0 = e.clientX; my0 = e.clientY; canvas.focus(); });
+addEventListener('mouseup', () => mouseDown = false);
+addEventListener('mousemove', e => {
+  if (!mouseDown) return;
+  look(e.clientX - mx0, e.clientY - my0, 0.0042); mx0 = e.clientX; my0 = e.clientY;
+});
+function look(dx, dy, k) { state.yaw += dx * k; state.pitch = Math.max(-1.3, Math.min(1.3, state.pitch - dy * k)); }
+// --- touch: left = joystick, right = look ---
+const joy = { id: null, ox: 0, oy: 0, x: 0, y: 0 }, lookT = { id: null, x: 0, y: 0 };
+const joyBase = document.getElementById('joyBase'), joyKnob = document.getElementById('joyKnob');
+canvas.addEventListener('touchstart', e => {
+  for (const t of e.changedTouches) {
+    if (t.clientX < innerWidth * 0.45 && joy.id === null) { joy.id = t.identifier; joy.ox = t.clientX; joy.oy = t.clientY; joy.x = joy.y = 0; joyBase.style.display = 'block'; joyBase.style.left = t.clientX + 'px'; joyBase.style.top = t.clientY + 'px'; joyKnob.style.transform = ''; }
+    else if (lookT.id === null) { lookT.id = t.identifier; lookT.x = t.clientX; lookT.y = t.clientY; }
+  }
+  e.preventDefault();
+}, { passive: false });
+canvas.addEventListener('touchmove', e => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === joy.id) { let dx = t.clientX - joy.ox, dy = t.clientY - joy.oy; const l = Math.hypot(dx, dy), m = 50; if (l > m) { dx *= m / l; dy *= m / l; } joy.x = dx / m; joy.y = dy / m; joyKnob.style.transform = `translate(${dx}px,${dy}px)`; }
+    else if (t.identifier === lookT.id) { look(t.clientX - lookT.x, t.clientY - lookT.y, 0.0065); lookT.x = t.clientX; lookT.y = t.clientY; }
+  }
+  e.preventDefault();
+}, { passive: false });
+const endTouch = e => { for (const t of e.changedTouches) { if (t.identifier === joy.id) { joy.id = null; joy.x = joy.y = 0; joyBase.style.display = 'none'; } if (t.identifier === lookT.id) lookT.id = null; } };
+canvas.addEventListener('touchend', endTouch); canvas.addEventListener('touchcancel', endTouch);
+document.getElementById('jumpBtn').addEventListener('touchstart', e => { jump(); e.preventDefault(); }, { passive: false });
+const runBtn = document.getElementById('runBtn');
+runBtn.addEventListener('touchstart', e => { state.running = !state.running; runBtn.classList.toggle('on', state.running); e.preventDefault(); }, { passive: false });
+function jump() { if (state.onGround) { state.vy = 6; state.onGround = false; } }
+
+// --- toast / banner ---
+const toastEl = document.getElementById('toast'); let toastT = 0;
+function toast(msg, sec = 2.5) { toastEl.textContent = msg; toastEl.style.opacity = 1; toastT = sec; }
+const bannerEl = document.getElementById('banner'); let bannerT = 0;
+function banner(t, s) { document.getElementById('bannerT').textContent = t; document.getElementById('bannerS').textContent = s; bannerEl.style.opacity = 1; bannerT = 3.5; }
+
+// --- save system: per-player database when available, browser storage otherwise ---
+const save = { db: null, uid: null, mode: 'none', busy: false, pending: false };
+const LS_KEY = 'worldshard-save-v1';
+function snapshot() { return { v: 1, x: +state.x.toFixed(2), z: +state.z.toFixed(2), yaw: +state.yaw.toFixed(4), pitch: +state.pitch.toFixed(4), hours: +state.hours.toFixed(3), day: state.day, visited: state.visited.slice(), playSec: Math.round(state.playSec), savedAt: Date.now() }; }
+function applySave(s) {
+  if (!s || s.v !== 1 || !isFinite(s.x) || !isFinite(s.z)) return false;
+  state.x = s.x; state.z = s.z; state.yaw = s.yaw || 0; state.pitch = s.pitch || 0; state.hours = s.hours ?? 9; state.day = s.day || 1;
+  state.visited = Array.isArray(s.visited) ? s.visited.filter(v => typeof v === 'string').slice(0, 20) : []; state.playSec = s.playSec || 0;
+  state.y = groundY(state.x, state.z) + 1.7; lastSaved = { x: state.x, z: state.z };
+  return true;
+}
+async function initSave() {
+  let loaded = null;
+  try {
+    if (window.claude && typeof window.claude.use === 'function') {
+      const [db, user] = await Promise.all([window.claude.use('db'), window.claude.use('user')]);
+      const uid = user ? await user.id() : null;
+      if (db && uid) {
+        save.db = db; save.uid = uid; save.mode = 'account';
+        const snap = await Promise.race([db.doc('data/users/' + uid + '/save').get(), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 6000))]);
+        if (snap.exists) loaded = snap.data();
+      }
+    }
+  } catch (e) { save.db = null; save.mode = 'none'; }
+  if (!save.db) {
+    try { const raw = localStorage.getItem(LS_KEY); save.mode = 'browser'; if (raw) loaded = JSON.parse(raw); } catch (e) { save.mode = 'none'; }
+  }
+  document.getElementById('saveWhere').textContent = save.mode === 'account' ? 'Progress saves to your account, so it follows you to other devices.' : save.mode === 'browser' ? 'Progress saves in this browser only.' : 'Saving is not available here.';
+  return loaded;
+}
+async function doSave(manual) {
+  if (save.mode === 'none') { if (manual) toast('Saving is not available here'); return; }
+  if (save.busy) { save.pending = true; return; }
+  save.busy = true; const data = snapshot();
+  try {
+    if (save.mode === 'account') await save.db.doc('data/users/' + save.uid + '/save').set(data);
+    else localStorage.setItem(LS_KEY, JSON.stringify(data));
+    lastSaved = { x: state.x, z: state.z }; dirtySince = 0;
+    document.getElementById('saveState').textContent = 'Saved · ' + fmtTime(state.hours) + (save.mode === 'account' ? ' · account' : ' · this browser');
+    if (manual) toast('Game saved');
+  } catch (e) {
+    if (save.mode === 'account' && e && e.code === 'invalid_argument') { save.mode = 'browser'; save.busy = false; return doSave(manual); }
+    document.getElementById('saveState').textContent = 'Save failed — will retry';
+  }
+  save.busy = false;
+  if (save.pending) { save.pending = false; setTimeout(() => doSave(false), 1500); }
+}
+async function resetSave() {
+  try { if (save.mode === 'account') await save.db.doc('data/users/' + save.uid + '/save').delete(); else if (save.mode === 'browser') localStorage.removeItem(LS_KEY); } catch (e) {}
+  Object.assign(state, { x: SPAWN.x, z: SPAWN.z, yaw: SPAWN.yaw, pitch: SPAWN.pitch, hours: 9, day: 1, visited: [], playSec: 0, vy: 0 });
+  state.y = groundY(state.x, state.z) + 1.7; curRegion = null;
+  document.getElementById('saveState').textContent = 'New game';
+  toast('New game started');
+}
+addEventListener('visibilitychange', () => { if (document.hidden) doSave(false); });
+
+const menu = document.getElementById('menu');
+// --- save files: the player keeps them wherever they like (Google Drive) ---
+const fileNote = document.getElementById('fileNote'), copyBox = document.getElementById('copyBox'), copyText = document.getElementById('copyText');
+let downloads = null;
+(async () => { try { downloads = (window.claude && typeof window.claude.use === 'function') ? await window.claude.use('downloads') : null; } catch (e) { downloads = null; } })();
+function saveJSON() { return JSON.stringify(Object.assign({ game: 'WorldShard' }, snapshot()), null, 1); }
+function findSave(v) {   // dig the save out of a file's text (tolerates extra text around it)
+  if (typeof v === 'string') {
+    const t = v.trim(), i = t.indexOf('{'), j = t.lastIndexOf('}'); if (i < 0 || j < i) return null;
+    try { return findSave(JSON.parse(t.slice(i, j + 1))); } catch (e) { return null; }
+  }
+  if (v && typeof v === 'object' && v.game === 'WorldShard' && v.v === 1) return v;
+  return null;
+}
+async function fileSave() {
+  const data = saveJSON(), name = `WorldShard save - Day ${state.day} ${fmtTime(state.hours).replace(':', '.')}.json`;
+  copyBox.style.display = 'none';
+  if (downloads) {
+    try { await downloads.save({ filename: name, data }); fileNote.textContent = 'Save file ready: "' + name + '". Keep it in Google Drive to load it on any device.'; toast('Save file ready'); doSave(false); return; }
+    catch (e) {
+      if (e && e.code === 'declined') { fileNote.textContent = 'Save file cancelled.'; return; }
+      if (e && e.code === 'rate_limited') { fileNote.textContent = 'A save prompt is already open. Finish that one first.'; return; }
+    }
+  }
+  copyText.value = data; copyBox.style.display = 'flex'; fileNote.textContent = '';
+}
+document.getElementById('copyBtn').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(copyText.value); toast('Save copied'); }
+  catch (e) { copyText.focus(); copyText.select(); toast('Select the text and copy it'); }
+});
+const fileIn = document.getElementById('fileIn');
+document.getElementById('fileSave').addEventListener('click', () => { fileSave(); });
+document.getElementById('fileLoad').addEventListener('click', () => { fileIn.value = ''; fileIn.click(); });
+fileIn.addEventListener('change', async () => {
+  const f = fileIn.files && fileIn.files[0]; if (!f) return;
+  try {
+    const s = findSave(await f.text());
+    if (!s || !applySave(s)) { fileNote.textContent = 'That file is not a WorldShard save.'; return; }
+    curRegion = null; toast('Loaded ' + f.name); fileNote.textContent = 'Loaded "' + f.name + '".'; menu.classList.remove('open'); doSave(false);
+  } catch (e) { fileNote.textContent = 'Could not read that file.'; }
+});
+
+// --- menu ---
+document.getElementById('menuBtn').addEventListener('click', () => { menu.classList.toggle('open'); document.getElementById('confirm').classList.remove('open'); });
+document.getElementById('saveNow').addEventListener('click', () => { doSave(true); menu.classList.remove('open'); });
+document.getElementById('toSpawn').addEventListener('click', () => { state.x = SPAWN.x; state.z = SPAWN.z; state.yaw = SPAWN.yaw; state.y = groundY(state.x, state.z) + 1.7; menu.classList.remove('open'); toast('Back at the start point'); });
+document.getElementById('newGame').addEventListener('click', () => document.getElementById('confirm').classList.add('open'));
+document.getElementById('confirmNo').addEventListener('click', () => document.getElementById('confirm').classList.remove('open'));
+document.getElementById('confirmYes').addEventListener('click', () => { resetSave(); menu.classList.remove('open'); });
+
+// =====================================================================
+//  PLAYER
+// =====================================================================
+function groundY(x, z) { const h = heightAt(x, z); return h < 0 ? Math.max(h, -0.9) : h; }
+const fmtTime = h => { const hh = Math.floor(h) % 24, mm = Math.floor((h % 1) * 60); return String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0'); };
+let curRegion = null, regionCand = null, regionCandT = 0;
+function regionName(x, z) {
+  const R = Math.hypot(x, z), h = heightAt(x, z);
+  if (h < -0.5 && R > 200) return ['Rim Sea', 'The bowl of water around the island'];
+  const [mx, my] = toMap(x, z);
+  if (Math.hypot(mx - EX, my - EY) < 70 && h > 300) return ['Mount Everest', 'The highest peak on the shard'];
+  if (Math.hypot(mx - HX, my - HY) < 45 && h > 200) return ['Mount St. Helens', 'The volcano beside Everest'];
+  const g = REG[regIdx(Math.atan2(my - CY, mx - CX) / D2R)];
+  return [g.n, g.d];
+}
+function updatePlayer(dt) {
+  let fx = 0, fz = 0;
+  if (keys.KeyW || keys.ArrowUp) fz += 1; if (keys.KeyS || keys.ArrowDown) fz -= 1;
+  if (keys.KeyD) fx += 1; if (keys.KeyA) fx -= 1;
+  if (keys.ArrowLeft) state.yaw -= 1.8 * dt; if (keys.ArrowRight) state.yaw += 1.8 * dt;
+  if (joy.id !== null) { fx += joy.x; fz -= joy.y; }
+  const mag = Math.hypot(fx, fz); if (mag > 1) { fx /= mag; fz /= mag; }
+  const ground = heightAt(state.x, state.z), swimming = ground < -1.0;
+  const run = keys.ShiftLeft || keys.ShiftRight || state.running;
+  let speed = swimming ? (run ? 7 : 3.5) : (run ? 13 : 5.5);
+  const sy = Math.sin(state.yaw), cy = Math.cos(state.yaw);
+  let vx = (sy * fz + cy * fx) * speed, vz = (-cy * fz + sy * fx) * speed;
+  if (!swimming && (vx || vz)) {   // slow down on steep uphill
+    const ahead = heightAt(state.x + vx * 0.25, state.z + vz * 0.25) - ground, grade = ahead / (Math.hypot(vx, vz) * 0.25);
+    if (grade > 0.35) { const k = Math.max(0.15, 1 - (grade - 0.35) * 1.4); vx *= k; vz *= k; }
+  }
+  let nx = state.x + vx * dt, nz = state.z + vz * dt;
+  const R = Math.hypot(nx, nz);
+  if (R > WALL_R) { nx *= WALL_R / R; nz *= WALL_R / R; if (toastT <= 0) toast('The Cloudwall churns ahead — it can only be crossed late in the game.', 3.5); }
+  state.x = nx; state.z = nz;
+  const g = groundY(state.x, state.z);
+  if (swimming) { state.y += (0.55 - state.y) * Math.min(1, dt * 4); state.vy = 0; state.onGround = true; }
+  else {
+    state.vy -= 16 * dt; state.y += state.vy * dt;
+    const eye = g + 1.7;
+    if (state.y <= eye) { if (!state.onGround && state.vy < -3) {} state.y = eye; state.vy = 0; state.onGround = true; }
+    else if (state.y > eye + 0.25) state.onGround = false;
+  }
+  if (mag > 0.05) dirtySince += dt;
+  // region banner
+  const [rn, rd] = regionName(state.x, state.z);
+  if (rn !== curRegion) {
+    if (rn === regionCand) { regionCandT += dt; if (regionCandT > 0.8) { curRegion = rn; banner(rn, rd); if (!state.visited.includes(rn)) { state.visited.push(rn); dirtySince = 99; } } }
+    else { regionCand = rn; regionCandT = 0; }
+  }
+}
+
+// =====================================================================
+//  MAIN
+// =====================================================================
+const loadEl = document.getElementById('loading'), barFill = document.getElementById('barFill'), loadMsg = document.getElementById('loadMsg');
+const progress = (f, msg) => { barFill.style.width = (f * 100).toFixed(0) + '%'; if (msg) loadMsg.textContent = msg; };
+
+async function main() {
+  if (!gl) { loadMsg.textContent = 'This device or browser does not support WebGL 2, which the game needs.'; return; }
+  const savePromise = initSave();
+  progress(0.05, 'Charting the shard…');
+  await new Promise(r => setTimeout(r, 30));
+  await generate(progress);
+  progress(0.72, 'Growing forests…'); await new Promise(r => setTimeout(r, 0));
+  const kinds = buildKinds(), inst = scatter();
+  progress(0.82, 'Filling the Rim Sea…'); await new Promise(r => setTimeout(r, 0));
+  buildMinimap();
+
+  // ---------- programs ----------
+  const pT = compile(TERRAIN_VS, TERRAIN_FS), pW = compile(WATER_VS, WATER_FS), pS = compile(SKY_VS, SKY_FS), pO = compile(OBJ_VS, OBJ_FS), pC = compile(CLOUD_VS, CLOUD_FS);
+
+  // ---------- terrain mesh ----------
+  const pos = new Float32Array(GV * GV * 3), nor = new Float32Array(GV * GV * 3);
+  for (let j = 0; j < GV; j++) for (let i = 0; i < GV; i++) {
+    const k = j * GV + i; pos[k * 3] = -EXT + i * CELL; pos[k * 3 + 1] = G.H[k]; pos[k * 3 + 2] = -EXT + j * CELL;
+    const hl = G.H[j * GV + Math.max(0, i - 1)], hr = G.H[j * GV + Math.min(GN, i + 1)], hd = G.H[Math.max(0, j - 1) * GV + i], hu = G.H[Math.min(GN, j + 1) * GV + i];
+    let nx = hl - hr, ny = 2 * CELL, nz = hd - hu; const l = Math.hypot(nx, ny, nz); nor[k * 3] = nx / l; nor[k * 3 + 1] = ny / l; nor[k * 3 + 2] = nz / l;
+  }
+  const idx = new Uint32Array(GN * GN * 6); let q = 0;
+  for (let j = 0; j < GN; j++) for (let i = 0; i < GN; i++) { const a = j * GV + i, b = a + 1, c = a + GV, d = c + 1; idx[q++] = a; idx[q++] = c; idx[q++] = b; idx[q++] = b; idx[q++] = c; idx[q++] = d; }
+  const vaoT = gl.createVertexArray(); gl.bindVertexArray(vaoT);
+  attr(pT, 'aPos', buf(pos), 3); attr(pT, 'aNor', buf(nor), 3); attr(pT, 'aCol', buf(G.col), 3); attr(pT, 'aExt', buf(G.extra), 3);
+  buf(idx, gl.ELEMENT_ARRAY_BUFFER); const nIdx = idx.length;
+
+  // ---------- water mesh ----------
+  const WN = 200, WE = SEA_R + 20, wxz = new Float32Array((WN + 1) * (WN + 1) * 2), wd = new Float32Array((WN + 1) * (WN + 1));
+  for (let j = 0; j <= WN; j++) for (let i = 0; i <= WN; i++) { const k = j * (WN + 1) + i, x = -WE + i * 2 * WE / WN, z = -WE + j * 2 * WE / WN; wxz[k * 2] = x; wxz[k * 2 + 1] = z; wd[k] = -heightAt(x, z); }
+  const widx = new Uint32Array(WN * WN * 6); q = 0;
+  for (let j = 0; j < WN; j++) for (let i = 0; i < WN; i++) { const a = j * (WN + 1) + i, b = a + 1, c = a + WN + 1, d = c + 1; widx[q++] = a; widx[q++] = c; widx[q++] = b; widx[q++] = b; widx[q++] = c; widx[q++] = d; }
+  const vaoW = gl.createVertexArray(); gl.bindVertexArray(vaoW);
+  attr(pW, 'aXZ', buf(wxz), 2); attr(pW, 'aDepth', buf(wd), 1); buf(widx, gl.ELEMENT_ARRAY_BUFFER); const nWIdx = widx.length;
+
+  // ---------- sky ----------
+  const vaoS = gl.createVertexArray();
+
+  // ---------- objects ----------
+  const objs = [];
+  for (const kind of ['pine', 'broad', 'dead', 'bush', 'rock', 'mine']) {
+    const g = kinds[kind], I = inst[kind]; if (!I.n) continue;
+    const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+    attr(pO, 'aPos', buf(new Float32Array(g.p)), 3); attr(pO, 'aNor', buf(new Float32Array(g.n)), 3); attr(pO, 'aCol', buf(new Float32Array(g.c)), 3); attr(pO, 'aTint', buf(new Float32Array(g.t)), 1);
+    const ib = buf(I.data);
+    const locs = { iPos: attr(pO, 'iPos', ib, 3, 32, 0, 1), iSR: attr(pO, 'iSR', ib, 2, 32, 12, 1), iTint: attr(pO, 'iTint', ib, 3, 32, 20, 1) };
+    objs.push({ kind, vao, ib, locs, nv: g.p.length / 3, I, cull: kind === 'mine' ? 2600 : kind === 'rock' ? 900 : kind === 'bush' ? 600 : 1150 });
+  }
+
+  // ---------- clouds ----------
+  const puffs = cloudPuffs(), nP = puffs.length, puffData = new Float32Array(nP * 5);
+  const vaoC = gl.createVertexArray(); gl.bindVertexArray(vaoC);
+  attr(pC, 'aCorner', buf(new Float32Array([-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1])), 2);
+  const cb = buf(puffData, gl.ARRAY_BUFFER, gl.DYNAMIC_DRAW);
+  attr(pC, 'iPuff', cb, 4, 20, 0, 1); attr(pC, 'iShade', cb, 1, 20, 16, 1);
+  const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, puffTexture());
+  gl.generateMipmap(gl.TEXTURE_2D); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+  let sortTick = 0;
+  function sortClouds() {
+    const order = puffs.map((p, i) => [i, (p[0] - state.x) ** 2 + (p[2] - state.z) ** 2 + (p[1] - state.y) ** 2]).sort((a, b) => b[1] - a[1]);
+    order.forEach(([i], j) => { const p = puffs[i]; puffData[j * 5] = p[0]; puffData[j * 5 + 1] = p[1]; puffData[j * 5 + 2] = p[2]; puffData[j * 5 + 3] = p[3]; puffData[j * 5 + 4] = p[4]; });
+    gl.bindBuffer(gl.ARRAY_BUFFER, cb); gl.bufferData(gl.ARRAY_BUFFER, puffData, gl.DYNAMIC_DRAW);
+  }
+
+  // ---------- save / spawn ----------
+  progress(0.9, 'Looking for your save…');
+  const saved = await Promise.race([savePromise, new Promise(r => setTimeout(() => r(null), 7000))]);
+  state.y = groundY(state.x, state.z) + 1.7;
+  const resumed = applySave(saved);
+  document.getElementById('saveState').textContent = resumed ? 'Save loaded' : 'New game';
+  if (window.__pose) Object.assign(state, window.__pose, { y: groundY(window.__pose.x, window.__pose.z) + 1.7 });
+  progress(1, resumed ? 'Welcome back.' : 'Ready.');
+
+  // ---------- render loop ----------
+  let last = performance.now(), mmTick = 0;
+  const miniCtx = document.getElementById('mini').getContext('2d'), compassStrip = document.getElementById('compassStrip');
+  const marks = []; for (let d = 0; d < 360; d += 15) marks.push([d, ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][d / 45] || (d % 45 ? '·' : '')]);
+  compassStrip.innerHTML = [-1, 0, 1].map(o => marks.map(([d, l]) => `<span data-d="${d + o * 360}">${l}</span>`).join('')).join('');
+  const spans = [...compassStrip.children];
+  const U = {};
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (started) {
+      updatePlayer(dt); state.playSec += dt;
+      state.hours += dt / 60;                         // 1 game hour per real minute
+      if (state.hours >= 24) { state.hours -= 24; state.day++; }
+      if (dirtySince > 12 && Math.hypot(state.x - lastSaved.x, state.z - lastSaved.z) > 3) doSave(false);
+    }
+    if (toastT > 0) { toastT -= dt; if (toastT <= 0) toastEl.style.opacity = 0; }
+    if (bannerT > 0) { bannerT -= dt; if (bannerT <= 0) bannerEl.style.opacity = 0; }
+
+    // ---- sun / sky ----
+    const a = (state.hours / 24 - 0.25) * Math.PI * 2;
+    let sun = [Math.cos(a), Math.sin(a), 0.32]; { const l = Math.hypot(...sun); sun = sun.map(v => v / l); }
+    const moon = sun.map(v => -v);
+    const day = sm(-0.12, 0.18, sun[1]);
+    const warm = sm(0.45, 0.05, sun[1]);
+    const sunCol = [0.92, 0.86 - 0.26 * warm, 0.76 - 0.42 * warm].map(v => v * sm(-0.05, 0.12, sun[1]));
+    const moonCol = [0.16, 0.2, 0.32].map(v => v * sm(-0.05, 0.25, moon[1]));
+    const skyAmb = [0.22 * day + 0.08, 0.27 * day + 0.1, 0.36 * day + 0.17], gndAmb = [0.13 * day + 0.03, 0.12 * day + 0.03, 0.10 * day + 0.04];
+    const fogCol = [0.70 * day + 0.05 * (1 - day), 0.80 * day + 0.07 * (1 - day), 0.90 * day + 0.13 * (1 - day)];
+
+    // ---- camera ----
+    const w = canvas.clientWidth, h = canvas.clientHeight, dpr = Math.min(devicePixelRatio || 1, touch ? 1.25 : 1.5);
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    const cp = Math.cos(state.pitch), f = [Math.sin(state.yaw) * cp, Math.sin(state.pitch), -Math.cos(state.yaw) * cp];
+    const eye = [state.x, state.y, state.z];
+    const proj = M4.persp(65 * D2R, w / h, 0.4, 9000), view = M4.view(eye, f), vp = M4.mul(proj, view);
+    const viewRot = view.slice(); viewRot[12] = viewRot[13] = viewRot[14] = 0;
+    const invVP = M4.inv(M4.mul(proj, viewRot));
+    const t = now / 1000;
+    const setCommon = (p) => {
+      const u = p.u; gl.useProgram(p.p);
+      if (u.uVP) gl.uniformMatrix4fv(u.uVP, false, vp);
+      if (u.uSun) gl.uniform3fv(u.uSun, sun); if (u.uSunCol) gl.uniform3fv(u.uSunCol, sunCol);
+      if (u.uMoon) gl.uniform3fv(u.uMoon, moon); if (u.uMoonCol) gl.uniform3fv(u.uMoonCol, moonCol);
+      if (u.uSkyAmb) gl.uniform3fv(u.uSkyAmb, skyAmb); if (u.uGndAmb) gl.uniform3fv(u.uGndAmb, gndAmb);
+      if (u.uFogCol) gl.uniform3fv(u.uFogCol, fogCol); if (u.uFogDen) gl.uniform1f(u.uFogDen, 0.00030);
+      if (u.uCam) gl.uniform3fv(u.uCam, eye); if (u.uTime) gl.uniform1f(u.uTime, t); if (u.uDay) gl.uniform1f(u.uDay, day);
+    };
+    // sky
+    gl.disable(gl.DEPTH_TEST); gl.depthMask(false); gl.disable(gl.BLEND);
+    setCommon(pS); gl.uniformMatrix4fv(pS.u.uInvVP, false, invVP); gl.bindVertexArray(vaoS); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.depthFunc(gl.LEQUAL); gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    // terrain
+    setCommon(pT); gl.bindVertexArray(vaoT); gl.drawElements(gl.TRIANGLES, nIdx, gl.UNSIGNED_INT, 0);
+    // objects (only chunks near the player)
+    gl.disable(gl.CULL_FACE);
+    setCommon(pO);
+    for (const o of objs) {
+      gl.uniform1f(pO.u.uCull, o.cull); gl.bindVertexArray(o.vao); gl.bindBuffer(gl.ARRAY_BUFFER, o.ib);
+      const cr = Math.ceil(o.cull / CHW), ci = Math.floor((state.x + EXT) / CHW), cj = Math.floor((state.z + EXT) / CHW);
+      for (let jj = Math.max(0, cj - cr); jj <= Math.min(NCH - 1, cj + cr); jj++) {
+        let s0 = -1, cnt = 0;
+        for (let ii = Math.max(0, ci - cr); ii <= Math.min(NCH - 1, ci + cr); ii++) { const c = jj * NCH + ii; if (o.I.count[c]) { if (s0 < 0) s0 = o.I.start[c]; cnt += o.I.count[c]; } }
+        if (cnt) {
+          const off = s0 * 32;
+          gl.vertexAttribPointer(o.locs.iPos, 3, gl.FLOAT, false, 32, off); gl.vertexAttribPointer(o.locs.iSR, 2, gl.FLOAT, false, 32, off + 12); gl.vertexAttribPointer(o.locs.iTint, 3, gl.FLOAT, false, 32, off + 20);
+          gl.drawArraysInstanced(gl.TRIANGLES, 0, o.nv, cnt);
+        }
+      }
+    }
+    gl.enable(gl.CULL_FACE);
+    // water
+    gl.disable(gl.CULL_FACE); setCommon(pW); gl.bindVertexArray(vaoW); gl.drawElements(gl.TRIANGLES, nWIdx, gl.UNSIGNED_INT, 0);
+    // clouds
+    if (sortTick-- <= 0) { sortClouds(); sortTick = 12; }
+    gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+    setCommon(pC); gl.uniform3f(pC.u.uRight, view[0], view[4], view[8]); gl.uniform3f(pC.u.uUp, view[1], view[5], view[9]);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex); gl.uniform1i(pC.u.uTex, 0);
+    gl.bindVertexArray(vaoC); gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, nP);
+    gl.depthMask(true); gl.disable(gl.BLEND);
+
+    // ---- HUD ----
+    document.getElementById('clock').textContent = 'Day ' + state.day + ' · ' + fmtTime(state.hours);
+    const hd = ((state.yaw / D2R) % 360 + 360) % 360, cw = compassStrip.parentElement.clientWidth;
+    for (const s of spans) { const d = +s.dataset.d; s.style.left = (cw / 2 + (d - hd) * cw / 180) + 'px'; }
+    if (mmTick-- <= 0) {
+      mmTick = 3; const N = 264, span = 2700;
+      miniCtx.save(); miniCtx.clearRect(0, 0, N, N); miniCtx.beginPath(); miniCtx.arc(N / 2, N / 2, N / 2, 0, Math.PI * 2); miniCtx.clip();
+      miniCtx.drawImage(miniImg, 0, 0);
+      const px = (state.x / span * 0.5 + 0.5) * N, pz = (state.z / span * 0.5 + 0.5) * N;
+      miniCtx.translate(px, pz); miniCtx.rotate(state.yaw);
+      miniCtx.fillStyle = '#fff'; miniCtx.strokeStyle = '#000'; miniCtx.lineWidth = 2;
+      miniCtx.beginPath(); miniCtx.moveTo(0, -11); miniCtx.lineTo(7, 8); miniCtx.lineTo(0, 4); miniCtx.lineTo(-7, 8); miniCtx.closePath(); miniCtx.stroke(); miniCtx.fill();
+      miniCtx.restore();
+    }
+    requestAnimationFrame(frame);
+  }
+  let started = false;
+  requestAnimationFrame(frame);
+  const go = () => { if (started) return; started = true; loadEl.style.opacity = 0; setTimeout(() => loadEl.style.display = 'none', 800); canvas.focus(); const [rn, rd] = regionName(state.x, state.z); curRegion = rn; banner(rn, rd); if (!state.visited.includes(rn)) state.visited.push(rn); };
+  const startBtn = document.getElementById('start'); startBtn.style.display = 'block'; startBtn.addEventListener('click', go);
+  if (window.__autostart) go();
+}
+main().catch(e => { loadMsg.textContent = 'Something went wrong while building the world.'; console.error(e); window.__err = String(e && e.stack || e); });
+</script>
+</body>
+</html>

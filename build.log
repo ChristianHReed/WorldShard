@@ -1,0 +1,896 @@
+[1m[92m    Updating[0m crates.io index
+[1m[92m     Locking[0m 529 packages to highest compatible versions
+[1m[92m      Adding[0m getrandom v0.2.17 [1m[33m(available: v0.4.3)[0m
+[1m[92m      Adding[0m getrandom v0.3.4 [1m[33m(available: v0.4.3)[0m
+[1m[92m Downloading[0m crates ...
+[1m[92m  Downloaded[0m async-channel v2.5.0
+[1m[92m  Downloaded[0m async-executor v1.14.1
+[1m[92m  Downloaded[0m async-fs v2.2.0
+[1m[92m  Downloaded[0m accesskit v0.24.1
+[1m[92m  Downloaded[0m async-broadcast v0.7.2
+[1m[92m  Downloaded[0m async-lock v3.5.0
+[1m[92m  Downloaded[0m bevy_internal v0.20.1
+[1m[92m  Downloaded[0m bevy_platform v0.20.1
+[1m[92m  Downloaded[0m document-features v0.2.12
+[1m[92m  Downloaded[0m bevy_render_macros v0.20.1
+[1m[92m  Downloaded[0m bit-set v0.10.0
+[1m[92m  Downloaded[0m colorchoice v1.0.5
+[1m[92m  Downloaded[0m concurrent-queue v2.5.0
+[1m[92m  Downloaded[0m bevy_ptr v0.20.1
+[1m[92m  Downloaded[0m bevy_scene v0.20.1
+[1m[92m  Downloaded[0m byteorder v1.5.0
+[1m[92m  Downloaded[0m bevy_animation_macros v0.20.1
+[1m[92m  Downloaded[0m cfg-if v1.0.5
+[1m[92m  Downloaded[0m bevy_time v0.20.1
+[1m[92m  Downloaded[0m bevy_utils v0.20.1
+[1m[92m  Downloaded[0m bevy_window v0.20.1
+[1m[92m  Downloaded[0m atomic-waker v1.1.2
+[1m[92m  Downloaded[0m bevy_ui v0.20.1
+[1m[92m  Downloaded[0m bevy_app v0.20.1
+[1m[92m  Downloaded[0m bevy_gizmos_render v0.20.1
+[1m[92m  Downloaded[0m codespan-reporting v0.13.1
+[1m[92m  Downloaded[0m bevy_state_macros v0.20.1
+[1m[92m  Downloaded[0m const-fnv1a-hash v1.1.0
+[1m[92m  Downloaded[0m bevy_gizmos v0.20.1
+[1m[92m  Downloaded[0m bevy_state v0.20.1
+[1m[92m  Downloaded[0m bevy_winit v0.20.1
+[1m[92m  Downloaded[0m bevy_a11y v0.20.1
+[1m[92m  Downloaded[0m bevy_image v0.20.1
+[1m[92m  Downloaded[0m bevy_shader v0.20.1
+[1m[92m  Downloaded[0m bevy_macro_utils v0.20.1
+[1m[92m  Downloaded[0m bevy_light v0.20.1
+[1m[92m  Downloaded[0m byteorder-lite v0.1.0
+[1m[92m  Downloaded[0m cfg_aliases v0.2.2
+[1m[92m  Downloaded[0m base64 v0.23.1
+[1m[92m  Downloaded[0m bevy_material_macros v0.20.1
+[1m[92m  Downloaded[0m bevy_camera v0.20.1
+[1m[92m  Downloaded[0m bevy_extract_macros v0.20.1
+[1m[92m  Downloaded[0m bevy_transform v0.20.1
+[1m[92m  Downloaded[0m bevy_ui_render v0.20.1
+[1m[92m  Downloaded[0m linebender_resource_handle v0.1.1
+[1m[92m  Downloaded[0m tap v1.0.1
+[1m[92m  Downloaded[0m sys-locale v0.3.2
+[1m[92m  Downloaded[0m ctrlc v3.5.3
+[1m[92m  Downloaded[0m cursor-icon v1.2.0
+[1m[92m  Downloaded[0m bevy_gizmos_macros v0.20.1
+[1m[92m  Downloaded[0m rustc-hash v1.1.0
+[1m[92m  Downloaded[0m nonmax v0.5.5
+[1m[92m  Downloaded[0m bevy_derive v0.20.1
+[1m[92m  Downloaded[0m bevy_encase_derive v0.20.1
+[1m[92m  Downloaded[0m bevy_ecs_macro_logic v0.20.1
+[1m[92m  Downloaded[0m funty v2.0.0
+[1m[92m  Downloaded[0m gethostname v1.1.0
+[1m[92m  Downloaded[0m atomicow v1.2.0
+[1m[92m  Downloaded[0m bevy_text v0.20.1
+[1m[92m  Downloaded[0m bevy_ui_widgets v0.20.1
+[1m[92m  Downloaded[0m gltf-derive v1.4.1
+[1m[92m  Downloaded[0m downcast-rs v2.0.2
+[1m[92m  Downloaded[0m inventory v0.3.25
+[1m[92m  Downloaded[0m pin-project-internal v1.2.0
+[1m[92m  Downloaded[0m piper v0.2.5
+[1m[92m  Downloaded[0m raw-window-handle v0.6.2
+[1m[92m  Downloaded[0m static_assertions v1.1.0
+[1m[92m  Downloaded[0m lock_api v0.4.14
+[1m[92m  Downloaded[0m ordered-float v5.5.1
+[1m[92m  Downloaded[0m presser v0.3.1
+[1m[92m  Downloaded[0m bevy_scene_macros v0.20.1
+[1m[92m  Downloaded[0m blocking v1.7.0
+[1m[92m  Downloaded[0m bytemuck_derive v1.12.1
+[1m[92m  Downloaded[0m bevy_ecs_macros v0.20.1
+[1m[92m  Downloaded[0m is_terminal_polyfill v1.70.2
+[1m[92m  Downloaded[0m variadics_please v2.0.0
+[1m[92m  Downloaded[0m parking_lot_core v0.9.12
+[1m[92m  Downloaded[0m spirv v0.4.0+sdk-1.4.341.0
+[1m[92m  Downloaded[0m async-task v4.7.1
+[1m[92m  Downloaded[0m bevy_diagnostic v0.20.1
+[1m[92m  Downloaded[0m bevy_log v0.20.1
+[1m[92m  Downloaded[0m bit-vec v0.9.1
+[1m[92m  Downloaded[0m autocfg v1.5.1
+[1m[92m  Downloaded[0m bevy_clipboard v0.20.1
+[1m[92m  Downloaded[0m wgpu-naga-bridge v30.0.2
+[1m[92m  Downloaded[0m bevy_asset_macros v0.20.1
+[1m[92m  Downloaded[0m bevy_gltf v0.20.1
+[1m[92m  Downloaded[0m bevy_input v0.20.1
+[1m[92m  Downloaded[0m bevy_shape v0.20.1
+[1m[92m  Downloaded[0m cc v1.12.0
+[1m[92m  Downloaded[0m version_check v0.9.5
+[1m[92m  Downloaded[0m const_panic v0.2.17
+[1m[92m  Downloaded[0m encase_derive_impl v0.12.1
+[1m[92m  Downloaded[0m bevy_audio v0.20.1
+[1m[92m  Downloaded[0m bevy_extract v0.20.1
+[1m[92m  Downloaded[0m bevy_material v0.20.1
+[1m[92m  Downloaded[0m bevy_sprite v0.20.1
+[1m[92m  Downloaded[0m wgpu-core-deps-windows-linux-android v30.0.2
+[1m[92m  Downloaded[0m bevy_mikktspace v1.0.0
+[1m[92m  Downloaded[0m bitflags v2.13.2
+[1m[92m  Downloaded[0m find-msvc-tools v0.1.16
+[1m[92m  Downloaded[0m futures-lite v2.6.1
+[1m[92m  Downloaded[0m bevy_reflect_derive v0.20.1
+[1m[92m  Downloaded[0m const_soft_float v0.1.4
+[1m[92m  Downloaded[0m event-listener v5.4.2
+[1m[92m  Downloaded[0m fdeflate v0.3.7
+[1m[92m  Downloaded[0m adler2 v2.0.1
+[1m[92m  Downloaded[0m bevy_input_focus v0.20.1
+[1m[92m  Downloaded[0m libloading v0.8.9
+[1m[92m  Downloaded[0m wyz v0.5.1
+[1m[92m  Downloaded[0m async-io v2.6.0
+[1m[92m  Downloaded[0m bevy_tasks v0.20.1
+[1m[92m  Downloaded[0m bytemuck v1.25.2
+[1m[92m  Downloaded[0m libm v0.2.16
+[1m[92m  Downloaded[0m naga-types v30.0.2
+[1m[92m  Downloaded[0m calloop v0.13.0
+[1m[92m  Downloaded[0m lalrpop-util v0.23.2
+[1m[92m  Downloaded[0m thiserror v2.0.21
+[1m[92m  Downloaded[0m bevy_math v0.20.1
+[1m[92m  Downloaded[0m bevy_sprite_render v0.20.1
+[1m[92m  Downloaded[0m cpufeatures v0.3.1
+[1m[92m  Downloaded[0m event-listener-strategy v0.5.4
+[1m[92m  Downloaded[0m futures-task v0.3.34
+[1m[92m  Downloaded[0m inflections v1.1.1
+[1m[92m  Downloaded[0m num-rational v0.4.2
+[1m[92m  Downloaded[0m radsort v0.1.1
+[1m[92m  Downloaded[0m thiserror v1.0.69
+[1m[92m  Downloaded[0m toml_parser v1.1.7+spec-1.1.0
+[1m[92m  Downloaded[0m unicode-ident v1.0.27
+[1m[92m  Downloaded[0m utf8_iter v1.1.0
+[1m[92m  Downloaded[0m utf8parse v0.2.2
+[1m[92m  Downloaded[0m web-time v1.1.0
+[1m[92m  Downloaded[0m yoke v0.8.4
+[1m[92m  Downloaded[0m accesskit_winit v0.33.2
+[1m[92m  Downloaded[0m bevy_animation v0.20.1
+[1m[92m  Downloaded[0m bevy_anti_alias v0.20.1
+[1m[92m  Downloaded[0m bevy_color v0.20.1
+[1m[92m  Downloaded[0m bevy_dev_tools v0.20.1
+[1m[92m  Downloaded[0m bevy_mesh v0.20.1
+[1m[92m  Downloaded[0m bevy_picking v0.20.1
+[1m[92m  Downloaded[0m bevy_post_process v0.20.1
+[1m[92m  Downloaded[0m bevy_world_serialization v0.20.1
+[1m[92m  Downloaded[0m bumpalo v3.20.4
+[1m[92m  Downloaded[0m crossbeam-utils v0.8.23
+[1m[92m  Downloaded[0m font-types v0.12.7
+[1m[92m  Downloaded[0m futures-channel v0.3.34
+[1m[92m  Downloaded[0m guillotiere v0.7.0
+[1m[92m  Downloaded[0m half v2.7.1
+[1m[92m  Downloaded[0m icu_locale_fallback v2.4.0
+[1m[92m  Downloaded[0m lexical-write-float v1.0.6
+[1m[92m  Downloaded[0m logos-derive v0.16.1
+[1m[92m  Downloaded[0m nu-ansi-term v0.50.3
+[1m[92m  Downloaded[0m serde_core v1.0.229
+[1m[92m  Downloaded[0m simd-adler32 v0.3.10
+[1m[92m  Downloaded[0m stable_deref_trait v1.2.1
+[1m[92m  Downloaded[0m toml_edit v0.25.21+spec-1.1.0
+[1m[92m  Downloaded[0m typewit v1.15.2
+[1m[92m  Downloaded[0m uuid v1.29.3
+[1m[92m  Downloaded[0m wesl-macros v0.6.0
+[1m[92m  Downloaded[0m anstyle-parse v1.0.0
+[1m[92m  Downloaded[0m bevy_curve v0.20.1
+[1m[92m  Downloaded[0m bevy_reflect v0.20.1
+[1m[92m  Downloaded[0m crc32fast v1.5.6
+[1m[92m  Downloaded[0m euclid v0.22.14
+[1m[92m  Downloaded[0m hashbrown v0.16.1
+[1m[92m  Downloaded[0m hashbrown v0.17.2
+[1m[92m  Downloaded[0m icu_properties v2.4.0
+[1m[92m  Downloaded[0m icu_properties_data v2.4.0
+[1m[92m  Downloaded[0m itertools v0.14.0
+[1m[92m  Downloaded[0m memchr v2.8.3
+[1m[92m  Downloaded[0m memmap2 v0.9.12
+[1m[92m  Downloaded[0m rustc-hash v2.1.3
+[1m[92m  Downloaded[0m unicode-segmentation v1.13.3
+[1m[92m  Downloaded[0m unsynn v0.3.0
+[1m[92m  Downloaded[0m web-task v1.1.3
+[1m[92m  Downloaded[0m zeno v0.3.3
+[1m[92m  Downloaded[0m zerocopy-derive v0.8.66
+[1m[92m  Downloaded[0m bevy_asset v0.20.1
+[1m[92m  Downloaded[0m bevy_render v0.20.1
+[1m[92m  Downloaded[0m bitvec v1.1.1
+[1m[92m  Downloaded[0m blake3 v1.8.8
+[1m[92m  Downloaded[0m cpal v0.17.3
+[1m[92m  Downloaded[0m glow v0.17.0
+[1m[92m  Downloaded[0m harfrust v0.12.0
+[1m[92m  Downloaded[0m hashbrown v0.15.5
+[1m[92m  Downloaded[0m zerocopy v0.8.66
+[1m[92m  Downloaded[0m zerovec-derive v0.11.7
+[1m[92m  Downloaded[0m crossbeam-queue v0.3.14
+[1m[92m  Downloaded[0m mutants v0.0.3
+[1m[92m  Downloaded[0m rustc_version v0.4.1
+[1m[92m  Downloaded[0m serde_spanned v1.1.3
+[1m[92m  Downloaded[0m wesl v0.6.0
+[1m[92m  Downloaded[0m wesl-core v0.1.0
+[1m[92m  Downloaded[0m dasp_sample v0.11.0
+[1m[92m  Downloaded[0m foldhash v0.2.0
+[1m[92m  Downloaded[0m displaydoc v0.2.7
+[1m[92m  Downloaded[0m icu_locale_fallback_data v2.4.0
+[1m[92m  Downloaded[0m matchers v0.2.0
+[1m[92m  Downloaded[0m anstream v1.0.0
+[1m[92m  Downloaded[0m wgpu-hal v30.0.2
+[1m[92m  Downloaded[0m either v1.19.0
+[1m[92m  Downloaded[0m icu_normalizer_data v2.4.0
+[1m[92m  Downloaded[0m xkbcommon-dl v0.4.2
+[1m[92m  Downloaded[0m derive_more-impl v2.1.1
+[1m[92m  Downloaded[0m hexasphere v19.0.0
+[1m[92m  Downloaded[0m pkg-config v0.3.34
+[1m[92m  Downloaded[0m zerovec v0.11.9
+[1m[92m  Downloaded[0m allocator-api2 v0.2.22
+[1m[92m  Downloaded[0m console_error_panic_hook v0.1.7
+[1m[92m  Downloaded[0m twox-hash v2.1.5
+[1m[92m  Downloaded[0m wasm-bindgen-futures v0.4.80
+[1m[92m  Downloaded[0m crossbeam-channel v0.5.17
+[1m[92m  Downloaded[0m derive_more v2.1.1
+[1m[92m  Downloaded[0m weak-table v0.4.0
+[1m[92m  Downloaded[0m stackfuture v0.3.1
+[1m[92m  Downloaded[0m as-raw-xcb-connection v1.0.1
+[1m[92m  Downloaded[0m scopeguard v1.2.0
+[1m[92m  Downloaded[0m toml_datetime v1.1.3+spec-1.1.0
+[1m[92m  Downloaded[0m percent-encoding v2.3.2
+[1m[92m  Downloaded[0m profiling v1.0.18
+[1m[92m  Downloaded[0m zlib-rs v0.6.9
+[1m[92m  Downloaded[0m approx v0.5.1
+[1m[92m  Downloaded[0m logos v0.16.1
+[1m[92m  Downloaded[0m once_cell v1.21.4
+[1m[92m  Downloaded[0m semver v1.0.28
+[1m[92m  Downloaded[0m shlex v2.0.1
+[1m[92m  Downloaded[0m smallvec v1.16.6
+[1m[92m  Downloaded[0m rand v0.10.4
+[1m[92m  Downloaded[0m bevy_core_pipeline v0.20.1
+[1m[92m  Downloaded[0m potential_utf v0.1.6
+[1m[92m  Downloaded[0m rectangle-pack v0.4.2
+[1m[92m  Downloaded[0m synstructure v0.14.0
+[1m[92m  Downloaded[0m critical-section v1.2.0
+[1m[92m  Downloaded[0m toml_writer v1.2.0+spec-1.1.0
+[1m[92m  Downloaded[0m convert_case v0.10.0
+[1m[92m  Downloaded[0m futures-util v0.3.34
+[1m[92m  Downloaded[0m erased-serde v0.4.11
+[1m[92m  Downloaded[0m gltf-json v1.4.1
+[1m[92m  Downloaded[0m ktx2 v0.5.0
+[1m[92m  Downloaded[0m aho-corasick v1.1.5
+[1m[92m  Downloaded[0m bevy_ecs v0.20.1
+[1m[92m  Downloaded[0m encase_derive v0.12.1
+[1m[92m  Downloaded[0m smol_str v0.2.2
+[1m[92m  Downloaded[0m xkeysym v0.2.1
+[1m[92m  Downloaded[0m glam v0.33.12
+[1m[92m  Downloaded[0m lexical v7.0.5
+[1m[92m  Downloaded[0m anstyle-query v1.1.5
+[1m[92m  Downloaded[0m bevy v0.20.1
+[1m[92m  Downloaded[0m disqualified v1.1.0
+[1m[92m  Downloaded[0m constant_time_eq v0.6.2
+[1m[92m  Downloaded[0m icu_locale_core v2.4.0
+[1m[92m  Downloaded[0m dlib v0.5.3
+[1m[92m  Downloaded[0m khronos-egl v6.0.0
+[1m[92m  Downloaded[0m wasm-bindgen-shared v0.2.130
+[1m[92m  Downloaded[0m yoke-derive v0.8.4
+[1m[92m  Downloaded[0m fontique v0.11.1
+[1m[92m  Downloaded[0m futures-core v0.3.34
+[1m[92m  Downloaded[0m icu_normalizer v2.4.0
+[1m[92m  Downloaded[0m typeid v1.0.3
+[1m[92m  Downloaded[0m encase v0.12.1
+[1m[92m  Downloaded[0m fnv v1.0.7
+[1m[92m  Downloaded[0m getrandom v0.3.4
+[1m[92m  Downloaded[0m constgebra v0.1.4
+[1m[92m  Downloaded[0m flate2 v1.1.11
+[1m[92m  Downloaded[0m zerotrie v0.2.5
+[1m[92m  Downloaded[0m tinystr v0.8.5
+[1m[92m  Downloaded[0m lexical-core v1.0.6
+[1m[92m  Downloaded[0m wasm-bindgen-macro v0.2.130
+[1m[92m  Downloaded[0m zerofrom v0.1.8
+[1m[92m  Downloaded[0m futures-macro v0.3.34
+[1m[92m  Downloaded[0m parking_lot v0.12.5
+[1m[92m  Downloaded[0m parley_data v0.11.1
+[1m[92m  Downloaded[0m slab v0.4.12
+[1m[92m  Downloaded[0m parking v2.2.1
+[1m[92m  Downloaded[0m wayland-sys v0.31.11
+[1m[92m  Downloaded[0m zerofrom-derive v0.1.8
+[1m[92m  Downloaded[0m lazy_static v1.5.1
+[1m[92m  Downloaded[0m futures-io v0.3.34
+[1m[92m  Downloaded[0m tracing-attributes v0.1.31
+[1m[92m  Downloaded[0m dpi v0.1.2
+[1m[92m  Downloaded[0m offset-allocator v0.2.0
+[1m[92m  Downloaded[0m radium v0.7.0
+[1m[92m  Downloaded[0m renderdoc-sys v1.1.0
+[1m[92m  Downloaded[0m unicode-xid v0.2.6
+[1m[92m  Downloaded[0m wgpu-core-deps-wasm v30.0.2
+[1m[92m  Downloaded[0m utf_types v1.0.0
+[1m[92m  Downloaded[0m zmij v1.0.23
+[1m[92m  Downloaded[0m assert_type_match v0.1.1
+[1m[92m  Downloaded[0m fixedbitset v0.5.9
+[1m[92m  Downloaded[0m gltf v1.4.1
+[1m[92m  Downloaded[0m icu_provider v2.4.0
+[1m[92m  Downloaded[0m equivalent v1.0.3
+[1m[92m  Downloaded[0m getrandom v0.2.17
+[1m[92m  Downloaded[0m writeable v0.6.4
+[1m[92m  Downloaded[0m foldhash v0.1.5
+[1m[92m  Downloaded[0m lexical-parse-integer v1.0.6
+[1m[92m  Downloaded[0m thread_local v1.1.10
+[1m[92m  Downloaded[0m wasm-bindgen v0.2.130
+[1m[92m  Downloaded[0m yazi v0.2.2
+[1m[92m  Downloaded[0m alsa v0.11.0
+[1m[92m  Downloaded[0m getrandom v0.4.3
+[1m[92m  Downloaded[0m pin-project-lite v0.2.18
+[1m[92m  Downloaded[0m rustversion v1.0.23
+[1m[92m  Downloaded[0m x11-dl v2.21.0
+[1m[92m  Downloaded[0m bevy_feathers v0.20.1
+[1m[92m  Downloaded[0m lexical-write-integer v1.0.6
+[1m[92m  Downloaded[0m errno v0.3.15
+[1m[92m  Downloaded[0m icu_collections v2.4.0
+[1m[92m  Downloaded[0m indexmap v2.14.2
+[1m[92m  Downloaded[0m web-sys v0.3.107
+[1m[92m  Downloaded[0m lexical-util v1.0.7
+[1m[92m  Downloaded[0m lexical-parse-float v1.0.6
+[1m[92m  Downloaded[0m itoa v1.0.19
+[1m[92m  Downloaded[0m tracing-wasm v0.2.1
+[1m[92m  Downloaded[0m unicode-width v0.2.3
+[1m[92m  Downloaded[0m wgpu v30.0.2
+[1m[92m  Downloaded[0m rand_core v0.10.1
+[1m[92m  Downloaded[0m x11rb v0.13.2
+[1m[92m  Downloaded[0m image v0.25.10
+[1m[92m  Downloaded[0m tinyvec v1.13.3
+[1m[92m  Downloaded[0m libc v0.2.191
+[1m[92m  Downloaded[0m serde_derive v1.0.229
+[1m[92m  Downloaded[0m tracing v0.1.44
+[1m[92m  Downloaded[0m num-integer v0.1.47
+[1m[92m  Downloaded[0m parlance v0.1.1
+[1m[92m  Downloaded[0m quote v1.0.47
+[1m[92m  Downloaded[0m glob v0.3.4
+[1m[92m  Downloaded[0m jobserver v0.1.35
+[1m[92m  Downloaded[0m thiserror-impl v1.0.69
+[1m[92m  Downloaded[0m anstyle v1.0.14
+[1m[92m  Downloaded[0m fastrand v2.5.0
+[1m[92m  Downloaded[0m tracing-log v0.2.0
+[1m[92m  Downloaded[0m x11rb-protocol v0.13.2
+[1m[92m  Downloaded[0m num-traits v0.2.19
+[1m[92m  Downloaded[0m ron v0.12.3
+[1m[92m  Downloaded[0m tracing-core v0.1.36
+[1m[92m  Downloaded[0m miniz_oxide v0.8.9
+[1m[92m  Downloaded[0m proc-macro2 v1.0.107
+[1m[92m  Downloaded[0m slotmap v1.1.1
+[1m[92m  Downloaded[0m thiserror-impl v2.0.21
+[1m[92m  Downloaded[0m litemap v0.8.3
+[1m[92m  Downloaded[0m spin v0.12.3
+[1m[92m  Downloaded[0m litrs v1.1.0
+[1m[92m  Downloaded[0m polling v3.11.0
+[1m[92m  Downloaded[0m annotate-snippets v0.12.18
+[1m[92m  Downloaded[0m miniz_oxide v0.9.1
+[1m[92m  Downloaded[0m alsa-sys v0.4.0
+[1m[92m  Downloaded[0m log v0.4.35
+[1m[92m  Downloaded[0m logos-codegen v0.16.1
+[1m[92m  Downloaded[0m serde v1.0.229
+[1m[92m  Downloaded[0m gpu-allocator v0.28.0
+[1m[92m  Downloaded[0m pin-project v1.2.0
+[1m[92m  Downloaded[0m arrayvec v0.7.8
+[1m[92m  Downloaded[0m rand_distr v0.6.0
+[1m[92m  Downloaded[0m sharded-slab v0.1.7
+[1m[92m  Downloaded[0m toml v1.2.3+spec-1.1.0
+[1m[92m  Downloaded[0m wgsl-types v0.6.0
+[1m[92m  Downloaded[0m num-bigint v0.4.8
+[1m[92m  Downloaded[0m parley v0.11.1
+[1m[92m  Downloaded[0m png v0.18.1
+[1m[92m  Downloaded[0m rodio v0.22.2
+[1m[92m  Downloaded[0m ruzstd v0.9.1
+[1m[92m  Downloaded[0m wgsl-parse v0.6.0
+[1m[92m  Downloaded[0m wasm-bindgen-macro-support v0.2.130
+[1m[92m  Downloaded[0m js-sys v0.3.107
+[1m[92m  Downloaded[0m serde_json v1.0.154
+[1m[92m  Downloaded[0m wgpu-types v30.0.2
+[1m[92m  Downloaded[0m moxcms v0.8.1
+[1m[92m  Downloaded[0m itertools v0.15.0
+[1m[92m  Downloaded[0m portable-atomic v1.15.0
+[1m[92m  Downloaded[0m winnow v1.0.5
+[1m[92m  Downloaded[0m swash v0.2.10
+[1m[92m  Downloaded[0m taffy v0.14.0
+[1m[92m  Downloaded[0m tracing-subscriber v0.3.23
+[1m[92m  Downloaded[0m rustix v0.38.44
+[1m[92m  Downloaded[0m syn v2.0.119
+[1m[92m  Downloaded[0m skrifa v0.44.0
+[1m[92m  Downloaded[0m syn v3.0.10
+[1m[92m  Downloaded[0m regex-syntax v0.8.12
+[1m[92m  Downloaded[0m nix v0.32.0
+[1m[92m  Downloaded[0m wgpu-core v30.0.2
+[1m[92m  Downloaded[0m bevy_pbr v0.20.1
+[1m[92m  Downloaded[0m rustix v1.1.6
+[1m[92m  Downloaded[0m ash v0.38.0+1.3.281
+[1m[92m  Downloaded[0m regex-automata v0.4.19
+[1m[92m  Downloaded[0m read-fonts v0.41.0
+[1m[92m  Downloaded[0m winit v0.30.13
+[1m[92m  Downloaded[0m petgraph v0.8.3
+[1m[92m  Downloaded[0m pxfm v0.1.30
+[1m[92m  Downloaded[0m naga v30.0.2
+[1m[92m  Downloaded[0m icu_segmenter_data v2.4.0
+[1m[92m  Downloaded[0m linux-raw-sys v0.4.15
+[1m[92m  Downloaded[0m linux-raw-sys v0.12.1
+[1m[92m  Downloaded[0m icu_segmenter v2.4.0
+[1m[92m   Compiling[0m unicode-ident v1.0.27
+[1m[92m   Compiling[0m proc-macro2 v1.0.107
+[1m[92m   Compiling[0m quote v1.0.47
+[1m[92m   Compiling[0m serde_core v1.0.229
+[1m[92m   Compiling[0m cfg-if v1.0.5
+[1m[92m   Compiling[0m rustversion v1.0.23
+[1m[92m   Compiling[0m pin-project-lite v0.2.18
+[1m[92m   Compiling[0m wasm-bindgen-shared v0.2.130
+[1m[92m   Compiling[0m futures-core v0.3.34
+[1m[92m   Compiling[0m bumpalo v3.20.4
+[1m[92m   Compiling[0m syn v3.0.10
+[1m[92m   Compiling[0m syn v2.0.119
+[1m[92m   Compiling[0m wasm-bindgen v0.2.130
+[1m[92m   Compiling[0m serde v1.0.229
+[1m[92m   Compiling[0m libm v0.2.16
+[1m[92m   Compiling[0m autocfg v1.5.1
+[1m[92m   Compiling[0m num-traits v0.2.19
+[1m[92m   Compiling[0m slab v0.4.12
+[1m[92m   Compiling[0m futures-task v0.3.34
+[1m[92m   Compiling[0m foldhash v0.2.0
+[1m[92m   Compiling[0m thiserror v2.0.21
+[1m[92m   Compiling[0m equivalent v1.0.3
+[1m[92m   Compiling[0m smallvec v1.16.6
+[1m[92m   Compiling[0m hashbrown v0.17.2
+[1m[92m   Compiling[0m winnow v1.0.5
+[1m[92m   Compiling[0m indexmap v2.14.2
+[1m[92m   Compiling[0m wasm-bindgen-macro-support v0.2.130
+[1m[92m   Compiling[0m toml_parser v1.1.7+spec-1.1.0
+[1m[92m   Compiling[0m crossbeam-utils v0.8.23
+[1m[92m   Compiling[0m toml_datetime v1.1.3+spec-1.1.0
+[1m[92m   Compiling[0m log v0.4.35
+[1m[92m   Compiling[0m toml_edit v0.25.21+spec-1.1.0
+[1m[92m   Compiling[0m bytemuck_derive v1.12.1
+[1m[92m   Compiling[0m serde_derive v1.0.229
+[1m[92m   Compiling[0m futures-macro v0.3.34
+[1m[92m   Compiling[0m bytemuck v1.25.2
+[1m[92m   Compiling[0m bitflags v2.13.2
+[1m[92m   Compiling[0m futures-util v0.3.34
+[1m[92m   Compiling[0m thiserror-impl v2.0.21
+[1m[92m   Compiling[0m bevy_macro_utils v0.20.1
+[1m[92m   Compiling[0m event-listener v5.4.2
+[1m[92m   Compiling[0m rustc-hash v1.1.0
+[1m[92m   Compiling[0m fastrand v2.5.0
+[1m[92m   Compiling[0m futures-io v0.3.34
+[1m[92m   Compiling[0m raw-window-handle v0.6.2
+[1m[92m   Compiling[0m event-listener-strategy v0.5.4
+[1m[92m   Compiling[0m parking v2.2.1
+[1m[92m   Compiling[0m futures-lite v2.6.1
+[1m[92m   Compiling[0m concurrent-queue v2.5.0
+[1m[92m   Compiling[0m naga-types v30.0.2
+[1m[92m   Compiling[0m once_cell v1.21.4
+[1m[92m   Compiling[0m static_assertions v1.1.0
+[1m[92m   Compiling[0m unicode-segmentation v1.13.3
+[1m[92m   Compiling[0m encase_derive_impl v0.12.1
+[1m[92m   Compiling[0m wasm-bindgen-macro v0.2.130
+[1m[92m   Compiling[0m convert_case v0.10.0
+[1m[92m   Compiling[0m typewit v1.15.2
+[1m[92m   Compiling[0m unicode-xid v0.2.6
+[1m[92m   Compiling[0m async-channel v2.5.0
+[1m[92m   Compiling[0m const_panic v0.2.17
+[1m[92m   Compiling[0m derive_more-impl v2.1.1
+[1m[92m   Compiling[0m hashbrown v0.16.1
+[1m[92m   Compiling[0m version_check v0.9.5
+[1m[92m   Compiling[0m rand_core v0.10.1
+[1m[92m   Compiling[0m arrayvec v0.7.8
+[1m[92m   Compiling[0m typeid v1.0.3
+[1m[92m   Compiling[0m slotmap v1.1.1
+[1m[92m   Compiling[0m rand v0.10.4
+[1m[92m   Compiling[0m encase_derive v0.12.1
+[1m[92m   Compiling[0m js-sys v0.3.107
+[1m[92m   Compiling[0m futures-channel v0.3.34
+[1m[92m   Compiling[0m thread_local v1.1.10
+[1m[92m   Compiling[0m spin v0.12.3
+[1m[92m   Compiling[0m encase v0.12.1
+[1m[92m   Compiling[0m uuid v1.29.3
+[1m[92m   Compiling[0m smol_str v0.2.2
+[1m[92m   Compiling[0m approx v0.5.1
+[1m[92m   Compiling[0m erased-serde v0.4.11
+[1m[92m   Compiling[0m rustc-hash v2.1.3
+[1m[92m   Compiling[0m mutants v0.0.3
+[1m[92m   Compiling[0m glam v0.33.12
+[1m[92m   Compiling[0m unsynn v0.3.0
+[1m[92m   Compiling[0m derive_more v2.1.1
+[1m[92m   Compiling[0m disqualified v1.1.0
+[1m[92m   Compiling[0m variadics_please v2.0.0
+[1m[92m   Compiling[0m bevy_reflect_derive v0.20.1
+[1m[92m   Compiling[0m assert_type_match v0.1.1
+[1m[92m   Compiling[0m inventory v0.3.25
+[1m[92m   Compiling[0m downcast-rs v2.0.2
+[1m[92m   Compiling[0m bevy_ptr v0.20.1
+[1m[92m   Compiling[0m async-task v4.7.1
+[1m[92m   Compiling[0m atomic-waker v1.1.2
+[1m[92m   Compiling[0m async-executor v1.14.1
+[1m[92m   Compiling[0m bevy_ecs_macro_logic v0.20.1
+[1m[92m   Compiling[0m crossbeam-queue v0.3.14
+[1m[92m   Compiling[0m zerocopy v0.8.66
+[1m[92m   Compiling[0m nonmax v0.5.5
+[1m[92m   Compiling[0m bevy_ecs_macros v0.20.1
+[1m[92m   Compiling[0m zerocopy-derive v0.8.66
+[1m[92m   Compiling[0m fixedbitset v0.5.9
+[1m[92m   Compiling[0m console_error_panic_hook v0.1.7
+[1m[92m   Compiling[0m bevy_derive v0.20.1
+[1m[92m   Compiling[0m tracing-core v0.1.36
+[1m[92m   Compiling[0m tracing-attributes v0.1.31
+[1m[92m   Compiling[0m either v1.19.0
+[1m[92m   Compiling[0m memchr v2.8.3
+[1m[92m   Compiling[0m web-sys v0.3.107
+[1m[92m   Compiling[0m wasm-bindgen-futures v0.4.80
+[1m[92m   Compiling[0m web-time v1.1.0
+[1m[92m   Compiling[0m bevy_platform v0.20.1
+[1m[92m   Compiling[0m bevy_utils v0.20.1
+[1m[92m   Compiling[0m web-task v1.1.3
+[1m[92m   Compiling[0m bevy_tasks v0.20.1
+[1m[92m   Compiling[0m tracing v0.1.44
+[1m[92m   Compiling[0m find-msvc-tools v0.1.16
+[1m[92m   Compiling[0m shlex v2.0.1
+[1m[92m   Compiling[0m cfg_aliases v0.2.2
+[1m[92m   Compiling[0m cc v1.12.0
+[1m[92m   Compiling[0m aho-corasick v1.1.5
+[1m[92m   Compiling[0m half v2.7.1
+[1m[92m   Compiling[0m constant_time_eq v0.6.2
+[1m[92m   Compiling[0m regex-syntax v0.8.12
+[1m[92m   Compiling[0m blake3 v1.8.8
+[1m[92m   Compiling[0m piper v0.2.5
+[1m[92m   Compiling[0m crossbeam-channel v0.5.17
+[1m[92m   Compiling[0m synstructure v0.14.0
+[1m[92m   Compiling[0m simd-adler32 v0.3.10
+[1m[92m   Compiling[0m blocking v1.7.0
+[1m[92m   Compiling[0m regex-automata v0.4.19
+[1m[92m   Compiling[0m async-lock v3.5.0
+[1m[92m   Compiling[0m adler2 v2.0.1
+[1m[92m   Compiling[0m crc32fast v1.5.6
+[1m[92m   Compiling[0m const-fnv1a-hash v1.1.0
+[1m[92m   Compiling[0m async-fs v2.2.0
+[1m[92m   Compiling[0m zerofrom-derive v0.1.8
+[1m[92m   Compiling[0m ron v0.12.3
+[1m[92m   Compiling[0m stackfuture v0.3.1
+[1m[92m   Compiling[0m async-broadcast v0.7.2
+[1m[92m   Compiling[0m bevy_asset_macros v0.20.1
+[1m[92m   Compiling[0m atomicow v1.2.0
+[1m[92m   Compiling[0m zerofrom v0.1.8
+[1m[92m   Compiling[0m miniz_oxide v0.9.1
+[1m[92m   Compiling[0m yoke-derive v0.8.4
+[1m[92m   Compiling[0m stable_deref_trait v1.2.1
+[1m[92m   Compiling[0m flate2 v1.1.11
+[1m[92m   Compiling[0m miniz_oxide v0.8.9
+[1m[92m   Compiling[0m yoke v0.8.4
+[1m[92m   Compiling[0m fdeflate v0.3.7
+[1m[92m   Compiling[0m itertools v0.14.0
+[1m[92m   Compiling[0m lazy_static v1.5.1
+[1m[92m   Compiling[0m unicode-width v0.2.3
+[1m[92m   Compiling[0m pxfm v0.1.30
+[1m[92m   Compiling[0m const_soft_float v0.1.4
+[1m[92m   Compiling[0m constgebra v0.1.4
+[1m[92m   Compiling[0m png v0.18.1
+[1m[92m   Compiling[0m rand_distr v0.6.0
+[1m[92m   Compiling[0m zerovec-derive v0.11.7
+[1m[92m   Compiling[0m moxcms v0.8.1
+[1m[92m   Compiling[0m wgpu-types v30.0.2
+[1m[92m   Compiling[0m euclid v0.22.14
+[1m[92m   Compiling[0m byteorder-lite v0.1.0
+[1m[92m   Compiling[0m twox-hash v2.1.5
+[1m[92m   Compiling[0m guillotiere v0.7.0
+[1m[92m   Compiling[0m ruzstd v0.9.1
+[1m[92m   Compiling[0m image v0.25.10
+[1m[92m   Compiling[0m zerovec v0.11.9
+[1m[92m   Compiling[0m bevy_reflect v0.20.1
+[1m[92m   Compiling[0m hexasphere v19.0.0
+[1m[92m   Compiling[0m sharded-slab v0.1.7
+[1m[92m   Compiling[0m matchers v0.2.0
+[1m[92m   Compiling[0m tracing-log v0.2.0
+[1m[92m   Compiling[0m bevy_encase_derive v0.20.1
+[1m[92m   Compiling[0m ktx2 v0.5.0
+[1m[92m   Compiling[0m displaydoc v0.2.7
+[1m[92m   Compiling[0m nu-ansi-term v0.50.3
+[1m[92m   Compiling[0m lexical-util v1.0.7
+[1m[92m   Compiling[0m bevy_mikktspace v1.0.0
+[1m[92m   Compiling[0m rectangle-pack v0.4.2
+[1m[92m   Compiling[0m tracing-subscriber v0.3.23
+[1m[92m   Compiling[0m writeable v0.6.4
+[1m[92m   Compiling[0m lexical-parse-integer v1.0.6
+[1m[92m   Compiling[0m lexical-write-integer v1.0.6
+[1m[92m   Compiling[0m tinystr v0.8.5
+[1m[92m   Compiling[0m fnv v1.0.7
+[1m[92m   Compiling[0m litemap v0.8.3
+[1m[92m   Compiling[0m tracing-wasm v0.2.1
+[1m[92m   Compiling[0m icu_locale_core v2.4.0
+[1m[92m   Compiling[0m lexical-write-float v1.0.6
+[1m[92m   Compiling[0m bevy_ecs v0.20.1
+[1m[92m   Compiling[0m bevy_math v0.20.1
+[1m[92m   Compiling[0m bevy_curve v0.20.1
+[1m[92m   Compiling[0m bevy_color v0.20.1
+[1m[92m   Compiling[0m bevy_shape v0.20.1
+[1m[92m   Compiling[0m lexical-parse-float v1.0.6
+[1m[92m   Compiling[0m potential_utf v0.1.6
+[1m[92m   Compiling[0m zerotrie v0.2.5
+[1m[92m   Compiling[0m naga v30.0.2
+[1m[92m   Compiling[0m parking_lot_core v0.9.12
+[1m[92m   Compiling[0m anstyle v1.0.14
+[1m[92m   Compiling[0m logos-codegen v0.16.1
+[1m[92m   Compiling[0m lalrpop-util v0.23.2
+[1m[92m   Compiling[0m bit-vec v0.9.1
+[1m[92m   Compiling[0m utf_types v1.0.0
+[1m[92m   Compiling[0m bit-set v0.10.0
+[1m[92m   Compiling[0m utf8_iter v1.1.0
+[1m[92m   Compiling[0m logos-derive v0.16.1
+[1m[92m   Compiling[0m icu_provider v2.4.0
+[1m[92m   Compiling[0m lexical-core v1.0.6
+[1m[92m   Compiling[0m codespan-reporting v0.13.1
+[1m[92m   Compiling[0m bevy_app v0.20.1
+[1m[92m   Compiling[0m itertools v0.15.0
+[1m[92m   Compiling[0m font-types v0.12.7
+[1m[92m   Compiling[0m utf8parse v0.2.2
+[1m[92m   Compiling[0m bevy_time v0.20.1
+[1m[92m   Compiling[0m bevy_transform v0.20.1
+[1m[92m   Compiling[0m bevy_diagnostic v0.20.1
+[1m[92m   Compiling[0m bevy_asset v0.20.1
+[1m[92m   Compiling[0m bevy_input v0.20.1
+[1m[92m   Compiling[0m bevy_log v0.20.1
+[1m[92m   Compiling[0m scopeguard v1.2.0
+[1m[92m   Compiling[0m lock_api v0.4.14
+[1m[92m   Compiling[0m wgsl-types v0.6.0
+[1m[92m   Compiling[0m bevy_mesh v0.20.1
+[1m[92m   Compiling[0m bevy_image v0.20.1
+[1m[92m   Compiling[0m bevy_window v0.20.1
+[1m[92m   Compiling[0m anstyle-parse v1.0.0
+[1m[92m   Compiling[0m read-fonts v0.41.0
+[1m[92m   Compiling[0m bevy_camera v0.20.1
+[1m[92m   Compiling[0m lexical v7.0.5
+[1m[92m   Compiling[0m logos v0.16.1
+[1m[92m   Compiling[0m icu_collections v2.4.0
+[1m[92m   Compiling[0m annotate-snippets v0.12.18
+[1m[92m   Compiling[0m wgpu-hal v30.0.2
+[1m[92m   Compiling[0m serde_spanned v1.1.3
+[1m[92m   Compiling[0m toml_writer v1.2.0+spec-1.1.0
+[1m[92m   Compiling[0m icu_locale_fallback_data v2.4.0
+[1m[92m   Compiling[0m is_terminal_polyfill v1.70.2
+[1m[92m   Compiling[0m icu_properties_data v2.4.0
+[1m[92m   Compiling[0m anstyle-query v1.1.5
+[1m[92m   Compiling[0m colorchoice v1.0.5
+[1m[92m   Compiling[0m anstream v1.0.0
+[1m[92m   Compiling[0m toml v1.2.3+spec-1.1.0
+[1m[92m   Compiling[0m wgsl-parse v0.6.0
+[1m[92m   Compiling[0m parking_lot v0.12.5
+[1m[92m   Compiling[0m wgpu-naga-bridge v30.0.2
+[1m[92m   Compiling[0m wesl-macros v0.6.0
+[1m[92m   Compiling[0m glow v0.17.0
+[1m[92m   Compiling[0m icu_normalizer_data v2.4.0
+[1m[92m   Compiling[0m wesl-core v0.1.0
+[1m[92m   Compiling[0m profiling v1.0.18
+[1m[92m   Compiling[0m icu_segmenter_data v2.4.0
+[1m[92m   Compiling[0m glob v0.3.4
+[1m[92m   Compiling[0m wgpu-core v30.0.2
+[1m[92m   Compiling[0m litrs v1.1.0
+[1m[92m   Compiling[0m document-features v0.2.12
+[1m[92m   Compiling[0m icu_properties v2.4.0
+[1m[92m   Compiling[0m wgpu-core-deps-wasm v30.0.2
+[1m[92m   Compiling[0m icu_locale_fallback v2.4.0
+[1m[92m   Compiling[0m skrifa v0.44.0
+[1m[92m   Compiling[0m wesl v0.6.0
+[1m[92m   Compiling[0m wgpu v30.0.2
+[1m[92m   Compiling[0m bevy_material_macros v0.20.1
+[1m[92m   Compiling[0m bevy_extract_macros v0.20.1
+[1m[92m   Compiling[0m linebender_resource_handle v0.1.1
+[1m[92m   Compiling[0m memmap2 v0.9.12
+[1m[92m   Compiling[0m zmij v1.0.23
+[1m[92m   Compiling[0m parlance v0.1.1
+[1m[92m   Compiling[0m fontique v0.11.1
+[1m[92m   Compiling[0m icu_segmenter v2.4.0
+[1m[92m   Compiling[0m icu_normalizer v2.4.0
+[1m[92m   Compiling[0m parley_data v0.11.1
+[1m[92m   Compiling[0m harfrust v0.12.0
+[1m[92m   Compiling[0m bevy_shader v0.20.1
+[1m[92m   Compiling[0m bevy_material v0.20.1
+[1m[92m   Compiling[0m serde_json v1.0.154
+[1m[92m   Compiling[0m yazi v0.2.2
+[1m[92m   Compiling[0m zeno v0.3.3
+[1m[92m   Compiling[0m swash v0.2.10
+[1m[92m   Compiling[0m parley v0.11.1
+[1m[92m   Compiling[0m bevy_extract v0.20.1
+[1m[92m   Compiling[0m bevy_render_macros v0.20.1
+[1m[92m   Compiling[0m bevy_light v0.20.1
+[1m[92m   Compiling[0m bevy_clipboard v0.20.1
+[1m[92m   Compiling[0m offset-allocator v0.2.0
+[1m[92m   Compiling[0m accesskit v0.24.1
+[1m[92m   Compiling[0m weak-table v0.4.0
+[1m[92m   Compiling[0m itoa v1.0.19
+[1m[92m   Compiling[0m inflections v1.1.1
+[1m[92m   Compiling[0m sys-locale v0.3.2
+[1m[92m   Compiling[0m gltf-derive v1.4.1
+[1m[92m   Compiling[0m bevy_text v0.20.1
+[1m[92m   Compiling[0m bevy_render v0.20.1
+[1m[92m   Compiling[0m winit v0.30.13
+[1m[92m   Compiling[0m pin-project-internal v1.2.0
+[1m[92m   Compiling[0m radsort v0.1.1
+[1m[92m   Compiling[0m bevy_sprite v0.20.1
+[1m[92m   Compiling[0m bevy_core_pipeline v0.20.1
+[1m[92m   Compiling[0m pin-project v1.2.0
+[1m[92m   Compiling[0m gltf-json v1.4.1
+[1m[92m   Compiling[0m bevy_a11y v0.20.1
+[1m[92m   Compiling[0m bevy_input_focus v0.20.1
+[1m[92m   Compiling[0m cursor-icon v1.2.0
+[1m[92m   Compiling[0m dpi v0.1.2
+[1m[92m   Compiling[0m byteorder v1.5.0
+[1m[92m   Compiling[0m gltf v1.4.1
+[1m[92m   Compiling[0m bevy_world_serialization v0.20.1
+[1m[92m   Compiling[0m taffy v0.14.0
+[1m[92m   Compiling[0m base64 v0.23.1
+[1m[92m   Compiling[0m percent-encoding v2.3.2
+[1m[92m   Compiling[0m bevy_gltf v0.20.1
+[1m[92m   Compiling[0m bevy_ui v0.20.1
+[1m[92m   Compiling[0m accesskit_winit v0.33.2
+[1m[92m   Compiling[0m bevy_sprite_render v0.20.1
+[1m[92m   Compiling[0m bevy_winit v0.20.1
+[1m[92m   Compiling[0m bevy_ui_render v0.20.1
+[1m[92m   Compiling[0m bevy_pbr v0.20.1
+[1m[92m   Compiling[0m getrandom v0.3.4
+[1m[92m   Compiling[0m getrandom v0.2.17
+[1m[92m   Compiling[0m worldshard v0.1.0 (/home/runner/work/WorldShard/WorldShard)
+[1m[92m   Compiling[0m bevy_internal v0.20.1
+[1m[92m   Compiling[0m bevy v0.20.1
+[1m[92m   Compiling[0m worldshard-game v0.1.0 (/home/runner/work/WorldShard/WorldShard/game)
+[1m[33mwarning[0m[1m: use of deprecated type alias `bevy::bevy_ui::Interaction`: Use picking::hover::Hovered and ui::Pressed.[0m
+   [1m[94m--> [0msrc/main.rs:731:17
+    [1m[94m|[0m
+[1m[94m731[0m [1m[94m|[0m                 Interaction::None,
+    [1m[94m|[0m                 [1m[33m^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `#[warn(deprecated)]` on by default
+
+[1m[33mwarning[0m[1m: use of deprecated type alias `bevy::bevy_ui::Interaction`: Use picking::hover::Hovered and ui::Pressed.[0m
+   [1m[94m--> [0msrc/main.rs:780:22
+    [1m[94m|[0m
+[1m[94m780[0m [1m[94m|[0m     buttons: Query<(&Interaction, &FlyButton)>,
+    [1m[94m|[0m                      [1m[33m^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: use of deprecated type alias `bevy::bevy_ui::Interaction`: Use picking::hover::Hovered and ui::Pressed.[0m
+   [1m[94m--> [0msrc/main.rs:781:26
+    [1m[94m|[0m
+[1m[94m781[0m [1m[94m|[0m     pressed_now: Query<(&Interaction, &FlyButton), Changed<Interaction>>,
+    [1m[94m|[0m                          [1m[33m^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: use of deprecated type alias `bevy::bevy_ui::Interaction`: Use picking::hover::Hovered and ui::Pressed.[0m
+   [1m[94m--> [0msrc/main.rs:781:60
+    [1m[94m|[0m
+[1m[94m781[0m [1m[94m|[0m     pressed_now: Query<(&Interaction, &FlyButton), Changed<Interaction>>,
+    [1m[94m|[0m                                                            [1m[33m^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: use of deprecated type alias `bevy::bevy_ui::Interaction`: Use picking::hover::Hovered and ui::Pressed.[0m
+   [1m[94m--> [0msrc/main.rs:793:18
+    [1m[94m|[0m
+[1m[94m793[0m [1m[94m|[0m         if *i == Interaction::Pressed {
+    [1m[94m|[0m                  [1m[33m^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: use of deprecated type alias `bevy::bevy_ui::Interaction`: Use picking::hover::Hovered and ui::Pressed.[0m
+   [1m[94m--> [0msrc/main.rs:802:18
+    [1m[94m|[0m
+[1m[94m802[0m [1m[94m|[0m         if *i == Interaction::Pressed {
+    [1m[94m|[0m                  [1m[33m^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: use of deprecated type alias `bevy::bevy_ui::Interaction`: Use picking::hover::Hovered and ui::Pressed.[0m
+   [1m[94m--> [0msrc/main.rs:822:53
+    [1m[94m|[0m
+[1m[94m822[0m [1m[94m|[0m     let ui_busy = buttons.iter().any(|(i, _)| *i != Interaction::None);
+    [1m[94m|[0m                                                     [1m[33m^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: unused variable: `asset_server`[0m
+   [1m[94m--> [0msrc/main.rs:476:5
+    [1m[94m|[0m
+[1m[94m476[0m [1m[94m|[0m     asset_server: Res<AssetServer>,
+    [1m[94m|[0m     [1m[33m^^^^^^^^^^^^[0m [1m[33mhelp: if this is intentional, prefix it with an underscore: `_asset_server`[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m: `worldshard-game` (bin "worldshard-game") generated 8 warnings (run `cargo fix --bin "worldshard-game" -p worldshard-game` to apply 1 suggestion)
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 9m 11s
+[1m[92m Downloading[0m crates ...
+[1m[92m  Downloaded[0m termcolor v1.4.1
+[1m[92m   Compiling[0m web-sys v0.3.107
+[1m[92m   Compiling[0m slotmap v1.1.1
+[1m[92m   Compiling[0m wgpu v30.0.2
+[1m[92m   Compiling[0m taffy v0.14.0
+[1m[92m   Compiling[0m wgpu-types v30.0.2
+[1m[92m   Compiling[0m winit v0.30.13
+[1m[92m   Compiling[0m accesskit_winit v0.33.2
+[1m[92m   Compiling[0m bevy_reflect v0.20.1
+[1m[92m   Compiling[0m bevy_ecs v0.20.1
+[1m[92m   Compiling[0m bevy_math v0.20.1
+[1m[92m   Compiling[0m bevy_curve v0.20.1
+[1m[92m   Compiling[0m bevy_shape v0.20.1
+[1m[92m   Compiling[0m bevy_color v0.20.1
+[1m[92m   Compiling[0m bevy_app v0.20.1
+[1m[92m   Compiling[0m bevy_time v0.20.1
+[1m[92m   Compiling[0m bevy_transform v0.20.1
+[1m[92m   Compiling[0m bevy_diagnostic v0.20.1
+[1m[92m   Compiling[0m bevy_asset v0.20.1
+[1m[92m   Compiling[0m bevy_input v0.20.1
+[1m[92m   Compiling[0m bevy_log v0.20.1
+[1m[92m   Compiling[0m bevy_clipboard v0.20.1
+[1m[92m   Compiling[0m bevy_a11y v0.20.1
+[1m[92m   Compiling[0m bevy_window v0.20.1
+[1m[92m   Compiling[0m bevy_image v0.20.1
+[1m[92m   Compiling[0m bevy_mesh v0.20.1
+[1m[92m   Compiling[0m bevy_shader v0.20.1
+[1m[92m   Compiling[0m bevy_text v0.20.1
+[1m[92m   Compiling[0m bevy_camera v0.20.1
+[1m[92m   Compiling[0m bevy_material v0.20.1
+[1m[92m   Compiling[0m bevy_extract v0.20.1
+[1m[92m   Compiling[0m bevy_light v0.20.1
+[1m[92m   Compiling[0m bevy_render v0.20.1
+[1m[92m   Compiling[0m bevy_input_focus v0.20.1
+[1m[92m   Compiling[0m bevy_sprite v0.20.1
+[1m[92m   Compiling[0m bevy_world_serialization v0.20.1
+[1m[92m   Compiling[0m bevy_gltf v0.20.1
+[1m[92m   Compiling[0m bevy_core_pipeline v0.20.1
+[1m[92m   Compiling[0m bevy_ui v0.20.1
+[1m[92m   Compiling[0m bevy_sprite_render v0.20.1
+[1m[92m   Compiling[0m bevy_ui_render v0.20.1
+[1m[92m   Compiling[0m bevy_pbr v0.20.1
+[1m[92m   Compiling[0m bevy_winit v0.20.1
+[1m[92m   Compiling[0m bevy_internal v0.20.1
+[1m[92m   Compiling[0m bevy v0.20.1
+[1m[92m   Compiling[0m worldshard-game v0.1.0 (/home/runner/work/WorldShard/WorldShard/game)
+[1m[33mwarning[0m[1m: use of deprecated type alias `bevy::bevy_ui::Interaction`: Use picking::hover::Hovered and ui::Pressed.[0m
+   [1m[94m--> [0msrc/main.rs:731:17
+    [1m[94m|[0m
+[1m[94m731[0m [1m[94m|[0m                 Interaction::None,
+    [1m[94m|[0m                 [1m[33m^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `#[warn(deprecated)]` on by default
+
+[1m[33mwarning[0m[1m: use of deprecated type alias `bevy::bevy_ui::Interaction`: Use picking::hover::Hovered and ui::Pressed.[0m
+   [1m[94m--> [0msrc/main.rs:780:22
+    [1m[94m|[0m
+[1m[94m780[0m [1m[94m|[0m     buttons: Query<(&Interaction, &FlyButton)>,
+    [1m[94m|[0m                      [1m[33m^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: use of deprecated type alias `bevy::bevy_ui::Interaction`: Use picking::hover::Hovered and ui::Pressed.[0m
+   [1m[94m--> [0msrc/main.rs:781:26
+    [1m[94m|[0m
+[1m[94m781[0m [1m[94m|[0m     pressed_now: Query<(&Interaction, &FlyButton), Changed<Interaction>>,
+    [1m[94m|[0m                          [1m[33m^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: use of deprecated type alias `bevy::bevy_ui::Interaction`: Use picking::hover::Hovered and ui::Pressed.[0m
+   [1m[94m--> [0msrc/main.rs:781:60
+    [1m[94m|[0m
+[1m[94m781[0m [1m[94m|[0m     pressed_now: Query<(&Interaction, &FlyButton), Changed<Interaction>>,
+    [1m[94m|[0m                                                            [1m[33m^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: use of deprecated type alias `bevy::bevy_ui::Interaction`: Use picking::hover::Hovered and ui::Pressed.[0m
+   [1m[94m--> [0msrc/main.rs:793:18
+    [1m[94m|[0m
+[1m[94m793[0m [1m[94m|[0m         if *i == Interaction::Pressed {
+    [1m[94m|[0m                  [1m[33m^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: use of deprecated type alias `bevy::bevy_ui::Interaction`: Use picking::hover::Hovered and ui::Pressed.[0m
+   [1m[94m--> [0msrc/main.rs:802:18
+    [1m[94m|[0m
+[1m[94m802[0m [1m[94m|[0m         if *i == Interaction::Pressed {
+    [1m[94m|[0m                  [1m[33m^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: use of deprecated type alias `bevy::bevy_ui::Interaction`: Use picking::hover::Hovered and ui::Pressed.[0m
+   [1m[94m--> [0msrc/main.rs:822:53
+    [1m[94m|[0m
+[1m[94m822[0m [1m[94m|[0m     let ui_busy = buttons.iter().any(|(i, _)| *i != Interaction::None);
+    [1m[94m|[0m                                                     [1m[33m^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: unused variable: `asset_server`[0m
+   [1m[94m--> [0msrc/main.rs:476:5
+    [1m[94m|[0m
+[1m[94m476[0m [1m[94m|[0m     asset_server: Res<AssetServer>,
+    [1m[94m|[0m     [1m[33m^^^^^^^^^^^^[0m [1m[33mhelp: if this is intentional, prefix it with an underscore: `_asset_server`[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m: `worldshard-game` (bin "worldshard-game") generated 8 warnings (run `cargo fix --bin "worldshard-game" -p worldshard-game` to apply 1 suggestion)
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 7m 32s
+dist/worldshard_bg.wasm: 58035168 -> 25011801 bytes
+dist/worldshard_webgpu_bg.wasm: 55551236 -> 23103209 bytes
+gzipped dist/worldshard_bg.wasm bytes: 8056035
+gzipped dist/worldshard_webgpu_bg.wasm bytes: 7288692
+total 71724
+drwxr-xr-x  5 runner runner     4096 Nov 28 06:37 .
+drwxr-xr-x 11 runner runner     4096 Nov 28 06:35 ..
+-rw-r--r--  1 runner runner        0 Nov 28 06:37 .nojekyll
+drwxr-xr-x  5 runner runner     4096 Nov 28 06:37 assets
+drwxr-xr-x  2 runner runner     4096 Nov 28 06:37 icons
+-rw-r--r--  1 runner runner    53449 Nov 28 06:37 index.html
+-rw-r--r--  1 runner runner      662 Nov 28 06:37 manifest.webmanifest
+drwxr-xr-x  2 runner runner     4096 Nov 28 06:37 prototype
+-rw-r--r--  1 runner runner      113 Nov 28 06:37 wasm-parts.json
+-rw-r--r--  1 runner runner   105312 Nov 28 06:35 worldshard.js
+-rw-r--r--  1 runner runner 15000000 Nov 28 06:37 worldshard_bg.part0.wasm
+-rw-r--r--  1 runner runner 10011801 Nov 28 06:37 worldshard_bg.part1.wasm
+-rw-r--r--  1 runner runner 25011801 Nov 28 06:36 worldshard_bg.wasm
+-rw-r--r--  1 runner runner   113051 Nov 28 06:35 worldshard_webgpu.js
+-rw-r--r--  1 runner runner 23103209 Nov 28 06:37 worldshard_webgpu_bg.wasm

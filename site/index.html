@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>WorldShard</title>
+<link rel="icon" href="icons/icon-192.png">
+<!-- added to the Home Screen, it opens full screen like an app -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="WorldShard">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#0b1020">
+<meta name="ws-build" content="pr15-1012d2e">
+<script>
+  // --- a preview of a change (…/WorldShard/pr/<number>/) shares the live
+  // game's web address, so give it its own saves and settings: every stored
+  // key gets a prefix. The live game's saves are never touched. ---
+  (() => {
+    const m = /\/pr\/(\d+)\//.exec(location.pathname);
+    if (!m) return;
+    window.wsPreview = m[1];
+    const pre = `worldshard-pr${m[1]}:`, P = Storage.prototype;
+    const get = P.getItem, set = P.setItem, del = P.removeItem;
+    P.getItem = function (k) { return get.call(this, pre + k); };
+    P.setItem = function (k, v) { return set.call(this, pre + k, v); };
+    P.removeItem = function (k) { return del.call(this, pre + k); };
+    P.clear = function () {
+      for (let i = this.length - 1; i >= 0; i--) { const k = P.key.call(this, i); if (k && k.startsWith(pre)) del.call(this, k); }
+    };
+    document.addEventListener("DOMContentLoaded", () => {
+      const tag = document.createElement("div");
+      tag.id = "preview-tag";
+      tag.textContent = `Preview of change #${m[1]} · separate saves`;
+      document.body.appendChild(tag);
+    });
+  })();
+</script>
+<script>
+  // --- problem log: keeps what the game and page print (errors, crashes,
+  // warnings) so it can be copied or sent in from a phone or tablet. Runs
+  // first, so it also catches problems while the game downloads and starts.
+  (() => {
+    const T0 = Date.now();
+    const MAX = 500;
+    const lines = []; // [seconds since start, level, text]
+    const D = (window.wsDebug = { lines, errors: 0, prev: null, prevCrashed: false, mem: null, peakMb: 0, T0, onchange: null });
+    const clip = (s, n) => (s.length > n ? s.slice(0, n) + "…" : s);
+    D.clip = clip;
+    const text = (v) => {
+      if (v instanceof Error) {
+        const s = v.stack || "";
+        return s.includes(v.message) ? s : `${v.name}: ${v.message}${s ? "\n" + s : ""}`;
+      }
+      if (typeof v === "string") return v;
+      if (v && typeof v === "object" && "message" in v) return String(v.message);
+      try { return JSON.stringify(v); } catch { return String(v); }
+    };
+    // console arguments to one line; the game's log uses %c colour codes
+    const fmt = (args) => {
+      let a = [...args];
+      if (typeof a[0] === "string" && a[0].includes("%c")) {
+        const n = (a[0].match(/%c/g) || []).length;
+        a = [a[0].replace(/%c/g, ""), ...a.slice(1 + n)];
+      }
+      return a.map(text).join(" ");
+    };
+    D.fmt = fmt;
+    let busy = false, pinned = 0;
+    D.unpin = () => { pinned = 0; };
+    const add = (lvl, s) => {
+      if (busy) return;
+      busy = true;
+      try {
+        s = clip(String(s), 4000);
+        // the game prints all its levels with console.log, as "ERROR …", "WARN …"
+        if (lvl === "log" || lvl === "info" || lvl === "debug") {
+          const m = /^\s*(ERROR|WARN|INFO|DEBUG|TRACE)\s+/.exec(s);
+          if (m) { lvl = m[1] === "ERROR" ? "error" : m[1] === "WARN" ? "warn" : "log"; s = s.slice(m[0].length); }
+        }
+        if (s.includes("Using exceptions for control flow")) return; // Bevy's normal start-up
+        // errors from what a browser adds to every page (Brave's wallet, extensions):
+        // kept, but not counted as the game's problems
+        // (the page's own first line holds no script, so "global code@…:1:" is a script the browser added)
+        if (lvl === "error" && (/^Script error\.|window\.ethereum|__firefox__|DarkReader/.test(s) || /global code@\S+:1:\d+\s*$/.test(s))) {
+          lvl = "warn"; s = "from the browser, not the game: " + s;
+        }
+        // engine file paths: keep the crate and file, drop the build machine's folders
+        s = s.replace(/\S*?\/\.cargo\/(?:registry\/src|git\/checkouts)\/[^/\s]+\//g, "").replace(/\/rustc\/[0-9a-f]{8,}\//g, "rustc/");
+        // the first 20 errors are pinned: they stay however much follows
+        const pin = lvl === "error" && pinned < 20;
+        if (pin) pinned++;
+        lines.push([Math.round(performance.now() / 100) / 10, lvl, s, pin]);
+        if (lines.length > MAX) lines.splice(lines.findIndex((l) => !l[3]), 1);
+        if (lvl === "error") D.errors++;
+        D.dirty = true;
+        if (lvl === "error" && D.save) D.save();
+        if (D.onchange) D.onchange(lvl);
+      } catch {} finally { busy = false; }
+    };
+    D.add = add;
+    for (const k of ["log", "info", "warn", "error", "debug"]) {
+      const orig = console[k];
+      if (typeof orig !== "function") continue;
+      console[k] = function (...args) {
+        orig.apply(console, args);
+        try { add(k, fmt(args)); } catch {}
+      };
+    }
+    addEventListener("error", (e) => {
+      const t = e.target;
+      if (t && t !== window && t.tagName) { add("error", `could not load ${t.tagName.toLowerCase()} ${t.src || t.href || ""}`); return; }
+      add("error", e.error ? text(e.error) : `${e.message} (${e.filename}:${e.lineno}:${e.colno})`);
+    }, true);
+    addEventListener("unhandledrejection", (e) => add("error", "unhandled: " + text(e.reason)));
+    addEventListener("webglcontextlost", (e) => {
+      if (e.target && e.target.id === "bevy") add("error", "graphics reset: the game's GPU context was lost (often the device running short of memory)");
+    }, true);
+    addEventListener("webglcontextrestored", (e) => {
+      if (e.target && e.target.id === "bevy") add("warn", "graphics context restored");
+    }, true);
+
+    // WebGPU problems: Safari doesn't hand shader and pipeline errors to the
+    // game (a black world can show "errors: 0"), so ask the graphics chip
+    // directly: each shader's compile messages, each pipeline's errors, and
+    // anything else the device reports
+    if (window.GPUAdapter && window.GPUDevice) {
+      const gp = GPUDevice.prototype;
+      const W = (D.webgpu = { shaders: 0, pipelines: 0, shown: 0 }); // (D.gpu is the chip's name, for the report)
+      const report = (s) => { if (W.shown++ < 12) add("error", s); };
+      const rd = GPUAdapter.prototype.requestDevice;
+      GPUAdapter.prototype.requestDevice = async function (...a) {
+        const dev = await rd.apply(this, a);
+        try {
+          dev.addEventListener("uncapturederror", (e) => report("WebGPU: " + clip(text(e.error), 600)));
+          dev.lost.then((i) => { if (i.reason !== "destroyed") add("error", `WebGPU device lost: ${i.reason} ${i.message}`); });
+          setTimeout(() => add("log", `WebGPU check: ${W.shaders} shaders and ${W.pipelines} pipelines made` +
+            (W.letFix ? `; Safari let fix: ${W.lets} in ${W.letShaders} shaders` : "")), 45000);
+        } catch {}
+        return dev;
+      };
+      // Safari's WebGPU can't yet put a texture or sampler in a `let` (the
+      // "texture_and_sampler_let" language feature), and Bevy 0.20's
+      // standard material does (`let texture = …base_color_texture;`), so the
+      // world fails to draw. Where the browser lacks the feature, each such
+      // `let` is taken out and its uses get the texture or sampler itself.
+      // (?letfix=1 forces it, to test it in a browser that has the feature.)
+      const lf = navigator.gpu && navigator.gpu.wgslLanguageFeatures;
+      const letFix = /[?&]letfix=1\b/.test(location.search) || !(lf && lf.has && lf.has("texture_and_sampler_let"));
+      W.letFix = letFix; W.lets = 0; W.letShaders = 0;
+      const fixLets = (code) => {
+        const binds = new Set();
+        for (const b of code.matchAll(/\bvar\s+([A-Za-z_]\w*)\s*:\s*(?:texture_\w+|sampler_comparison|sampler)\b/g)) binds.add(b[1]);
+        if (!binds.size) return code;
+        const let_ = /\blet\s+([A-Za-z_]\w*)\s*(?::[^=;]*)?=\s*([A-Za-z_]\w*)\s*;/g;
+        let out = code, n = 0;
+        for (let guard = 0; guard < 2000; guard++) {
+          let found = null, m;
+          let_.lastIndex = 0;
+          while ((m = let_.exec(out))) if (binds.has(m[2])) { found = m; break; }
+          if (!found) break;
+          const [stmt, name, bind] = found;
+          const start = found.index, after = start + stmt.length;
+          // the rest of the block the `let` is in…
+          let end = out.length;
+          for (let i = after, depth = 0; i < out.length; i++) {
+            const c = out[i];
+            if (c === "{") depth++;
+            else if (c === "}") { if (depth === 0) { end = i; break; } depth--; }
+          }
+          // …up to where the same name is declared again, if it is
+          const again = new RegExp(`\\b(?:let|var|const)\\s+${name}\\b`, "g");
+          again.lastIndex = after;
+          const a2 = again.exec(out);
+          if (a2 && a2.index < end) end = a2.index;
+          const use = new RegExp(`(?<![\\w.])${name}(?!\\w)`, "g");
+          out = out.slice(0, start) + out.slice(after, end).replace(use, bind) + out.slice(end);
+          n++;
+        }
+        if (n) { W.lets += n; W.letShaders++; }
+        return out;
+      };
+      const sm = gp.createShaderModule;
+      gp.createShaderModule = function (desc) {
+        if (letFix && desc && typeof desc.code === "string" && desc.code.includes("let ")) {
+          try { desc = Object.assign({}, desc, { code: fixLets(desc.code) }); } catch (e) { report("WebGPU let fix failed: " + text(e)); }
+        }
+        const m = sm.call(this, desc);
+        W.shaders++;
+        try {
+          m.getCompilationInfo().then((info) => {
+            const code = String((desc && desc.code) || "").split("\n");
+            for (const msg of info.messages) {
+              if (msg.type !== "error") continue;
+              const at = clip((code[msg.lineNum - 1] || "").trim(), 200);
+              report(`WebGPU shader error (${(desc && desc.label) || "unnamed"}, line ${msg.lineNum}:${msg.linePos}): ${clip(msg.message, 400)} | ${at}`);
+            }
+          }).catch(() => {});
+        } catch {}
+        return m;
+      };
+      for (const k of ["createRenderPipeline", "createComputePipeline"]) {
+        const f = gp[k];
+        if (typeof f !== "function") continue;
+        const kind = k === "createRenderPipeline" ? "render" : "compute";
+        gp[k] = function (desc) {
+          W.pipelines++;
+          let scoped = false;
+          try { this.pushErrorScope("validation"); scoped = true; } catch {}
+          const p = f.call(this, desc);
+          if (scoped) this.popErrorScope().then((e) => {
+            if (e) report(`WebGPU ${kind} pipeline error (${(desc && desc.label) || "unnamed"}): ${clip(e.message, 600)}`);
+          }).catch(() => {});
+          return p;
+        };
+        const fa = gp[k + "Async"];
+        if (typeof fa === "function") gp[k + "Async"] = function (desc) {
+          W.pipelines++;
+          return fa.call(this, desc).catch((e) => {
+            report(`WebGPU ${kind} pipeline error (${(desc && desc.label) || "unnamed"}): ${clip(text(e), 600)}`);
+            throw e;
+          });
+        };
+      }
+    }
+
+    // the game's memory, for the report (the game also prints it every 20 s)
+    for (const k of ["instantiate", "instantiateStreaming"]) {
+      const f = window.WebAssembly && WebAssembly[k];
+      if (typeof f !== "function") continue;
+      WebAssembly[k] = function (...a) {
+        return f.apply(this, a).then((r) => {
+          const inst = r && (r.instance || r);
+          if (inst && inst.exports && inst.exports.memory) D.mem = inst.exports.memory;
+          return r;
+        });
+      };
+    }
+    D.memMb = () => { try { return D.mem ? Math.round(D.mem.buffer.byteLength / 1048576) : 0; } catch { return 0; } };
+
+    // keep this run's log, so it can still be sent after the browser closes
+    // or reloads the game (iPads and phones do that when memory runs short)
+    const LKEY = "worldshard-log", AKEY = "worldshard-alive";
+    const b = (document.querySelector('meta[name="ws-build"]') || {}).content || "";
+    D.build = !b || b.startsWith("__") ? "dev" : b;
+    try {
+      D.prev = JSON.parse(localStorage.getItem(LKEY) || "null");
+      D.prevCrashed = sessionStorage.getItem(AKEY) === "1";
+      sessionStorage.setItem(AKEY, "1");
+    } catch {}
+    if (D.prevCrashed) add("error", "the last session ended without closing normally (the browser may have closed it to free memory); its log is kept below");
+    D.save = () => {
+      if (!D.dirty) return;
+      D.dirty = false;
+      const errs = new Set(lines.filter((l) => l[1] === "error").slice(-10));
+      const keep = lines.filter((l, i) => l[3] || errs.has(l) || i >= lines.length - 120).map(([t, l, s]) => [t, l, clip(s, 600)]);
+      try { localStorage.setItem(LKEY, JSON.stringify({ build: D.build, at: T0, mb: D.peakMb, lines: keep })); } catch {}
+    };
+    D.forget = () => { try { localStorage.removeItem(LKEY); } catch {} };
+    D.flush = () => { D.dirty = true; D.save(); };
+    let ticks = 0;
+    setInterval(() => {
+      const mb = D.memMb();
+      if (mb > D.peakMb) { D.peakMb = mb; D.dirty = true; }
+      // every second while starting up (when a phone is most likely to shut
+      // the page down), then every 4 seconds
+      if (performance.now() < 120000 || ++ticks % 4 === 0) D.save();
+    }, 1000);
+    addEventListener("pagehide", () => { D.dirty = true; D.save(); try { sessionStorage.removeItem(AKEY); } catch {} });
+    addEventListener("pageshow", (e) => { if (e.persisted) try { sessionStorage.setItem(AKEY, "1"); } catch {} });
+    document.addEventListener("visibilitychange", () => { if (document.hidden) { D.dirty = true; D.save(); } });
+
+    // frame rate, for the report
+    let frames = 0, last = performance.now();
+    D.fps = 0;
+    const tick = (now) => {
+      frames++;
+      if (now - last >= 2000) { D.fps = Math.round((frames * 1000) / (now - last)); frames = 0; last = now; }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  })();
+</script>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1020; color: #f2ead6;
+    font-family: Georgia, "Times New Roman", serif; -webkit-user-select: none; user-select: none; }
+  #bevy { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+  #loading { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; background: radial-gradient(circle at 50% 45%, #1d2a4a, #0b1020 70%); z-index: 5; text-align: center; padding: 20px; }
+  #loading h1 { margin: 0; font-size: 34px; letter-spacing: .18em; font-weight: normal; }
+  #loading p { margin: 0; opacity: .75; font-size: 15px; }
+  #loading.error p { color: #ffb4a0; opacity: 1; }
+  #loading button { font: 15px Georgia, serif; color: #f2ead6; background: rgba(255,255,255,.1); border: 1px solid rgba(242,234,214,.4);
+    border-radius: 6px; padding: 8px 14px; margin: 4px; }
+  #saves { position: fixed; top: max(10px, env(safe-area-inset-top)); right: 10px; display: flex; gap: 6px; z-index: 4; }
+  #saves button, #saves a { font: 13px Georgia, serif; color: #f2ead6; background: rgba(12,16,30,.62); border: 1px solid rgba(242,234,214,.35);
+    border-radius: 6px; padding: 6px 10px; cursor: pointer; text-decoration: none; }
+  @media (max-width: 640px) {
+    #saves { top: calc(max(10px, env(safe-area-inset-top)) + 56px); flex-direction: column; align-items: flex-end; gap: 5px; }
+    #saves button, #saves a { padding: 5px 8px; font-size: 12px; }
+  }
+  .panel { position: fixed; inset: 0; z-index: 7; background: rgba(8,12,24,.9); display: flex; flex-direction: column;
+    padding: max(10px, env(safe-area-inset-top)) 12px 12px; box-sizing: border-box; }
+  .panel[hidden] { display: none; }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .panel-head span { font-size: 20px; letter-spacing: .12em; }
+  .panel button { font: 14px Georgia, serif; color: #f2ead6; background: rgba(255,255,255,.08); border: 1px solid rgba(242,234,214,.4);
+    border-radius: 6px; padding: 7px 12px; cursor: pointer; }
+  .map-body { flex: 1; display: flex; gap: 14px; min-height: 0; }
+  .map-wrap { position: relative; flex: none; }
+  #map-canvas { display: block; border-radius: 8px; touch-action: none; cursor: crosshair; background: #102040; }
+  #map-wait { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: .8; }
+  .map-side { flex: 1; overflow-y: auto; min-width: 0; }
+  #map-pick { margin-bottom: 10px; padding: 8px; border: 1px solid rgba(242,234,214,.3); border-radius: 6px; }
+  #map-pick button { margin-top: 6px; }
+  .place { display: block; width: 100%; text-align: left; margin-bottom: 6px; }
+  .place small { display: block; opacity: .7; font-size: 12px; }
+  #settings-panel .rows { max-width: 520px; width: 100%; margin: 0 auto; overflow-y: auto; }
+  .row { margin: 12px 0; }
+  .row label { display: flex; justify-content: space-between; font-size: 15px; margin-bottom: 4px; }
+  .row input[type=range] { width: 100%; accent-color: #d8b878; }
+  .hint { font-size: 13px; opacity: .7; margin: 4px 0 14px; }
+  .save-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  @media (max-width: 640px) {
+    #saves .wide { display: none; }
+    .map-body { flex-direction: column; }
+  }
+  #saves #log-btn { color: #ffd2c4; border-color: rgba(255,160,130,.6); background: rgba(70,20,16,.7); }
+  #log-panel { background: #080c18; }
+  #log-panel .log-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  #log-panel a.btn { font: 14px Georgia, serif; color: #f2ead6; background: rgba(255,255,255,.08); border: 1px solid rgba(242,234,214,.4);
+    border-radius: 6px; padding: 7px 12px; text-decoration: none; }
+  #log-sum { margin: 0 0 8px; }
+  #log-text { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 8px 10px; background: rgba(0,0,0,.35); border-radius: 6px;
+    font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word;
+    -webkit-user-select: text; user-select: text; color: #c9c4b6; }
+  #log-text .e { color: #ff9c8a; }
+  #log-text .w { color: #f2d27a; }
+  #log-text .h { color: #8fb4d0; }
+  #preview-tag { position: fixed; top: calc(8px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 6;
+    pointer-events: none; font: 12px Georgia, serif; letter-spacing: .04em; color: #fff4d8; background: rgba(150,90,20,.85);
+    border: 1px solid rgba(255,220,150,.6); border-radius: 12px; padding: 3px 10px; white-space: nowrap; }
+  #toast { position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%); background: rgba(12,16,30,.8); padding: 8px 14px;
+    border-radius: 6px; font-size: 14px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 6; }
+</style>
+</head>
+<body>
+<canvas id="bevy" tabindex="0"></canvas>
+<div id="loading"><h1>WORLDSHARD</h1><p id="loading-msg">Building the world…</p><button id="loading-log" hidden>Problem log</button></div>
+<div id="saves">
+  <button id="map-btn" title="Open the map and travel (M)">Map</button>
+  <button id="settings-btn" title="View distance, detail and shadows">Settings</button>
+  <button id="log-btn" hidden title="Something went wrong: see the problem log and send it in">Problems <b id="log-count"></b></button>
+  <button id="save-file" class="wide" title="Download your save so you can keep it in Google Drive">Save file</button>
+  <button id="open-file" class="wide" title="Load a save file you kept">Open save</button>
+  <button id="quality" class="wide" title="Lite uses less memory and battery (for older phones)">Quality</button>
+  <a id="proto-link" class="wide" href="prototype/" title="The earlier JavaScript prototype">Prototype</a>
+</div>
+<div id="map-panel" class="panel" hidden>
+  <div class="panel-head"><span>MAP</span><button id="map-close">Close</button></div>
+  <div class="map-body">
+    <div class="map-wrap"><canvas id="map-canvas" width="640" height="640"></canvas><div id="map-wait">Drawing the map…</div></div>
+    <div class="map-side">
+      <div id="map-pick" hidden><div id="map-pick-text"></div><button id="map-go">Travel here</button></div>
+      <div class="hint">Tap the map to pick any spot, or choose a place:</div>
+      <div id="map-places"></div>
+    </div>
+  </div>
+</div>
+<div id="settings-panel" class="panel" hidden>
+  <div class="panel-head"><span>SETTINGS</span><button id="settings-close">Close</button></div>
+  <div class="rows">
+    <div class="row"><label for="s-view">Land view distance <b id="v-view"></b></label><input id="s-view" type="range" min="300" max="11000" step="100"></div>
+    <div class="row"><label for="s-detail">Land detail <b id="v-detail"></b></label><input id="s-detail" type="range" min="0.4" max="1.6" step="0.05"></div>
+    <div class="row"><label for="s-trees">Trees and rocks <b id="v-trees"></b></label><input id="s-trees" type="range" min="100" max="1500" step="20"></div>
+    <div class="row"><label for="s-plants">Grass and small plants <b id="v-plants"></b></label><input id="s-plants" type="range" min="0" max="120" step="4"></div>
+    <div class="row"><label for="s-shadows">Shadows <b id="v-shadows"></b></label><input id="s-shadows" type="range" min="0" max="800" step="20"></div>
+    <div class="hint">Higher settings look better but use more memory and battery. If a phone struggles, lower Land detail and Trees first.</div>
+    <button id="s-reset">Reset to this device's defaults</button>
+    <div class="save-row">
+      <button id="save-file-2">Save file</button>
+      <button id="open-file-2">Open save</button>
+      <button id="quality-2">Quality</button>
+      <button id="log-open">Problem log</button>
+    </div>
+  </div>
+</div>
+<div id="log-panel" class="panel" hidden>
+  <div class="panel-head"><span>PROBLEM LOG</span><button id="log-close">Close</button></div>
+  <div class="log-tools">
+    <button id="log-copy">Copy</button>
+    <a id="log-send" class="btn" href="#" target="_blank" rel="noopener">Send as a GitHub issue</a>
+    <button id="log-only">Problems only</button>
+    <button id="log-clear">Clear</button>
+  </div>
+  <div class="hint" id="log-sum"></div>
+  <pre id="log-text"></pre>
+  <div class="hint">Send opens GitHub with this log filled in; tap Submit there. The issue is public. The log holds your device and browser, the game's build and settings, where you are in the world and what the game printed, nothing personal.</div>
+</div>
+<input id="file" type="file" accept=".json,application/json" hidden>
+<div id="toast"></div>
+<script>
+  // --- the problem log's screen: a Problems button appears when something
+  // goes wrong; the panel shows the log and copies or sends it ---
+  (() => {
+    const D = window.wsDebug;
+    if (!D) return;
+    const $ = (id) => document.getElementById(id);
+    const panel = $("log-panel"), pre = $("log-text"), btn = $("log-btn");
+    const REPO = "https://github.com/ChristianHReed/WorldShard";
+    let onlyProblems = false, timer = 0;
+    const ago = (ms) => (ms < 90000 ? `${Math.round(ms / 1000)} s` : ms < 5400000 ? `${Math.round(ms / 60000)} min` : `${Math.round(ms / 3600000)} h`);
+
+    function gpu() {
+      if (D.gpu) return D.gpu;
+      try {
+        const c = document.createElement("canvas");
+        const g = c.getContext("webgl2") || c.getContext("webgl");
+        const x = g && g.getExtension("WEBGL_debug_renderer_info");
+        D.gpu = g ? String(x ? g.getParameter(x.UNMASKED_RENDERER_WEBGL) : g.getParameter(g.RENDERER)) : "no WebGL";
+        const lose = g && g.getExtension("WEBGL_lose_context");
+        if (lose) lose.loseContext();
+      } catch { D.gpu = "unknown"; }
+      return D.gpu;
+    }
+    const ls = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+
+    // the facts at the top of a report
+    function header() {
+      const s = screen, mb = D.memMb();
+      const set = (() => { try { const j = JSON.parse(window.wsSettings || "null"); return j ? Object.entries(j).map(([k, v]) => `${k} ${v}`).join(", ") : "not started"; } catch { return "?"; } })();
+      return [
+        `WorldShard problem report`,
+        `build: ${D.build}   time: ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC   running: ${ago(Date.now() - D.T0)}`,
+        `device: ${navigator.userAgent}`,
+        `screen: ${s.width}x${s.height} @${devicePixelRatio || 1}x, window ${innerWidth}x${innerHeight}, touch ${navigator.maxTouchPoints || 0}`,
+        `graphics: ${gpu()}; WebGPU in this browser: ${"gpu" in navigator ? "yes" : "no"}; game using: ${window.wsGraphics || "not started"}${(() => {
+          try { const f = JSON.parse(localStorage.getItem("worldshard-webgpu-failure") || "null"); return f ? `; WebGPU failed here before (build ${f.build}, ${ago(Date.now() - f.at)} ago): ${f.why}` : ""; } catch { return ""; }
+        })()}`,
+        `quality: ${ls("worldshard-quality") || "auto"}; settings: ${set}`,
+        `where: ${window.wsPlayer || "?"} (x, z, facing, flying); models loaded: ${window.wsLoaded || "none yet"}`,
+        `memory: ${mb ? mb + " MB now, " + Math.max(mb, D.peakMb) + " MB peak" : "?"}; frame rate: ${D.fps} fps; errors: ${D.errors}`,
+      ];
+    }
+    const line = ([t, l, s]) => `${String(t).padStart(6)}s ${l === "error" ? "ERROR" : l === "warn" ? "WARN " : "     "} ${s}`;
+    const pick = (ls2) => (onlyProblems ? ls2.filter((l) => l[1] === "error" || l[1] === "warn") : ls2);
+    const prevHead = () => D.prev && D.prev.lines && D.prev.lines.length
+      ? `---- the session before (build ${D.prev.build}, started ${ago(D.T0 - D.prev.at)} before this one${D.prev.mb ? ", memory peak " + D.prev.mb + " MB" : ""}) ----`
+      : "";
+
+    // the whole log, for copying
+    function full() {
+      const out = [...header(), "", "---- this session (seconds since the page opened) ----", ...D.lines.map(line)];
+      if (prevHead()) out.push("", prevHead(), ...D.prev.lines.map(line));
+      return out.join("\n");
+    }
+    // a report short enough to go in a link: errors first, then the latest lines
+    function sendLink() {
+      const head = header().join("\n");
+      const allErrs = D.lines.filter((l) => l[1] === "error");
+      const firstErr = allErrs.length ? allErrs[0][2].split("\n")[0] : "";
+      const title = `Problem report (${D.build}): ${firstErr ? D.clip(firstErr, 70) : "from the game"}`;
+      const make = (body) => `${REPO}/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(
+        "What were you doing when it happened?\n\n\n```\n" + body + "\n```\n")}`;
+      // shrink the parts until the link is short enough for GitHub
+      let e = 12, n = 60, p = 25, w = 300;
+      for (let k = 0; k < 14; k++) {
+        const clipL = (l) => line([l[0], l[1], D.clip(l[2], w)]);
+        const errs = allErrs.slice(0, Math.ceil(e / 2)).concat(allErrs.length > e ? allErrs.slice(-Math.floor(e / 2)) : allErrs.slice(Math.ceil(e / 2)));
+        const tail = D.lines.slice(-n).filter((l) => !errs.includes(l));
+        let body = head + "\n\n" + (errs.length ? "errors:\n" + errs.map(clipL).join("\n") + "\n\n" : "") +
+          "latest:\n" + tail.map(clipL).join("\n");
+        if (D.prevCrashed && prevHead()) body += "\n\n" + prevHead() + "\n" + D.prev.lines.slice(-p).map(clipL).join("\n");
+        const url = make(body);
+        if (url.length <= 7000) return url;
+        e = Math.max(2, Math.floor(e * 0.75)); n = Math.floor(n * 0.7); p = Math.floor(p * 0.7); w = Math.max(100, Math.floor(w * 0.8));
+      }
+      return make(head + "\n\n(the log was too long for a link: use Copy and paste it here)");
+    }
+
+    function render() {
+      const frag = document.createDocumentFragment();
+      const add = (txt, cls) => { const sp = document.createElement("span"); if (cls) sp.className = cls; sp.textContent = txt + "\n"; frag.appendChild(sp); };
+      const cls = (l) => (l[1] === "error" ? "e" : l[1] === "warn" ? "w" : "");
+      const mine = pick(D.lines);
+      if (!mine.length) add(onlyProblems ? "No problems logged in this session." : "Nothing logged yet.", "h");
+      for (const l of mine) add(line(l), cls(l));
+      if (prevHead()) {
+        add("");
+        add(prevHead(), "h");
+        for (const l of pick(D.prev.lines)) add(line(l), cls(l));
+      }
+      const stick = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
+      pre.replaceChildren(frag);
+      if (stick) pre.scrollTop = pre.scrollHeight;
+      $("log-sum").textContent = header()[1].replace(/ {3}/g, " · ") + " · " + header()[7];
+      $("log-send").href = sendLink();
+      $("log-only").textContent = onlyProblems ? "Show everything" : "Problems only";
+    }
+    function badge() {
+      btn.hidden = D.errors === 0;
+      $("log-count").textContent = D.errors > 99 ? "99+" : String(D.errors);
+      const lb = $("loading-log"); // also on the loading screen, which covers the buttons
+      if (lb) { lb.hidden = D.errors === 0; lb.onclick = D.open; }
+    }
+    D.onchange = () => {
+      badge();
+      if (!panel.hidden && !timer) timer = setTimeout(() => { timer = 0; render(); }, 500);
+    };
+    D.open = () => {
+      for (const p of document.querySelectorAll(".panel")) p.hidden = true;
+      panel.hidden = false;
+      render();
+      pre.scrollTop = pre.scrollHeight;
+    };
+    btn.onclick = D.open;
+    $("log-open").onclick = D.open;
+    $("log-close").onclick = () => { panel.hidden = true; };
+    $("log-only").onclick = () => { onlyProblems = !onlyProblems; render(); };
+    $("log-clear").onclick = () => {
+      D.lines.length = 0; D.errors = 0; D.prev = null; D.prevCrashed = false; D.forget(); D.unpin();
+      badge(); render();
+    };
+    $("log-copy").onclick = async () => {
+      const txt = full(), b = $("log-copy");
+      let done = false;
+      try { await navigator.clipboard.writeText(txt); done = true; } catch {}
+      if (!done) {
+        const ta = document.createElement("textarea");
+        ta.value = txt; ta.setAttribute("readonly", ""); ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+        document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, txt.length);
+        try { done = document.execCommand("copy"); } catch {}
+        ta.remove();
+      }
+      b.textContent = done ? "Copied" : "Select the text to copy";
+      setTimeout(() => (b.textContent = "Copy"), 2500);
+    };
+    // the send link is a real link (opens reliably on iPad); refresh it as it's tapped
+    $("log-send").addEventListener("pointerdown", (e) => { e.currentTarget.href = sendLink(); });
+    addEventListener("keydown", (e) => { if (e.key === "Escape") panel.hidden = true; });
+    badge();
+  })();
+</script>
+<script type="module">
+  // --- graphics: two builds of the game, WebGL 2 and WebGPU. WebGL is the
+  // default: on an iPad it starts faster and runs smoother. Phones use WebGPU,
+  // since starting with WebGL was more than an iPhone 11 could take, and so
+  // does any device where a WebGL start never finished. If WebGPU fails to
+  // start, the device goes back to WebGL. "?gfx=webgl" / "?gfx=webgpu" picks one. ---
+  const GKEY = "worldshard-graphics"; // what this device should use, once a start has gone wrong
+  const LAST = "worldshard-graphics-last";
+  const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  let bootCrashed = false;
+  try { bootCrashed = sessionStorage.getItem("worldshard-booting") === "1"; } catch {}
+  // does WebGPU work here? A browser can have it and still give no adapter
+  // now and then (seen in Brave on an iPhone), so ask up to three times
+  let gpuSays = null;
+  async function hasWebgpu() {
+    if (gpuSays) return gpuSays === "yes";
+    if (!navigator.gpu) { gpuSays = "not in this browser"; return false; }
+    for (let i = 0; i < 3; i++) {
+      try {
+        if (await navigator.gpu.requestAdapter()) { gpuSays = "yes"; return true; }
+        gpuSays = "no adapter";
+      } catch (e) { gpuSays = "adapter request failed: " + e.message; }
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    return false;
+  }
+  let gfxWhy = "";
+  async function pickGraphics() {
+    const asked = new URLSearchParams(location.search).get("gfx");
+    if (asked === "webgl" || asked === "webgpu") { gfxWhy = "asked in the address"; return asked; }
+    let saved = lsGet(GKEY);
+    // a WebGL start that never finished: WebGPU is the way left, even if it
+    // failed here once before (that is retried once per tab)
+    let retried = false;
+    try { retried = sessionStorage.getItem("worldshard-webgpu-retried") === "1"; } catch {}
+    if (bootCrashed && lsGet(LAST) === "webgl" && (saved !== "webgl" || !retried)) {
+      try { sessionStorage.setItem("worldshard-webgpu-retried", "1"); } catch {}
+      if (await hasWebgpu()) {
+        lsSet(GKEY, "webgpu");
+        saved = "webgpu";
+        gfxWhy = "the last WebGL start crashed";
+      } else gfxWhy = `the last WebGL start crashed, but WebGPU isn't available (${gpuSays})`;
+    }
+    if (saved === "webgl") { gfxWhy ||= "WebGPU failed to start here before"; return "webgl"; }
+    if (saved === "webgpu") {
+      if (await hasWebgpu()) { gfxWhy ||= "chosen for this device after a crash"; return "webgpu"; }
+      gfxWhy = `WebGPU wanted but not available (${gpuSays})`;
+      return "webgl";
+    }
+    const phone = navigator.maxTouchPoints > 0 && Math.max(screen.width, screen.height) < 1000;
+    if (!phone) { gfxWhy ||= "default for tablets and computers"; return "webgl"; }
+    if (await hasWebgpu()) { gfxWhy ||= "phone"; return "webgpu"; }
+    gfxWhy ||= `phone, but WebGPU isn't available (${gpuSays})`;
+    return "webgl";
+  }
+  const gfx = await pickGraphics();
+  lsSet(LAST, gfx);
+  window.wsGraphics = gfx === "webgpu" ? "WebGPU" : "WebGL 2";
+  const gameName = gfx === "webgpu" ? "worldshard_webgpu" : "worldshard";
+  // WebGPU didn't start: note why (the report shows it later), and go to
+  // WebGL for good on this device, unless WebGPU was asked for by address
+  const useWebgl = (why) => {
+    const fail = { at: Date.now(), build: window.wsDebug ? wsDebug.build : "?", why: String(why).slice(0, 400) };
+    lsSet("worldshard-webgpu-failure", JSON.stringify(fail));
+    console.error("WebGPU failed to start: " + fail.why);
+    if (new URLSearchParams(location.search).get("gfx") === "webgpu") {
+      msg("WebGPU failed to start: " + fail.why);
+      const l = document.getElementById("loading");
+      if (l) l.classList.add("error");
+      return;
+    }
+    // a switch, not a crash: don't let the reload count as a failed start
+    try { localStorage.setItem(GKEY, "webgl"); sessionStorage.removeItem("worldshard-booting"); } catch {}
+    location.reload();
+  };
+
+  const KEY = "worldshard-save-v1";
+  const inClaude = !!window.claude;
+  if (inClaude) document.getElementById("proto-link").remove();
+  const msg = (t) => { const m = document.getElementById("loading-msg"); if (m) m.textContent = t; };
+  const toast = (t) => {
+    const el = document.getElementById("toast");
+    el.textContent = t; el.style.opacity = 1;
+    clearTimeout(toast.t); toast.t = setTimeout(() => (el.style.opacity = 0), 2600);
+  };
+  const store = {
+    get() { try { return localStorage.getItem(KEY); } catch { return null; } },
+    set(v) { try { localStorage.setItem(KEY, v); return true; } catch { return false; } },
+  };
+
+  // --- quality: "lite" uses less memory; picked automatically after a crash ---
+  const QKEY = "worldshard-quality";
+  const BOOT = "worldshard-booting";
+  const getQ = () => { try { return localStorage.getItem(QKEY) || "auto"; } catch { return "auto"; } };
+  const setQ = (q) => { try { localStorage.setItem(QKEY, q); } catch {} };
+  const qBtn = document.getElementById("quality");
+  qBtn.textContent = getQ() === "lite" ? "Lite" : "Auto";
+  qBtn.onclick = () => { setQ(getQ() === "lite" ? "auto" : "lite"); location.reload(); };
+
+  // A phone that runs out of memory reloads the page by itself. If the last
+  // start never finished, use lite quality; if lite also failed, stop and ask.
+  let crashed = false;
+  try { crashed = sessionStorage.getItem(BOOT) === "1"; sessionStorage.setItem(BOOT, "1"); } catch {}
+  const startedOk = setInterval(() => {
+    if (!document.getElementById("loading")) {
+      clearInterval(startedOk);
+      setTimeout(() => { try { sessionStorage.removeItem(BOOT); } catch {} }, 15000);
+    }
+  }, 500);
+  function stop(message) {
+    const l = document.getElementById("loading");
+    l.classList.add("error");
+    msg(message);
+    const again = document.createElement("div");
+    again.innerHTML = '<button id="retry-lite">Try again (lite)</button><button id="retry-full">Try full quality</button>';
+    l.appendChild(again);
+    document.getElementById("retry-lite").onclick = () => { setQ("lite"); try { sessionStorage.removeItem(BOOT); } catch {} location.reload(); };
+    document.getElementById("retry-full").onclick = () => { setQ("auto"); try { sessionStorage.removeItem(BOOT); } catch {} location.reload(); };
+  }
+
+  // --- download the game (one file, compiled while it downloads) and start it ---
+  // each step of the start-up goes in the problem log, saved at once, so a
+  // report shows how far a start got if the device shuts the page down
+  const T0 = performance.now();
+  const step = (t) => { console.info(`start-up: ${t} (${((performance.now() - T0) / 1000).toFixed(1)} s)`); if (window.wsDebug && wsDebug.flush) wsDebug.flush(); };
+  step(`page open, quality ${getQ()}, graphics ${window.wsGraphics} (${gfxWhy})${window.wsPreview ? ", preview #" + window.wsPreview : ""}`);
+
+  async function gameModule() {
+    step("downloading the game");
+    const res = await fetch(`${gameName}_bg.wasm`);
+    if (res.ok && res.body) {
+      const total = Number(res.headers.get("content-length")) || 0;
+      let got = 0;
+      const counted = res.body.pipeThrough(new TransformStream({
+        transform(chunk, ctl) {
+          got += chunk.length;
+          if (total) msg(`Downloading the world… ${Math.min(99, Math.round((got / total) * 100))}%`);
+          ctl.enqueue(chunk);
+        },
+      }));
+      return new Response(counted, { headers: { "Content-Type": "application/wasm" } });
+    }
+    // hosts with a file-size limit get the game in pieces (WebGL 2 only)
+    if (gfx === "webgpu") { useWebgl("the WebGPU build couldn't be downloaded"); await new Promise(() => {}); }
+    const parts = await (await fetch("wasm-parts.json")).json();
+    const totalP = parts.reduce((a, p) => a + p.size, 0);
+    const bytes = new Uint8Array(totalP);
+    let at = 0;
+    for (const p of parts) {
+      const r = await fetch(p.file);
+      if (!r.ok) throw new Error(`could not download ${p.file} (${r.status})`);
+      const reader = r.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes.set(value, at);
+        at += value.length;
+        msg(`Downloading the world… ${Math.round((at / totalP) * 100)}%`);
+      }
+    }
+    return bytes;
+  }
+
+  if (crashed && getQ() === "lite") {
+    stop("The game ran out of memory on this device, even in lite quality.");
+  } else {
+    if (crashed) {
+      setQ("lite");
+      qBtn.textContent = "Lite";
+      toast("Lite quality: the last start ran out of memory");
+    }
+    try {
+      const mod = await gameModule();
+      msg("Building the world…");
+      await new Promise((r) => setTimeout(r, 30)); // let the message show
+      step("compiling and starting the game (the download finishes as it compiles)");
+      const started = setInterval(() => {
+        if (window.wsDebug && wsDebug.mem) { clearInterval(started); step(`game compiled, memory ${wsDebug.memMb()} MB`); }
+      }, 100);
+      const drawn = setInterval(() => {
+        if (!document.getElementById("loading")) { clearInterval(drawn); step(`world drawn, memory ${window.wsDebug ? wsDebug.memMb() : "?"} MB`); }
+        // WebGPU that fails to start: the game stops (a panic, or the wasm
+        // traps). Errors the engine logs and carries on from don't count.
+        else if (gfx === "webgpu" && window.wsDebug) {
+          const dead = wsDebug.lines.find((l) => l[1] === "error" && /panicked at|RuntimeError|unreachable executed/i.test(l[2]));
+          if (dead) {
+            clearInterval(drawn);
+            step("WebGPU failed to start; switching to WebGL");
+            useWebgl(dead[2].split("\n")[0]);
+          }
+        }
+      }, 250);
+      const { default: init } = await import(`./${gameName}.js`);
+      await init({ module_or_path: mod });
+    } catch (e) {
+      const text = String((e && e.message) || e);
+      if (!text.includes("Using exceptions for control flow")) { // Bevy's normal start-up
+        console.error(e);
+        if (gfx === "webgpu") useWebgl(text); // try WebGL instead
+        else {
+          const l = document.getElementById("loading");
+          if (l) { l.classList.add("error"); msg("Could not start: " + text); }
+        }
+      }
+    }
+  }
+
+  // --- save file: the game saves in the browser; this hands it to the player as a file ---
+  document.getElementById("save-file").onclick = async () => {
+    const data = store.get();
+    if (!data) { toast("Nothing saved yet. Walk around first."); return; }
+    const day = (data.match(/"day":(\d+)/) || [])[1] || "1";
+    const name = `WorldShard-save-day${day}.json`;
+    // Inside Claude: Claude's own save prompt (on phones it opens the share sheet).
+    const downloads = inClaude ? await window.claude.use("downloads").catch(() => null) : null;
+    if (downloads) {
+      try { await downloads.save({ filename: name, data }); toast("Save file ready. Keep it in Google Drive."); }
+      catch (e) { if (!e || e.code !== "declined") toast("Could not save the file here."); }
+      return;
+    }
+    const file = new File([data], name, { type: "application/json" });
+    // On phones the share sheet lets the player pick Google Drive directly.
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: "WorldShard save" }); return; }
+      catch (e) { if (e && e.name === "AbortError") return; }
+    }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(file); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast("Save file downloaded. Keep it in Google Drive.");
+  };
+
+  document.getElementById("open-file").onclick = () => document.getElementById("file").click();
+  document.getElementById("file").onchange = async (ev) => {
+    const f = ev.target.files && ev.target.files[0];
+    ev.target.value = "";
+    if (!f) return;
+    try {
+      const text = await f.text();
+      const s = text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
+      const d = JSON.parse(s);
+      if ((d.game && d.game !== "WorldShard") || typeof d.x !== "number" || typeof d.z !== "number") throw new Error("not a WorldShard save");
+      if (!store.set(s)) { toast("This browser will not keep saves here."); return; }
+      toast("Save loaded. Restarting…");
+      setTimeout(() => location.reload(), 600);
+    } catch (e) {
+      toast("That file is not a WorldShard save.");
+    }
+  };
+
+  // --- settings sliders: stored for the game, which applies them live ---
+  const SKEY = "worldshard-settings";
+  const TKEY = "worldshard-travel";
+  try { localStorage.removeItem(TKEY); } catch {}
+  const sliders = {
+    view: { el: "s-view", out: "v-view", fmt: (v) => `${Number(v).toLocaleString()} km` },
+    detail: { el: "s-detail", out: "v-detail", fmt: (v) => `${Number(v).toFixed(2)}×` },
+    trees: { el: "s-trees", out: "v-trees", fmt: (v) => `${v} m` },
+    plants: { el: "s-plants", out: "v-plants", fmt: (v) => (Number(v) === 0 ? "off" : `${v} m`) },
+    shadows: { el: "s-shadows", out: "v-shadows", fmt: (v) => (Number(v) === 0 ? "off" : `${v} m`) },
+  };
+  const readJson = (name) => { try { return JSON.parse(window[name] || "null"); } catch { return null; } };
+  function showSettings() {
+    const cur = readJson("wsSettings");
+    if (!cur) return;
+    for (const [k, d] of Object.entries(sliders)) {
+      const el = document.getElementById(d.el);
+      el.value = cur[k];
+      document.getElementById(d.out).textContent = d.fmt(el.value);
+    }
+  }
+  let sTimer = 0;
+  for (const [k, d] of Object.entries(sliders)) {
+    document.getElementById(d.el).addEventListener("input", (e) => {
+      document.getElementById(d.out).textContent = d.fmt(e.target.value);
+      clearTimeout(sTimer);
+      sTimer = setTimeout(() => {
+        const parts = Object.entries(sliders).map(([kk, dd]) => `${kk}=${document.getElementById(dd.el).value}`);
+        try { localStorage.setItem(SKEY, parts.join(";")); } catch {}
+      }, 150);
+    });
+  }
+  const settingsPanel = document.getElementById("settings-panel");
+  document.getElementById("settings-btn").onclick = () => { showSettings(); settingsPanel.hidden = false; };
+  document.getElementById("settings-close").onclick = () => { settingsPanel.hidden = true; };
+  document.getElementById("s-reset").onclick = () => {
+    try { localStorage.removeItem(SKEY); } catch {}
+    setTimeout(showSettings, 500);
+  };
+  document.getElementById("save-file-2").onclick = () => document.getElementById("save-file").click();
+  document.getElementById("open-file-2").onclick = () => document.getElementById("open-file").click();
+  const q2 = document.getElementById("quality-2");
+  q2.textContent = "Quality: " + (getQ() === "lite" ? "Lite" : "Auto");
+  q2.onclick = () => qBtn.click();
+
+  // --- the map: the island, the big peaks, the places, and you ---
+  const mapPanel = document.getElementById("map-panel");
+  const cv = document.getElementById("map-canvas");
+  const cx = cv.getContext("2d");
+  let base = null, info = null, pick = null, mapTimer = 0;
+  function sizeMap() {
+    const phone = innerWidth <= 640;
+    const side = Math.floor(phone ? Math.min(innerWidth - 24, innerHeight * 0.55) : Math.min(innerHeight - 90, innerWidth * 0.62));
+    cv.style.width = cv.style.height = side + "px";
+    const px = Math.round(side * Math.min(devicePixelRatio || 1, 2));
+    if (cv.width !== px) { cv.width = cv.height = px; }
+  }
+  function loadBase() {
+    if (base || !window.wsMap) return;
+    info = readJson("wsMapInfo");
+    const n = info.size;
+    const off = document.createElement("canvas");
+    off.width = off.height = n;
+    off.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(window.wsMap), n, n), 0, 0);
+    base = off;
+    document.getElementById("map-wait").remove();
+  }
+  const toPx = (x, z) => [((x + info.half) / (2 * info.half)) * cv.width, ((z + info.half) / (2 * info.half)) * cv.height];
+  const toWorld = (px, py) => [(px / cv.width) * 2 * info.half - info.half, (py / cv.height) * 2 * info.half - info.half];
+  function drawMap() {
+    loadBase();
+    if (!base) return;
+    const W = cv.width, k = W / 640;
+    cx.imageSmoothingEnabled = true;
+    cx.drawImage(base, 0, 0, W, W);
+    const data = readJson("wsPlaces");
+    if (data) {
+      // the big peaks
+      for (const [x, z, h] of data.peaks) {
+        const [px, py] = toPx(x, z);
+        const s = (h > 150000 ? 9 : 6) * k * (h > 200000 ? 1.4 : 1);
+        cx.beginPath(); cx.moveTo(px, py - s); cx.lineTo(px + s * 0.9, py + s * 0.6); cx.lineTo(px - s * 0.9, py + s * 0.6); cx.closePath();
+        cx.fillStyle = "#f4f1ea"; cx.strokeStyle = "#3a3a40"; cx.lineWidth = 1.5 * k; cx.fill(); cx.stroke();
+      }
+      // the places: regions in larger type, landmarks smaller; each name
+      // set where it covers no peak, dot or other name (Everest's above,
+      // St. Helens' below, by preference)
+      const taken = [];
+      for (const [x, z, h] of data.peaks) {
+        const [px, py] = toPx(x, z), s = 12 * k;
+        taken.push([px - s, py - s, px + s, py + s]);
+      }
+      const regions = ["North", "Northeast", "Southeast", "South", "Southwest", "Northwest"];
+      const shown = data.places.filter((p) => p.name !== "Start");
+      for (const p of shown) {
+        const [px, py] = toPx(p.x, p.z);
+        taken.push([px - 5 * k, py - 5 * k, px + 5 * k, py + 5 * k]);
+      }
+      const hits = (b) => taken.some((t) => b[0] < t[2] && b[2] > t[0] && b[1] < t[3] && b[3] > t[1]);
+      for (const p of shown) {
+        const [px, py] = toPx(p.x, p.z);
+        const big = regions.includes(p.name) || p.name.startsWith("Mount");
+        const size = Math.round((big ? 13 : 11) * k);
+        cx.font = `${size}px Georgia, serif`;
+        const w = cx.measureText(p.name).width, hgt = size;
+        const above = [0, -9 * k, "center"], below = [0, 9 * k + hgt, "center"];
+        const right = [8 * k, hgt * 0.35, "left"], left = [-8 * k, hgt * 0.35, "right"];
+        const tries = p.name === "Mount St. Helens" ? [below, right, left, above] : [above, below, right, left, [0, -22 * k, "center"]];
+        let pickT = tries[0];
+        for (const t of tries) {
+          const x0 = t[2] === "center" ? px + t[0] - w / 2 : t[2] === "left" ? px + t[0] : px + t[0] - w;
+          const box = [x0 - 2, py + t[1] - hgt, x0 + w + 2, py + t[1] + 3];
+          if (!hits(box)) { pickT = t; taken.push(box); break; }
+        }
+        cx.fillStyle = big ? "#d8b878" : "#b8d0e0";
+        cx.beginPath(); cx.arc(px, py, (big ? 4 : 3) * k, 0, 7); cx.fill();
+        cx.textAlign = pickT[2];
+        cx.lineWidth = 3 * k; cx.strokeStyle = "rgba(10,14,28,.75)"; cx.strokeText(p.name, px + pickT[0], py + pickT[1]);
+        cx.fillStyle = big ? "#f8f2e2" : "#dfe9f0"; cx.fillText(p.name, px + pickT[0], py + pickT[1]);
+      }
+      cx.textAlign = "center";
+    }
+    // a picked spot
+    if (pick) {
+      const [px, py] = toPx(pick[0], pick[1]);
+      cx.strokeStyle = "#ffd27a"; cx.lineWidth = 2.5 * k;
+      cx.beginPath(); cx.arc(px, py, 9 * k, 0, 7); cx.stroke();
+    }
+    // you: an arrow pointing the way you face
+    const me = (window.wsPlayer || "").split(",").map(Number);
+    if (me.length >= 3 && isFinite(me[0])) {
+      const [px, py] = toPx(me[0], me[1]);
+      const dx = Math.sin(me[2]), dy = -Math.cos(me[2]), s = 11 * k;
+      cx.beginPath();
+      cx.moveTo(px + dx * s, py + dy * s);
+      cx.lineTo(px - dx * s * 0.6 - dy * s * 0.6, py - dy * s * 0.6 + dx * s * 0.6);
+      cx.lineTo(px - dx * s * 0.2, py - dy * s * 0.2);
+      cx.lineTo(px - dx * s * 0.6 + dy * s * 0.6, py - dy * s * 0.6 - dx * s * 0.6);
+      cx.closePath();
+      cx.fillStyle = "#e8483a"; cx.strokeStyle = "#fff"; cx.lineWidth = 2 * k; cx.fill(); cx.stroke();
+    }
+  }
+  function listPlaces() {
+    const data = readJson("wsPlaces");
+    const box = document.getElementById("map-places");
+    if (!data || box.childElementCount) return;
+    for (const p of data.places) {
+      const b = document.createElement("button");
+      b.className = "place";
+      b.innerHTML = `${p.name}<small>${p.sub}</small>`;
+      b.onclick = () => travel(p.x, p.z, p.name);
+      box.appendChild(b);
+    }
+  }
+  function travel(x, z, label) {
+    try { localStorage.setItem(TKEY, `${Date.now()};${Math.round(x)};${Math.round(z)}`); } catch { toast("This browser will not allow travel here."); return; }
+    closeMap();
+    toast(`Travelling to ${label}…`);
+  }
+  function openMap() {
+    sizeMap(); listPlaces(); drawMap();
+    mapPanel.hidden = false;
+    clearInterval(mapTimer);
+    mapTimer = setInterval(() => { listPlaces(); drawMap(); }, 300);
+  }
+  function closeMap() { mapPanel.hidden = true; clearInterval(mapTimer); pick = null; document.getElementById("map-pick").hidden = true; }
+  document.getElementById("map-btn").onclick = openMap;
+  document.getElementById("map-close").onclick = closeMap;
+  cv.addEventListener("pointerdown", (e) => {
+    if (!info) return;
+    const r = cv.getBoundingClientRect();
+    const [x, z] = toWorld(((e.clientX - r.left) / r.width) * cv.width, ((e.clientY - r.top) / r.height) * cv.height);
+    pick = [x, z];
+    const ew = x >= 0 ? "E" : "W", ns = z >= 0 ? "S" : "N";
+    document.getElementById("map-pick-text").textContent = `${Math.abs(Math.round(x / 1000)).toLocaleString()} km ${ew}, ${Math.abs(Math.round(z / 1000)).toLocaleString()} km ${ns} of the centre`;
+    document.getElementById("map-pick").hidden = false;
+    drawMap();
+  });
+  document.getElementById("map-go").onclick = () => { if (pick) travel(pick[0], pick[1], "the picked spot"); };
+  addEventListener("resize", () => { if (!mapPanel.hidden) { sizeMap(); drawMap(); } });
+  addEventListener("keydown", (e) => {
+    if (e.key === "m" || e.key === "M") { mapPanel.hidden ? openMap() : closeMap(); }
+    if (e.key === "Escape") { closeMap(); settingsPanel.hidden = true; }
+  });
+
+  // keep keyboard focus on the game after using the buttons
+  document.getElementById("bevy").addEventListener("pointerdown", (e) => e.currentTarget.focus());
+</script>
+</body>
+</html>

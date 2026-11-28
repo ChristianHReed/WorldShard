@@ -1,0 +1,36 @@
+[1.7s] 1-webgpu-phone console.info: start-up: page open, quality auto, graphics WebGPU (asked in the address) (0.0 s)
+[1.8s] 1-webgpu-phone console.info: start-up: downloading the game (0.0 s)
+[2.0s] 1-webgpu-phone console.info: start-up: compiling and starting the game (the download finishes as it compiles) (0.2 s)
+[2.0s] WebGPU in this Chrome: adapter: google swiftshader
+[2.4s] 1-webgpu-phone console.log: %cINFO%c /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_winit-0.20.1/src/system.rs:67%c Creating new window WorldShard (71v0) color: whitesmoke; background: #444 color: gray; font-style: italic color: inherit
+[2.6s] 1-webgpu-phone console.info: start-up: game compiled, memory 17 MB (0.8 s)
+[2.6s] 1-webgpu-phone console.log: %cWARN%c /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_render-0.20.1/src/renderer/mod.rs:313%c The selected adapter is using a driver that only supports software rendering. This is likely to be very slow. See https://bevy.org/learn/errors/b0006/ color: orange; background: #444 color: gray; font-style: italic color: inherit
+[2.6s] 1-webgpu-phone console.log: %cWARN%c /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_pbr-0.20.1/src/ssao/mod.rs:68%c ScreenSpaceAmbientOcclusionPlugin not loaded. GPU lacks support: Limits::max_storage_textures_per_shader_stage is less than 5. color: orange; background: #444 color: gray; font-style: italic color: inherit
+[2.6s] 1-webgpu-phone console.log: %cINFO%c src/main.rs:479%c WorldShard quality: Quality { scale: Some(1.0), split_k: 0.8, prop_radius: 320.0, near_radius: 70.0, detail_radius: 30.0, grass_radius: 40.0, msaa: true, shadow_distance: 160.0, cascades: 1, shadow_map: 1024, view: 3600000.0, name: "phone" } color: whitesmoke; background: #444 color: gray; font-style: italic color: inherit
+[2.9s] 1-webgpu-phone console.log: %cINFO%c src/main.rs:1943%c WorldShard memory: 33 MB color: whitesmoke; background: #444 color: gray; font-style: italic color: inherit
+[3.6s] 1-webgpu-phone console.log: %cINFO%c src/main.rs:1254%c WorldShard models for: Southwest color: whitesmoke; background: #444 color: gray; font-style: italic color: inherit
+[28.7s] 1-webgpu-phone console.log: %cINFO%c src/main.rs:1943%c WorldShard memory: 99 MB color: whitesmoke; background: #444 color: gray; font-style: italic color: inherit
+[53.0s] 1-webgpu-phone console.info: start-up: world drawn, memory 99 MB (51.2 s)
+[53.6s] 1-webgpu-phone: world drawing (game using WebGPU)
+[62.7s] 1-webgpu-phone console.log: %cINFO%c src/main.rs:1943%c WorldShard memory: 99 MB color: whitesmoke; background: #444 color: gray; font-style: italic color: inherit
+[97.7s] screenshot 1-webgpu-phone.png
+[97.8s] 1-webgpu-phone problem log: 0.1s info start-up: page open, quality auto, graphics WebGPU (asked in the address) (0.0 s)
+[97.8s] 1-webgpu-phone problem log: 45.9s log WebGPU check: 30 shaders and 26 pipelines made
+[102.7s] 2-webgpu-safari-let-fix console.info: start-up: page open, quality auto, graphics WebGPU (asked in the address) (0.0 s)
+[102.7s] 2-webgpu-safari-let-fix console.info: start-up: downloading the game (0.0 s)
+[102.7s] 2-webgpu-safari-let-fix console.info: start-up: compiling and starting the game (the download finishes as it compiles) (0.0 s)
+[103.0s] 2-webgpu-safari-let-fix console.log: %cINFO%c /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_winit-0.20.1/src/system.rs:67%c Creating new window WorldShard (71v0) color: whitesmoke; background: #444 color: gray; font-style: italic color: inherit
+[103.1s] 2-webgpu-safari-let-fix console.info: start-up: game compiled, memory 17 MB (0.4 s)
+[103.1s] 2-webgpu-safari-let-fix console.log: %cWARN%c /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_render-0.20.1/src/renderer/mod.rs:313%c The selected adapter is using a driver that only supports software rendering. This is likely to be very slow. See https://bevy.org/learn/errors/b0006/ color: orange; background: #444 color: gray; font-style: italic color: inherit
+[103.1s] 2-webgpu-safari-let-fix console.log: %cWARN%c /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_pbr-0.20.1/src/ssao/mod.rs:68%c ScreenSpaceAmbientOcclusionPlugin not loaded. GPU lacks support: Limits::max_storage_textures_per_shader_stage is less than 5. color: orange; background: #444 color: gray; font-style: italic color: inherit
+[103.2s] 2-webgpu-safari-let-fix console.log: %cINFO%c src/main.rs:479%c WorldShard quality: Quality { scale: Some(1.0), split_k: 0.8, prop_radius: 320.0, near_radius: 70.0, detail_radius: 30.0, grass_radius: 40.0, msaa: true, shadow_distance: 160.0, cascades: 1, shadow_map: 1024, view: 3600000.0, name: "phone" } color: whitesmoke; background: #444 color: gray; font-style: italic color: inherit
+[103.4s] 2-webgpu-safari-let-fix console.log: %cINFO%c src/main.rs:1943%c WorldShard memory: 33 MB color: whitesmoke; background: #444 color: gray; font-style: italic color: inherit
+[104.0s] 2-webgpu-safari-let-fix console.log: %cINFO%c src/main.rs:1254%c WorldShard models for: Southwest color: whitesmoke; background: #444 color: gray; font-style: italic color: inherit
+[123.0s] 2-webgpu-safari-let-fix console.log: %cINFO%c src/main.rs:1943%c WorldShard memory: 99 MB color: whitesmoke; background: #444 color: gray; font-style: italic color: inherit
+[155.2s] 2-webgpu-safari-let-fix console.info: start-up: world drawn, memory 99 MB (52.5 s)
+[155.7s] 2-webgpu-safari-let-fix: world drawing (game using WebGPU)
+[160.0s] 2-webgpu-safari-let-fix console.log: %cINFO%c src/main.rs:1943%c WorldShard memory: 99 MB color: whitesmoke; background: #444 color: gray; font-style: italic color: inherit
+[194.7s] screenshot 2-webgpu-safari-let-fix.png
+[194.7s] 2-webgpu-safari-let-fix problem log: 0s info start-up: page open, quality auto, graphics WebGPU (asked in the address) (0.0 s)
+[194.7s] 2-webgpu-safari-let-fix problem log: 45.5s log WebGPU check: 30 shaders and 26 pipelines made; Safari let fix: 24 in 3 shaders
+result: ok
