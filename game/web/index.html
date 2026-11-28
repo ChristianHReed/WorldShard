@@ -136,12 +136,57 @@
         try {
           dev.addEventListener("uncapturederror", (e) => report("WebGPU: " + clip(text(e.error), 600)));
           dev.lost.then((i) => { if (i.reason !== "destroyed") add("error", `WebGPU device lost: ${i.reason} ${i.message}`); });
-          setTimeout(() => add("log", `WebGPU check: ${W.shaders} shaders and ${W.pipelines} pipelines made`), 45000);
+          setTimeout(() => add("log", `WebGPU check: ${W.shaders} shaders and ${W.pipelines} pipelines made` +
+            (W.letFix ? `; Safari let fix: ${W.lets} in ${W.letShaders} shaders` : "")), 45000);
         } catch {}
         return dev;
       };
+      // Safari's WebGPU can't yet put a texture or sampler in a `let` (the
+      // "texture_and_sampler_let" language feature), and Bevy 0.20's
+      // standard material does (`let texture = …base_color_texture;`), so the
+      // world fails to draw. Where the browser lacks the feature, each such
+      // `let` is taken out and its uses get the texture or sampler itself.
+      // (?letfix=1 forces it, to test it in a browser that has the feature.)
+      const lf = navigator.gpu && navigator.gpu.wgslLanguageFeatures;
+      const letFix = /[?&]letfix=1\b/.test(location.search) || !(lf && lf.has && lf.has("texture_and_sampler_let"));
+      W.letFix = letFix; W.lets = 0; W.letShaders = 0;
+      const fixLets = (code) => {
+        const binds = new Set();
+        for (const b of code.matchAll(/\bvar\s+([A-Za-z_]\w*)\s*:\s*(?:texture_\w+|sampler_comparison|sampler)\b/g)) binds.add(b[1]);
+        if (!binds.size) return code;
+        const let_ = /\blet\s+([A-Za-z_]\w*)\s*(?::[^=;]*)?=\s*([A-Za-z_]\w*)\s*;/g;
+        let out = code, n = 0;
+        for (let guard = 0; guard < 2000; guard++) {
+          let found = null, m;
+          let_.lastIndex = 0;
+          while ((m = let_.exec(out))) if (binds.has(m[2])) { found = m; break; }
+          if (!found) break;
+          const [stmt, name, bind] = found;
+          const start = found.index, after = start + stmt.length;
+          // the rest of the block the `let` is in…
+          let end = out.length;
+          for (let i = after, depth = 0; i < out.length; i++) {
+            const c = out[i];
+            if (c === "{") depth++;
+            else if (c === "}") { if (depth === 0) { end = i; break; } depth--; }
+          }
+          // …up to where the same name is declared again, if it is
+          const again = new RegExp(`\\b(?:let|var|const)\\s+${name}\\b`, "g");
+          again.lastIndex = after;
+          const a2 = again.exec(out);
+          if (a2 && a2.index < end) end = a2.index;
+          const use = new RegExp(`(?<![\\w.])${name}(?!\\w)`, "g");
+          out = out.slice(0, start) + out.slice(after, end).replace(use, bind) + out.slice(end);
+          n++;
+        }
+        if (n) { W.lets += n; W.letShaders++; }
+        return out;
+      };
       const sm = gp.createShaderModule;
       gp.createShaderModule = function (desc) {
+        if (letFix && desc && typeof desc.code === "string" && desc.code.includes("let ")) {
+          try { desc = Object.assign({}, desc, { code: fixLets(desc.code) }); } catch (e) { report("WebGPU let fix failed: " + text(e)); }
+        }
         const m = sm.call(this, desc);
         W.shaders++;
         try {

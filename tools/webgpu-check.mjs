@@ -1,7 +1,6 @@
 // Starts the WebGPU build (the graphics path phones use) in headless Chrome,
 // with software WebGPU (SwiftShader through Vulkan), at phone size. It takes
-// a screenshot plain and with each test switch, so a black picture can be
-// traced to one setting. Runs before the long smoke test, so it reports early.
+// a screenshot plain and with the Safari shader fix forced on. Runs before the long smoke test, so it reports early.
 // Usage: node tools/webgpu-check.mjs http://localhost:8080/ out-dir
 import puppeteer from "puppeteer-core";
 import fs from "node:fs";
@@ -24,11 +23,11 @@ const browser = await puppeteer.launch({
 });
 
 // [screenshot name, extra address switches]
+// (letfix=1: the page's rewrite for Safari, which lacks texture_and_sampler_let,
+// forced on, since this Chrome has the feature)
 const runs = [
   ["1-webgpu-phone", ""],
-  ["2-webgpu-msaa-off", "&msaa=0"],
-  ["3-webgpu-tonemap-off", "&tonemap=0"],
-  ["4-webgpu-indirect-off", "&indirect=0"],
+  ["2-webgpu-safari-let-fix", "&letfix=1"],
 ];
 
 let ok = true;
